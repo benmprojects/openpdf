@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { AnnotLayer } from './AnnotLayer'
-import { isMarkup, pointInRect, simplifyPath, withBounds, NOTE_SIZE, type Annot, type Pt } from './annotations'
+import { CALLOUT_DEFAULT, isMarkup, pointInRect, simplifyPath, withBounds, NOTE_SIZE, type Annot, type Pt } from './annotations'
 import type { PageSize, PdfClient } from './pdfClient'
 import type { PageText } from './pdfiumRaw'
 import {
@@ -62,6 +62,8 @@ export type Tool =
   | 'ink'
   | 'stamp'
   | 'caret'
+  | 'typewriter'
+  | 'callout'
   | 'zoom'
   | 'snapshot'
   | 'measure-distance'
@@ -136,7 +138,7 @@ interface Props {
   onResizeAnnot: (id: number, w: number, h: number) => void
   onEditAnnot: (id: number | null) => void
   onAnnotText: (id: number, text: string) => void
-  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret', page: number, x: number, y: number) => void
+  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter', page: number, x: number, y: number) => void
   drawStyle: DrawStyle
   onCreateShape: (a: Omit<Annot, 'id'>) => void
   onReshapeAnnot: (id: number, index: number, dx: number, dy: number) => void
@@ -706,7 +708,54 @@ export function Viewer({
         window.addEventListener('mouseup', up)
         return
       }
-      if (tool === 'note' || tool === 'textbox' || tool === 'stamp' || tool === 'caret') {
+      if (tool === 'callout') {
+        const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
+        if (!pageEl) return
+        e.preventDefault()
+        const page = Number(pageEl.dataset.page)
+        const size = pages[page]
+        const clamp = (p: Pt) => ({ x: Math.min(size.width, Math.max(0, p.x)), y: Math.min(size.height, Math.max(0, p.y)) })
+        const tip = clamp(snapPt(pointOnPage(pageEl, page, e.clientX, e.clientY)))
+        const style = drawStyleRef.current
+        // Drag from what the callout points at to where its box goes; a click puts the box up and to the right.
+        const boxAt = (p: Pt, moved: boolean) => {
+          const w = CALLOUT_DEFAULT.w
+          const h = CALLOUT_DEFAULT.h
+          const left = moved ? (p.x >= tip.x ? p.x : p.x - w) : tip.x + 30
+          const top = moved ? p.y - h / 2 : tip.y - 30 - h
+          return { x: Math.max(0, Math.min(size.width - w, left)), y: Math.max(0, Math.min(size.height - h, top)), w, h }
+        }
+        const make = (p: Pt, moved: boolean): Annot => ({
+          id: -1,
+          page,
+          kind: 'callout',
+          color: style.color,
+          rects: [boxAt(p, moved)],
+          points: [[tip]],
+          text: '',
+          fontSize: 12,
+          lineWidth: 1
+        })
+        let last = tip
+        let moved = false
+        const move = (ev: MouseEvent) => {
+          last = clamp(pointOnPage(pageEl, page, ev.clientX, ev.clientY))
+          moved = moved || Math.hypot(last.x - tip.x, last.y - tip.y) > 4
+          if (moved) setDraft(make(last, true))
+        }
+        const up = () => {
+          window.removeEventListener('mousemove', move)
+          window.removeEventListener('mouseup', up)
+          setDraft(null)
+          const { id: _drop, ...made } = make(last, moved)
+          void _drop
+          onCreateShape(made)
+        }
+        window.addEventListener('mousemove', move)
+        window.addEventListener('mouseup', up)
+        return
+      }
+      if (tool === 'note' || tool === 'textbox' || tool === 'stamp' || tool === 'caret' || tool === 'typewriter') {
         e.preventDefault()
         const { x, y } = pointOnPage(pageEl, Number(pageEl.dataset.page), e.clientX, e.clientY)
         onPlace(tool, Number(pageEl.dataset.page), tool === 'note' ? x - NOTE_SIZE / 2 : x, tool === 'note' ? y - NOTE_SIZE / 2 : y)

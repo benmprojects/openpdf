@@ -23,6 +23,7 @@ import {
 } from 'pdf-lib'
 import {
   arrowHeadPoints,
+  calloutAttach,
   caretRectAfter,
   hexToRgb,
   squigglePoints,
@@ -397,20 +398,62 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
         OPLabel: PDFHexString.fromText(label),
         AP: { N: ap }
       }
-    } else {
-      const r = a.rects[0]
+    } else if (a.kind === 'callout') {
+      const box = a.rects[0]
       const fnt = await getFont()
       const size = a.fontSize
-      const lines = wrapText(fnt, a.text, size, r.w - 2 * TEXTBOX_PADDING)
+      const tip = a.points?.[0]?.[0] ?? { x: box.x - 40, y: box.y + box.h / 2 }
+      const knee = calloutAttach(box, tip)
+      const lines = wrapText(fnt, a.text, size, box.w - 2 * TEXTBOX_PADDING - 2)
+      const lh = size * TEXTBOX_LINE_HEIGHT
+      const text = lines
+        .map((ln, i) => `1 0 0 -1 ${n(box.x + TEXTBOX_PADDING + 1)} ${n(box.y + TEXTBOX_PADDING + 1 + size * 0.95 + i * lh)} Tm ${fnt.encodeText(ln).toString()} Tj`)
+        .join(' ')
+      const [l, at, rr] = arrowHeadPoints(knee, tip, 1)
+      const body =
+        `1 g ${rgb(a.color)} RG 1 w ${n(box.x + 0.5)} ${n(box.y + 0.5)} ${n(box.w - 1)} ${n(box.h - 1)} re B ` +
+        `${n(knee.x)} ${n(knee.y)} m ${n(tip.x)} ${n(tip.y)} l S ${n(l.x)} ${n(l.y)} m ${n(at.x)} ${n(at.y)} l ${n(rr.x)} ${n(rr.y)} l S ` +
+        `q ${n(box.x)} ${n(box.y)} ${n(box.w)} ${n(box.h)} re W n BT /Helv ${n(size)} Tf ${rgb(a.color)} rg ${text} ET Q`
+      const pad = 6
+      const all = userBounds(f, [box, { x: tip.x - pad, y: tip.y - pad, w: 2 * pad, h: 2 * pad }])
+      const inner = userBounds(f, [box])
+      const ap = makeForm(ctx, all, `q ${cm(f)} ${body} Q`, { Font: { Helv: fnt.ref } })
+      dict = {
+        ...base,
+        Rect: all,
+        Subtype: 'FreeText',
+        IT: 'FreeTextCallout',
+        Contents: PDFHexString.fromText(a.text),
+        DA: PDFString.of(`/Helv ${n(size)} Tf ${rgb(a.color)} rg ${rgb(a.color)} RG`),
+        CL: [...toUser(f, tip.x, tip.y), ...toUser(f, knee.x, knee.y)],
+        LE: 'OpenArrow',
+        RD: [inner[0] - all[0], inner[1] - all[1], all[2] - inner[2], all[3] - inner[3]],
+        BS: { W: 1 },
+        Q: 0,
+        AP: { N: ap }
+      }
+      delete dict.C
+    } else {
+      const typewriter = a.kind === 'typewriter'
+      const fnt = await getFont()
+      const size = a.fontSize
+      // A typewriter box is as wide as its longest line (measured with the PDF font, so nothing is clipped).
+      const lines = typewriter ? winAnsiSafe(fnt, a.text).split(/\r\n|\r|\n/) : wrapText(fnt, a.text, size, a.rects[0].w - 2 * TEXTBOX_PADDING)
+      const r = typewriter
+        ? { ...a.rects[0], w: Math.max(a.rects[0].w, Math.max(...lines.map((ln) => fnt.widthOfTextAtSize(ln, size))) + 2 * TEXTBOX_PADDING + 1) }
+        : a.rects[0]
       const lh = size * TEXTBOX_LINE_HEIGHT
       const text = lines
         .map((ln, i) => `1 0 0 -1 ${n(r.x + TEXTBOX_PADDING)} ${n(r.y + TEXTBOX_PADDING + size * 0.95 + i * lh)} Tm ${fnt.encodeText(ln).toString()} Tj`)
         .join(' ')
       const body = `${n(r.x)} ${n(r.y)} ${n(r.w)} ${n(r.h)} re W n BT /Helv ${n(size)} Tf ${rgb(a.color)} rg ${text} ET`
-      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, { Font: { Helv: fnt.ref } })
+      const box = typewriter ? userBounds(f, [r]) : bounds
+      const ap = makeForm(ctx, box, `q ${cm(f)} ${body} Q`, { Font: { Helv: fnt.ref } })
       delete base.C // /C on a FreeText is the background fill; ours is transparent
       dict = {
         ...base,
+        Rect: box,
+        ...(typewriter ? { IT: 'FreeTextTypeWriter' } : {}),
         Subtype: 'FreeText',
         Contents: PDFHexString.fromText(a.text),
         DA: PDFString.of(`/Helv ${n(size)} Tf ${rgb(a.color)} rg`),

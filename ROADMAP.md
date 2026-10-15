@@ -39,7 +39,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Highlight, underline, strikeout (from selected text)
 - [x] Squiggly, replace text (strikeout grouped with a caret), insert text (caret)
 - [x] Sticky note, text box (free text)
-- [ ] Callout, typewriter
+- [x] Callout (leader line with arrow, /CL, /RD) and typewriter; imported callouts stay drawn by PDFium (their /CL is not readable through PDFium)
 - [x] Line, arrow, rectangle, ellipse, pencil/ink (move, reshape, resize, colour, width)
 - [ ] Polygon, polyline, cloud, eraser, fill colour, dashed lines
 - [x] Stamps: built-in text stamps (colour, resize)

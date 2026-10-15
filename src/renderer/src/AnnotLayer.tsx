@@ -8,6 +8,8 @@ import {
   UNDERLINE_AT,
   LINE_WIDTH,
   annotLabel,
+  arrowHeadPoints,
+  calloutAttach,
   caretRectAfter,
   isMarkup,
   squigglePoints,
@@ -152,10 +154,64 @@ export function AnnotLayer({
         const g = gesture?.id === a.id ? gesture : null
         const x = r.x + (g?.kind === 'move' ? g.dx / zoom : 0)
         const y = r.y + (g?.kind === 'move' ? g.dy / zoom : 0)
-        const w = Math.max(40, r.w + (g?.kind === 'resize' ? g.dx / zoom : 0))
-        const h = Math.max(20, r.h + (g?.kind === 'resize' ? g.dy / zoom : 0))
+        // A typewriter box fits its text exactly, so it keeps its own size.
+        const minW = a.kind === 'typewriter' ? 0 : 40
+        const minH = a.kind === 'typewriter' ? 0 : 20
+        const w = Math.max(minW, r.w + (g?.kind === 'resize' ? g.dx / zoom : 0))
+        const h = Math.max(minH, r.h + (g?.kind === 'resize' ? g.dy / zoom : 0))
         const editing = editingId === a.id
         const cls = `annot-box ${a.kind}${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}${ghost ? ' ghost' : ''}`
+
+        if (a.kind === 'callout') {
+          const box = { x, y, w, h }
+          const dxm = g?.kind === 'move' ? g.dx / zoom : 0
+          const dym = g?.kind === 'move' ? g.dy / zoom : 0
+          const rawTip = a.points?.[0]?.[0] ?? { x: r.x - 40, y: r.y + r.h / 2 }
+          const tip =
+            g?.kind === 'reshape' ? { x: rawTip.x + g.dx / zoom, y: rawTip.y + g.dy / zoom } : { x: rawTip.x + dxm, y: rawTip.y + dym }
+          const knee = calloutAttach(box, tip)
+          const [hl, ht, hr] = arrowHeadPoints(knee, tip, 1)
+          return (
+            <div key={a.id}>
+              {!ghost && (
+                <svg className="annot-callout-line" width={pageSize.width * zoom} height={pageSize.height * zoom} viewBox={`0 0 ${pageSize.width} ${pageSize.height}`}>
+                  <polyline points={`${knee.x},${knee.y} ${tip.x},${tip.y}`} fill="none" stroke={a.color} strokeWidth={1} />
+                  <polyline points={`${hl.x},${hl.y} ${ht.x},${ht.y} ${hr.x},${hr.y}`} fill="none" stroke={a.color} strokeWidth={1} />
+                </svg>
+              )}
+              <div
+                className={`${cls} callout`}
+                style={{
+                  left: x * zoom,
+                  top: y * zoom,
+                  width: w * zoom,
+                  height: h * zoom,
+                  color: a.color,
+                  borderColor: ghost ? 'transparent' : a.color,
+                  background: ghost ? 'transparent' : '#fff',
+                  fontSize: a.fontSize * zoom,
+                  lineHeight: TEXTBOX_LINE_HEIGHT,
+                  padding: (TEXTBOX_PADDING + 1) * zoom
+                }}
+                onMouseDown={(e) => begin(e, a, 'move')}
+                onDoubleClick={() => interactive && onEdit(a.id)}
+              >
+                {editing ? <TextEditor annot={a} onText={onText} /> : ghost ? null : a.text}
+                {selected && interactive && !editing && (
+                  <div className="resize-handle" onMouseDown={(e) => begin(e, a, 'resize')} aria-label="Resize callout" />
+                )}
+              </div>
+              {selected && interactive && (
+                <div
+                  className="point-handle"
+                  style={{ left: tip.x * zoom - 5, top: tip.y * zoom - 5 }}
+                  onMouseDown={(e) => begin(e, a, 'reshape', 0)}
+                  aria-label="Move callout arrow"
+                />
+              )}
+            </div>
+          )
+        }
 
         if (a.kind === 'note') {
           return (
@@ -200,7 +256,7 @@ export function AnnotLayer({
             onDoubleClick={() => interactive && onEdit(a.id)}
           >
             {editing ? <TextEditor annot={a} onText={onText} /> : a.text}
-            {selected && interactive && !editing && (
+            {selected && interactive && !editing && a.kind === 'textbox' && (
               <div className="resize-handle" onMouseDown={(e) => begin(e, a, 'resize')} aria-label="Resize text box" />
             )}
           </div>

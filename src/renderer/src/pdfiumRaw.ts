@@ -196,6 +196,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
   const keyDA = cString(m, 'DA')
   const keySubj = cString(m, 'Subj')
   const keyLabel = cString(m, 'OPLabel')
+  const keyIT = cString(m, 'IT')
   const out: ImportedAnnot[] = []
 
   const toDisplay = (x: number, y: number): [number, number] => {
@@ -247,6 +248,11 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
         } else if (kind === 'stamp') {
           label = readString(annot, keyLabel)
           if (!label) continue
+        } else if (kind === 'textbox') {
+          // Callouts need their leader line (/CL), which PDFium does not expose: leave them to PDFium.
+          const it = readString(annot, keyIT)
+          if (it === 'FreeTextCallout') continue
+          if (it === 'FreeTextTypeWriter') kind = 'typewriter'
         } else if (kind === 'ink') {
           points = []
           const paths = m._FPDFAnnot_GetInkListCount(annot)
@@ -301,7 +307,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
         }
 
         let fontSize = 12
-        if (kind === 'textbox') {
+        if (kind === 'textbox' || kind === 'typewriter') {
           const da = readString(annot, keyDA)
           const size = /([\d.]+)\s+Tf/.exec(da)
           if (size) fontSize = Math.max(6, Math.min(72, parseFloat(size[1])))
@@ -334,6 +340,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
     m.wasmExports.free(keyDA)
     m.wasmExports.free(keySubj)
     m.wasmExports.free(keyLabel)
+    m.wasmExports.free(keyIT)
   }
   return out
 }

@@ -12,7 +12,9 @@ import {
   isShapeKind,
   signature,
   stampSize,
+  TEXTBOX_PADDING,
   translated,
+  typewriterRect,
   withBounds,
   type Annot,
   type AnnotKind,
@@ -58,6 +60,8 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Keyboard,
+  MessageSquareShare,
   Waves,
   Replace,
   TextCursorInput,
@@ -356,7 +360,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [editingAnnot, setEditingAnnot] = useState<number | null>(null)
   const [hasTextSelection, setHasTextSelection] = useState(false)
   const [colors, setColors] = useState<Record<AnnotKind, string>>(() => {
-    const kinds: AnnotKind[] = ['highlight', 'underline', 'strikeout', 'squiggly', 'caret', 'note', 'textbox', 'line', 'arrow', 'rectangle', 'ellipse', 'ink', 'stamp']
+    const kinds: AnnotKind[] = ['highlight', 'underline', 'strikeout', 'squiggly', 'caret', 'note', 'textbox', 'typewriter', 'callout', 'line', 'arrow', 'rectangle', 'ellipse', 'ink', 'stamp']
     return Object.fromEntries(kinds.map((k) => [k, defaultColor(k)])) as Record<AnnotKind, string>
   })
   const [drawWidth, setDrawWidth] = useState(DEFAULT_LINE_WIDTH)
@@ -507,9 +511,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   )
 
   const place = useCallback(
-    async (kind: 'note' | 'textbox' | 'stamp' | 'caret', page: number, x: number, y: number) => {
+    async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter', page: number, x: number, y: number) => {
       const size = pages[page]
       if (!size) return
+      if (kind === 'typewriter') {
+        // The click marks where the first line's text starts.
+        const r = typewriterRect(x - TEXTBOX_PADDING, y - DEFAULT_FONT_SIZE * 0.8, '', DEFAULT_FONT_SIZE)
+        const a = newAnnot('typewriter', page, [{ ...r, w: Math.max(r.w, 60) }])
+        history.commit((list) => [...list, a])
+        setSelectedAnnot(a.id)
+        setEditingAnnot(a.id)
+        setTool('select')
+        return
+      }
       if (kind === 'caret') {
         // Put the caret before the character under the click, sized to its line; anywhere else, a default size.
         let rect = { x: x - 4, y: y - 9, w: 8, h: 10 }
@@ -552,6 +566,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       const a: Annot = { ...shape, id: nextAnnotId.current++ }
       history.commit((list) => [...list, a])
       setSelectedAnnot(a.id)
+      // A new callout goes straight to typing its text.
+      if (a.kind === 'callout') {
+        setEditingAnnot(a.id)
+        setTool('select')
+      }
     },
     [history.commit]
   )
@@ -639,7 +658,15 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       // A note, text box or insert mark left empty is dropped rather than saved as an invisible object.
       if (!text.trim()) return removeAnnot(id)
       if (text !== existing.text) touch(id)
-      if (text !== existing.text) history.commit((list) => list.map((a) => (a.id === id ? { ...a, text } : a)))
+      if (text !== existing.text)
+        history.commit((list) =>
+          list.map((a) => {
+            if (a.id !== id) return a
+            // A typewriter box grows and shrinks with its text.
+            if (a.kind === 'typewriter') return { ...a, text, rects: [typewriterRect(a.rects[0].x, a.rects[0].y, text, a.fontSize)] }
+            return { ...a, text }
+          })
+        )
     },
     [history.commit, removeAnnot, touch]
   )
@@ -1263,6 +1290,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Notes">
                 <RB big icon={StickyNote} label="Note" onClick={() => setTool(tool === 'note' ? 'select' : 'note')} disabled={!pages.length} pressed={tool === 'note'} title="Add a sticky note: click on the page" />
                 <RB big icon={Type} label="Text box" onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')} disabled={!pages.length} pressed={tool === 'textbox'} title="Add a text box: click on the page" />
+                <RStack>
+                  <RB icon={Keyboard} label="Typewriter" onClick={() => setTool(tool === 'typewriter' ? 'select' : 'typewriter')} disabled={!pages.length} pressed={tool === 'typewriter'} title="Type straight onto the page: click where the text starts" />
+                  <RB icon={MessageSquareShare} label="Callout" onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title="Callout: drag from the point to call out to where the text box goes" />
+                </RStack>
               </RGroup>
               <RGroup label="Drawing">
                 <RStack>

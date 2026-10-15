@@ -9,6 +9,10 @@ export type AnnotKind =
   | 'caret'
   | 'note'
   | 'textbox'
+  /** Free text typed straight onto the page: no box, grows with the text. */
+  | 'typewriter'
+  /** A boxed comment with a leader line and arrow pointing at something (points[0][0] is the arrow tip). */
+  | 'callout'
   | 'line'
   | 'arrow'
   | 'rectangle'
@@ -194,13 +198,16 @@ export function defaultColor(kind: AnnotKind): string {
     case 'caret':
       return '#1f5fd1'
     case 'textbox':
+    case 'typewriter':
       return '#000000'
+    case 'callout':
+      return '#e5322d'
   }
 }
 
 export function colorChoices(kind: AnnotKind): string[] {
-  if (kind === 'textbox') return TEXT_COLORS
-  return isShapeKind(kind) || kind === 'stamp' || kind === 'caret' ? SHAPE_COLORS : MARKUP_COLORS
+  if (kind === 'textbox' || kind === 'typewriter') return TEXT_COLORS
+  return isShapeKind(kind) || kind === 'stamp' || kind === 'caret' || kind === 'callout' ? SHAPE_COLORS : MARKUP_COLORS
 }
 
 /** `#rrggbb` to [r, g, b] in 0..1. */
@@ -218,6 +225,8 @@ export function annotLabel(kind: AnnotKind): string {
     caret: 'Insert text',
     note: 'Note',
     textbox: 'Text box',
+    typewriter: 'Typewriter',
+    callout: 'Callout',
     line: 'Line',
     arrow: 'Arrow',
     rectangle: 'Rectangle',
@@ -239,6 +248,41 @@ export function squigglePoints(r: Rect): Pt[] {
   const pts: Pt[] = []
   for (let x = r.x, i = 0; x <= r.x + r.w + 0.01; x += period / 2, i++) pts.push({ x: Math.min(x, r.x + r.w), y: y + (i % 2 ? amp : -amp) })
   return pts
+}
+
+/** The point on a callout box's edge nearest the arrow tip, where the leader line meets the box. */
+export function calloutAttach(box: Rect, tip: Pt): Pt {
+  const x = Math.max(box.x, Math.min(box.x + box.w, tip.x))
+  const y = Math.max(box.y, Math.min(box.y + box.h, tip.y))
+  if (x > box.x && x < box.x + box.w && y > box.y && y < box.y + box.h) {
+    // Tip inside the box: go to the nearest side.
+    const d = [y - box.y, box.y + box.h - y, x - box.x, box.x + box.w - x]
+    const i = d.indexOf(Math.min(...d))
+    return i === 0 ? { x, y: box.y } : i === 1 ? { x, y: box.y + box.h } : i === 2 ? { x: box.x, y } : { x: box.x + box.w, y }
+  }
+  return { x, y }
+}
+
+export const CALLOUT_DEFAULT = { w: 160, h: 40 }
+
+let measureCtx: CanvasRenderingContext2D | null | undefined
+/** Width of Helvetica text at a size; uses a canvas when there is one, otherwise an estimate (tests). */
+export function textWidth(text: string, size: number): number {
+  if (typeof document !== 'undefined') {
+    measureCtx ??= document.createElement('canvas').getContext('2d')
+    if (measureCtx) {
+      measureCtx.font = `${size}px Helvetica, Arial, sans-serif`
+      return measureCtx.measureText(text).width
+    }
+  }
+  return text.length * size * 0.55
+}
+
+/** The box a typewriter annotation needs for its text, from its top-left corner. */
+export function typewriterRect(x: number, y: number, text: string, size: number): Rect {
+  const lines = (text || ' ').split(/\r\n|\r|\n/)
+  const w = Math.max(...lines.map((l) => textWidth(l, size))) + 2 * TEXTBOX_PADDING + 2
+  return { x, y, w: Math.max(12, w), h: lines.length * size * TEXTBOX_LINE_HEIGHT + 2 * TEXTBOX_PADDING }
 }
 
 /** Where a replace or insert caret sits for a text line: just past its end, in the lower part of the line. */

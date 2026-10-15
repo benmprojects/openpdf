@@ -1169,6 +1169,25 @@ kbd {
   overflow: visible;
   pointer-events: none;
 }
+.annot-callout-line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.annot-box.callout {
+  border: 1px solid;
+}
+.annot-box.typewriter {
+  white-space: pre;
+  overflow: visible;
+}
+.annot-box.typewriter .annot-editor {
+  field-sizing: content;
+  min-width: 60px;
+  white-space: pre;
+}
 .page-row {
   display: flex;
   align-items: center;

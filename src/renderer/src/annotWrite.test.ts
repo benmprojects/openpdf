@@ -24,6 +24,8 @@ const SUBTYPES: Record<string, string> = {
   strikeout: 'StrikeOut',
   squiggly: 'Squiggly',
   caret: 'Caret',
+  typewriter: 'FreeText',
+  callout: 'FreeText',
   note: 'Text',
   textbox: 'FreeText',
   line: 'Line',
@@ -64,7 +66,9 @@ describe('writeAnnotations', () => {
     }),
     annot('stamp', { rects: [{ x: 300, y: 400, w: stamp.w, h: stamp.h }], text: 'APPROVED' }),
     annot('squiggly', { rects: [{ x: 50, y: 500, w: 100, h: 12 }] }),
-    annot('caret', { rects: [{ x: 300, y: 500, w: 8, h: 10 }], text: 'insert me' })
+    annot('caret', { rects: [{ x: 300, y: 500, w: 8, h: 10 }], text: 'insert me' }),
+    annot('typewriter', { rects: [{ x: 50, y: 700, w: 20, h: 16 }], text: 'Typed on the page' }),
+    annot('callout', { rects: [{ x: 300, y: 650, w: 160, h: 40 }], points: [[{ x: 250, y: 720 }]], text: 'Look here' })
   ]
 
   it('writes one annotation of each kind and the result reloads', async () => {
@@ -104,5 +108,21 @@ describe('writeAnnotations', () => {
     expect(strike.lookupMaybe(PDFName.of('RT'), PDFName)?.decodeText()).toBe('Group')
     expect(strike.lookup(PDFName.of('IRT'))).toBe(caret)
     expect(caret.lookup(PDFName.of('Contents'))?.toString()).toContain(Buffer.from('new words', 'utf16le').toString('hex').slice(0, 4).toUpperCase())
+  })
+
+  it('marks typewriters and callouts with their intent, and gives a callout its leader line', async () => {
+    const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), all))
+    const list = annotsOf(doc)
+    const it = (d: PDFDict) => d.lookupMaybe(PDFName.of('IT'), PDFName)?.decodeText()
+    const tw = list.find((d) => it(d) === 'FreeTextTypeWriter')!
+    const co = list.find((d) => it(d) === 'FreeTextCallout')!
+    expect(tw).toBeDefined()
+    expect(co).toBeDefined()
+    // The typewriter box was widened to fit its text (20 pt was too narrow).
+    const r = tw.lookup(PDFName.of('Rect'), PDFArray)
+    const width = (r.lookup(2) as unknown as { asNumber(): number }).asNumber() - (r.lookup(0) as unknown as { asNumber(): number }).asNumber()
+    expect(width).toBeGreaterThan(60)
+    expect(co.lookup(PDFName.of('CL'), PDFArray).size()).toBe(4)
+    expect(co.lookup(PDFName.of('RD'), PDFArray).size()).toBe(4)
   })
 })
