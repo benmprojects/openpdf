@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
 import {
-  NOTE_SIZE,
   STRIKEOUT_AT,
   TEXTBOX_LINE_HEIGHT,
   TEXTBOX_PADDING,
@@ -18,6 +17,10 @@ interface Props {
   interactive: boolean
   selectedId: number | null
   editingId: number | null
+  /** Imported annotations still drawn by PDFium; ours stay invisible until touched. */
+  touched: ReadonlySet<number>
+  /** Called before an imported annotation changes, so PDFium stops drawing the original. */
+  onTouch: (id: number) => void
   onSelect: (id: number | null) => void
   onMove: (id: number, dx: number, dy: number) => void
   onResize: (id: number, w: number, h: number) => void
@@ -27,7 +30,20 @@ interface Props {
 
 type Gesture = { id: number; kind: 'move' | 'resize'; dx: number; dy: number }
 
-export function AnnotLayer({ annots, zoom, interactive, selectedId, editingId, onSelect, onMove, onResize, onEdit, onText }: Props) {
+export function AnnotLayer({
+  annots,
+  zoom,
+  interactive,
+  selectedId,
+  editingId,
+  touched,
+  onTouch,
+  onSelect,
+  onMove,
+  onResize,
+  onEdit,
+  onText
+}: Props) {
   const [gesture, setGesture] = useState<Gesture | null>(null)
 
   const begin = (e: React.MouseEvent, a: Annot, kind: 'move' | 'resize') => {
@@ -43,6 +59,7 @@ export function AnnotLayer({ annots, zoom, interactive, selectedId, editingId, o
       const dx = ev.clientX - sx
       const dy = ev.clientY - sy
       if (!moved && Math.hypot(dx, dy) < 3) return
+      if (!moved) onTouch(a.id)
       moved = true
       setGesture({ id: a.id, kind, dx, dy })
     }
@@ -64,15 +81,16 @@ export function AnnotLayer({ annots, zoom, interactive, selectedId, editingId, o
     <div className="annot-layer">
       {annots.map((a) => {
         const selected = a.id === selectedId
+        const ghost = a.origin !== undefined && !touched.has(a.id)
         if (isMarkup(a.kind)) {
           return a.rects.map((r, i) => {
             const base = { left: r.x * zoom, width: r.w * zoom }
             return (
               <div key={`${a.id}-${i}`}>
-                {a.kind === 'highlight' && (
+                {a.kind === 'highlight' && !ghost && (
                   <div className="annot-highlight" style={{ ...base, top: r.y * zoom, height: r.h * zoom, background: a.color }} />
                 )}
-                {a.kind !== 'highlight' && (
+                {a.kind !== 'highlight' && !ghost && (
                   <div
                     className="annot-line"
                     style={{
@@ -96,7 +114,7 @@ export function AnnotLayer({ annots, zoom, interactive, selectedId, editingId, o
         const w = Math.max(40, r.w + (g?.kind === 'resize' ? g.dx / zoom : 0))
         const h = Math.max(20, r.h + (g?.kind === 'resize' ? g.dy / zoom : 0))
         const editing = editingId === a.id
-        const cls = `annot-box ${a.kind}${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}`
+        const cls = `annot-box ${a.kind}${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}${ghost ? ' ghost' : ''}`
 
         if (a.kind === 'note') {
           return (
@@ -106,16 +124,16 @@ export function AnnotLayer({ annots, zoom, interactive, selectedId, editingId, o
                 role="button"
                 aria-label={`${annotLabel(a.kind)}: ${a.text || 'empty'}`}
                 title={a.text || undefined}
-                style={{ left: x * zoom, top: y * zoom, width: NOTE_SIZE * zoom, height: NOTE_SIZE * zoom, background: a.color }}
+                style={{ left: x * zoom, top: y * zoom, width: r.w * zoom, height: r.h * zoom, background: a.color }}
                 onMouseDown={(e) => begin(e, a, 'move')}
                 onDoubleClick={() => interactive && onEdit(a.id)}
               >
-                <span />
+                {!ghost && <span />}
               </div>
               {editing && (
                 <NoteEditor
                   annot={a}
-                  style={{ left: x * zoom, top: (y + NOTE_SIZE) * zoom + 4 }}
+                  style={{ left: x * zoom, top: (y + r.h) * zoom + 4 }}
                   onText={onText}
                 />
               )}

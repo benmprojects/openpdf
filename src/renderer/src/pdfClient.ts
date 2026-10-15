@@ -1,7 +1,7 @@
 import type { WorkerRequest, WorkerResponse } from './pdf.worker'
-import type { OutlineNode, PageText } from './pdfiumRaw'
+import type { ImportedAnnot, OutlineNode, PageText } from './pdfiumRaw'
 
-export type { OutlineNode, PageText }
+export type { ImportedAnnot, OutlineNode, PageText }
 
 export interface PageSize {
   width: number
@@ -115,6 +115,19 @@ export class PdfClient {
     const res = await this.call({ type: 'outline' })
     if (res.ok && res.type === 'outline') return res.outline
     throw new Error('Unexpected response')
+  }
+
+  /** Editable annotations already in the document, grouped by page. */
+  async annots(): Promise<{ page: number; annots: ImportedAnnot[] }[]> {
+    const res = await this.call({ type: 'annots' })
+    if (res.ok && res.type === 'annots') return res.pages
+    throw new Error('Unexpected response')
+  }
+
+  /** Stop drawing an existing annotation (in memory only). Resolves false if it could not be found. */
+  async hideAnnot(page: number, index: number, subtype: number): Promise<boolean> {
+    const res = await this.call({ type: 'hideAnnot', page, index, subtype })
+    return res.ok && res.type === 'hideAnnot' && res.hidden
   }
 
   /** Text and character boxes for a page. Cached; the cache lives as long as the client. */

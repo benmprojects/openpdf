@@ -18,6 +18,20 @@ export interface Annot {
   /** Contents of a note or text box. */
   text: string
   fontSize: number
+  /** Set when the annotation was already in the file: where to find it again when saving. */
+  origin?: {
+    /** Position in the page's /Annots array. */
+    index: number
+    /** FPDF_ANNOT_* subtype number. */
+    subtype: number
+    /** /Rect in user space: left, bottom, right, top. */
+    rect: [number, number, number, number]
+  }
+}
+
+/** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
+export function signature(a: Annot): string {
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize])
 }
 
 export const NOTE_SIZE = 22

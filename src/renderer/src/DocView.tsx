@@ -6,10 +6,11 @@ import {
   annotLabel,
   colorChoices,
   defaultColor,
+  signature,
   type Annot,
   type AnnotKind
 } from './annotations'
-import { writeAnnotations } from './annotWrite'
+import { writeAnnotations, type DeletedAnnot } from './annotWrite'
 import { PdfClient, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type SidebarTab } from './Sidebar'
 import { findInPage, type Match } from './textLogic'
@@ -127,7 +128,69 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const annotsRef = useRef(annots)
   annotsRef.current = annots
 
-  const dirty = annots.length > 0
+  // Annotations that were already in the file when it was opened. Unchanged ones stay in the file untouched.
+  const baseline = useRef(new Map<number, { page: number; origin: NonNullable<Annot['origin']>; sig: string }>())
+  const [touched, setTouched] = useState<ReadonlySet<number>>(() => new Set())
+  const touchedRef = useRef(touched)
+  const [epoch, setEpoch] = useState(0)
+  const clientRef = useRef(client)
+  clientRef.current = client
+
+  // Load the editable annotations of a freshly opened document. The first call per document also resets the
+  // edit state, because saving swaps in new bytes and this runs again.
+  useEffect(() => {
+    if (!client) return
+    let cancelled = false
+    client
+      .annots()
+      .then((pages) => {
+        if (cancelled) return
+        const imported: Annot[] = []
+        baseline.current = new Map()
+        for (const { page, annots: list } of pages) {
+          for (const r of list) {
+            const a: Annot = {
+              id: nextAnnotId.current++,
+              page,
+              kind: r.kind,
+              color: r.color ?? defaultColor(r.kind),
+              rects: r.rects,
+              text: r.text,
+              fontSize: r.fontSize,
+              origin: { index: r.index, subtype: r.subtype, rect: r.rect }
+            }
+            imported.push(a)
+            baseline.current.set(a.id, { page, origin: a.origin!, sig: signature(a) })
+          }
+        }
+        touchedRef.current = new Set()
+        setTouched(touchedRef.current)
+        history.reset([...imported, ...annotsRef.current.filter((a) => !a.origin)])
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [client]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Stop PDFium drawing an imported annotation so our overlay can draw its edited version. */
+  const touch = useCallback((id: number) => {
+    const a = annotsRef.current.find((x) => x.id === id)
+    if (!a?.origin || touchedRef.current.has(id)) return
+    touchedRef.current = new Set(touchedRef.current).add(id)
+    setTouched(touchedRef.current)
+    clientRef.current
+      ?.hideAnnot(a.page, a.origin.index, a.origin.subtype)
+      .then(() => setEpoch((e) => e + 1))
+      .catch(() => {})
+  }, [])
+
+  const deleted = useMemo<DeletedAnnot[]>(() => {
+    const present = new Set(annots.map((a) => a.id))
+    return [...baseline.current].filter(([id]) => !present.has(id)).map(([, b]) => ({ page: b.page, origin: b.origin }))
+  }, [annots])
+  const changed = (a: Annot) => !a.origin || baseline.current.get(a.id)?.sig !== signature(a)
+  const dirty = deleted.length > 0 || annots.some(changed)
   useEffect(() => onMeta({ dirty }), [dirty, onMeta])
 
   useEffect(() => {
@@ -176,7 +239,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   )
 
   const moveAnnot = useCallback(
-    (id: number, dx: number, dy: number) =>
+    (id: number, dx: number, dy: number) => {
+      touch(id)
       history.commit((list) =>
         list.map((a) => {
           if (a.id !== id) return a
@@ -186,12 +250,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           const y = Math.max(0, Math.min(size.height - r.h, r.y + dy))
           return { ...a, rects: [{ ...r, x, y }] }
         })
-      ),
-    [pages, history.commit]
+      )
+    },
+    [pages, history.commit, touch]
   )
 
   const resizeAnnot = useCallback(
-    (id: number, w: number, h: number) =>
+    (id: number, w: number, h: number) => {
+      touch(id)
       history.commit((list) =>
         list.map((a) => {
           if (a.id !== id) return a
@@ -202,17 +268,27 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             rects: [{ ...r, w: Math.max(40, Math.min(size.width - r.x, w)), h: Math.max(20, Math.min(size.height - r.y, h)) }]
           }
         })
-      ),
-    [pages, history.commit]
+      )
+    },
+    [pages, history.commit, touch]
   )
 
   const removeAnnot = useCallback(
     (id: number) => {
+      touch(id)
       history.commit((list) => list.filter((a) => a.id !== id))
       setSelectedAnnot((s) => (s === id ? null : s))
       setEditingAnnot((e) => (e === id ? null : e))
     },
-    [history.commit]
+    [history.commit, touch]
+  )
+
+  const editAnnot = useCallback(
+    (id: number | null) => {
+      if (id !== null) touch(id)
+      setEditingAnnot(id)
+    },
+    [touch]
   )
 
   const finishText = useCallback(
@@ -222,9 +298,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       if (!existing) return
       // A note or text box left empty is dropped rather than saved as an invisible object.
       if (!text.trim()) return removeAnnot(id)
+      if (text !== existing.text) touch(id)
       if (text !== existing.text) history.commit((list) => list.map((a) => (a.id === id ? { ...a, text } : a)))
     },
-    [history.commit, removeAnnot]
+    [history.commit, removeAnnot, touch]
   )
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
@@ -233,6 +310,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const pickColor = (c: string) => {
     setColors((m) => ({ ...m, [swatchKind]: c }))
+    if (selected) touch(selected.id)
     if (selected) history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, color: c } : a)))
   }
 
@@ -245,13 +323,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       }
       setSaving(true)
       try {
-        const out = annots.length ? await writeAnnotations(bytes, annots) : bytes
+        const out = dirty ? await writeAnnotations(bytes, annots.filter(changed), deleted) : bytes
         const saved =
           !asNew && path
             ? await window.openpdf.saveFile(path, out)
             : await window.openpdf.saveFileAs(name.replace(/(\.pdf)?$/i, '.pdf'), out)
         if (!saved) return // the Save As dialog was cancelled
         onMeta({ name: saved.name, path: saved.path })
+        baseline.current = new Map() // the reloaded document is re-imported with fresh positions
         history.reset([])
         setSelectedAnnot(null)
         setEditingAnnot(null)
@@ -263,7 +342,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setSaving(false)
       }
     },
-    [saving, password, annots, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
+    [saving, password, annots, deleted, dirty, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   // ---- Search ---------------------------------------------------------------------------------------
@@ -644,7 +723,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onSelectAnnot={setSelectedAnnot}
               onMoveAnnot={moveAnnot}
               onResizeAnnot={resizeAnnot}
-              onEditAnnot={setEditingAnnot}
+              onEditAnnot={editAnnot}
+              touchedAnnots={touched}
+              onTouchAnnot={touch}
+              epoch={epoch}
               onAnnotText={finishText}
               onPlace={place}
               onSelectionChange={setHasTextSelection}

@@ -38,6 +38,10 @@ interface Props {
   annots: Annot[]
   selectedAnnot: number | null
   editingAnnot: number | null
+  touchedAnnots: ReadonlySet<number>
+  onTouchAnnot: (id: number) => void
+  /** Bumped when PDFium's drawing of the document changed and visible pages must be redrawn. */
+  epoch: number
   onSelectAnnot: (id: number | null) => void
   onMoveAnnot: (id: number, dx: number, dy: number) => void
   onResizeAnnot: (id: number, w: number, h: number) => void
@@ -65,6 +69,9 @@ export function Viewer({
   annots,
   selectedAnnot,
   editingAnnot,
+  touchedAnnots,
+  onTouchAnnot,
+  epoch,
   onSelectAnnot,
   onMoveAnnot,
   onResizeAnnot,
@@ -345,7 +352,8 @@ export function Viewer({
             size={size}
             zoom={zoom}
             annots={annotsByPage.get(i)}
-            annotProps={{ tool, selectedAnnot, editingAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onEditAnnot, onAnnotText }}
+            epoch={epoch}
+            annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onEditAnnot, onAnnotText }}
             selection={selForPage(i)}
             matches={matchesByPage.get(i)}
             currentMatch={currentMatch}
@@ -365,10 +373,13 @@ interface PageViewProps {
   size: PageSize
   zoom: number
   annots?: Annot[]
+  epoch: number
   annotProps: {
     tool: Tool
     selectedAnnot: number | null
     editingAnnot: number | null
+    touchedAnnots: ReadonlySet<number>
+    onTouchAnnot: (id: number) => void
     onSelectAnnot: (id: number | null) => void
     onMoveAnnot: (id: number, dx: number, dy: number) => void
     onResizeAnnot: (id: number, w: number, h: number) => void
@@ -381,7 +392,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, annots, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, epoch, annots, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -423,7 +434,7 @@ function PageView({ client, index, size, zoom, annots, annotProps, selection, ma
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [client, index, zoom, visible])
+  }, [client, index, zoom, visible, epoch])
 
   const needsText = selection !== null || (matches?.length ?? 0) > 0
   useEffect(() => {
@@ -469,6 +480,8 @@ function PageView({ client, index, size, zoom, annots, annotProps, selection, ma
           interactive={annotProps.tool === 'select'}
           selectedId={annotProps.selectedAnnot}
           editingId={annotProps.editingAnnot}
+          touched={annotProps.touchedAnnots}
+          onTouch={annotProps.onTouchAnnot}
           onSelect={annotProps.onSelectAnnot}
           onMove={annotProps.onMoveAnnot}
           onResize={annotProps.onResizeAnnot}

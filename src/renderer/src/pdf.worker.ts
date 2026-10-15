@@ -1,12 +1,22 @@
 import { PDFiumLibrary, type PDFiumDocument } from '@hyzyla/pdfium'
 import wasmUrl from '@hyzyla/pdfium/pdfium.wasm?url'
-import { readOutline, readPageText, type OutlineNode, type PageText } from './pdfiumRaw'
+import {
+  readOutline,
+  readPageAnnots,
+  readPageText,
+  removePageAnnot,
+  type ImportedAnnot,
+  type OutlineNode,
+  type PageText
+} from './pdfiumRaw'
 
 export type WorkerRequest =
   | { id: number; type: 'load'; data: Uint8Array; password?: string }
   | { id: number; type: 'render'; page: number; scale: number }
   | { id: number; type: 'outline' }
   | { id: number; type: 'text'; page: number }
+  | { id: number; type: 'annots' }
+  | { id: number; type: 'hideAnnot'; page: number; index: number; subtype: number }
   | { id: number; type: 'close' }
 
 export type WorkerResponse =
@@ -14,11 +24,15 @@ export type WorkerResponse =
   | { id: number; ok: true; type: 'render'; width: number; height: number; data: Uint8Array }
   | { id: number; ok: true; type: 'outline'; outline: OutlineNode[] }
   | ({ id: number; ok: true; type: 'text' } & PageText)
+  | { id: number; ok: true; type: 'annots'; pages: { page: number; annots: ImportedAnnot[] }[] }
+  | { id: number; ok: true; type: 'hideAnnot'; hidden: boolean }
   | { id: number; ok: true; type: 'close' }
   | { id: number; ok: false; error: string }
 
 let library: PDFiumLibrary | null = null
 let doc: PDFiumDocument | null = null
+/** Per page, the original indices of annotations hidden from rendering. */
+let hidden = new Map<number, number[]>()
 
 async function getLibrary(): Promise<PDFiumLibrary> {
   library ??= await PDFiumLibrary.init({ wasmUrl })
@@ -28,6 +42,7 @@ async function getLibrary(): Promise<PDFiumLibrary> {
 function closeDoc(): void {
   doc?.destroy()
   doc = null
+  hidden = new Map()
 }
 
 function reply(res: WorkerResponse, transfer: Transferable[] = []): void {
@@ -66,6 +81,28 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const t = readPageText(library, page)
       page.close()
       reply({ id: msg.id, ok: true, type: 'text', ...t }, [t.boxes.buffer as ArrayBuffer, t.charOf.buffer as ArrayBuffer])
+    } else if (msg.type === 'annots') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const pages: { page: number; annots: ImportedAnnot[] }[] = []
+      for (let i = 0; i < doc.getPageCount(); i++) {
+        const page = doc.getPage(i)
+        const annots = readPageAnnots(library, page)
+        page.close()
+        if (annots.length) pages.push({ page: i, annots })
+      }
+      reply({ id: msg.id, ok: true, type: 'annots', pages })
+    } else if (msg.type === 'hideAnnot') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const gone = hidden.get(msg.page) ?? []
+      if (gone.includes(msg.index)) {
+        reply({ id: msg.id, ok: true, type: 'hideAnnot', hidden: true })
+      } else {
+        const page = doc.getPage(msg.page)
+        const ok = removePageAnnot(library, page, msg.index, msg.subtype, gone.filter((i) => i < msg.index).length)
+        page.close()
+        if (ok) hidden.set(msg.page, [...gone, msg.index])
+        reply({ id: msg.id, ok: true, type: 'hideAnnot', hidden: ok })
+      }
     } else {
       closeDoc()
       reply({ id: msg.id, ok: true, type: 'close' })

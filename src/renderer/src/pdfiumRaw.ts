@@ -4,6 +4,8 @@
  * and `pageIdx` (FPDF_PAGE). Pin the @hyzyla/pdfium version and re-check these if it is upgraded.
  */
 import type { PDFiumDocument, PDFiumLibrary, PDFiumPage } from '@hyzyla/pdfium'
+import type { AnnotKind } from './annotations'
+import type { Rect } from './textLogic'
 
 export interface OutlineNode {
   title: string
@@ -131,4 +133,143 @@ export function readPageText(lib: PDFiumLibrary, page: PDFiumPage): PageText {
     m.wasmExports.free(scratch)
     m._FPDFText_ClosePage(tp)
   }
+}
+
+// ---- Existing annotations ---------------------------------------------------------------------------
+
+export interface ImportedAnnot {
+  /** Position in the page's /Annots array. */
+  index: number
+  /** FPDF_ANNOT_* subtype number. */
+  subtype: number
+  kind: AnnotKind
+  /** Display-space rectangles (points from the top-left of the page as shown). */
+  rects: Rect[]
+  color: string | null
+  text: string
+  fontSize: number
+  /** Annotation /Rect in user space: left, bottom, right, top. Used to re-find the object when saving. */
+  rect: [number, number, number, number]
+}
+
+const ANNOT_KINDS: Record<number, AnnotKind> = { 1: 'note', 3: 'textbox', 9: 'highlight', 10: 'underline', 12: 'strikeout' }
+const FLAG_HIDDEN = 2
+const FLAG_NO_VIEW = 32
+
+function cString(m: RawModule, s: string): number {
+  const ptr = m.wasmExports.malloc(s.length + 1)
+  for (let i = 0; i < s.length; i++) m.HEAPU8[ptr + i] = s.charCodeAt(i) & 0x7f
+  m.HEAPU8[ptr + s.length] = 0
+  return ptr
+}
+
+const hex2 = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')
+
+/** Reads the annotations we can edit (highlight, underline, strikeout, note, text box) from one page. */
+export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAnnot[] {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const count = m._FPDFPage_GetAnnotCount(p)
+  if (count <= 0) return []
+  const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
+  const GRID = 8
+  const sx = Math.round(w * GRID)
+  const sy = Math.round(h * GRID)
+  const scratch = m.wasmExports.malloc(64)
+  const keyContents = cString(m, 'Contents')
+  const keyDA = cString(m, 'DA')
+  const out: ImportedAnnot[] = []
+
+  const toDisplay = (x: number, y: number): [number, number] => {
+    m._FPDF_PageToDevice(p, 0, 0, sx, sy, 0, x, y, scratch + 48, scratch + 52)
+    const v = new DataView(m.HEAPU8.buffer)
+    return [v.getInt32(scratch + 48, true) / GRID, v.getInt32(scratch + 52, true) / GRID]
+  }
+  const bboxOf = (pts: [number, number][]): Rect => {
+    const xs = pts.map((q) => q[0])
+    const ys = pts.map((q) => q[1])
+    const x = Math.min(...xs)
+    const y = Math.min(...ys)
+    return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
+  }
+  const readString = (annot: number, key: number) =>
+    readUtf16(m, (buf, len) => m._FPDFAnnot_GetStringValue(annot, key, buf, len))
+
+  try {
+    for (let i = 0; i < count; i++) {
+      const annot = m._FPDFPage_GetAnnot(p, i)
+      if (!annot) continue
+      try {
+        const subtype = m._FPDFAnnot_GetSubtype(annot)
+        const kind = ANNOT_KINDS[subtype]
+        if (!kind) continue
+        if (m._FPDFAnnot_GetFlags(annot) & (FLAG_HIDDEN | FLAG_NO_VIEW)) continue
+        if (!m._FPDFAnnot_GetRect(annot, scratch)) continue
+        const f = new DataView(m.HEAPU8.buffer)
+        const left = f.getFloat32(scratch, true)
+        const top = f.getFloat32(scratch + 4, true)
+        const right = f.getFloat32(scratch + 8, true)
+        const bottom = f.getFloat32(scratch + 12, true)
+        const rect: ImportedAnnot['rect'] = [Math.min(left, right), Math.min(top, bottom), Math.max(left, right), Math.max(top, bottom)]
+
+        let rects: Rect[] = []
+        if (kind === 'highlight' || kind === 'underline' || kind === 'strikeout') {
+          const quads = m._FPDFAnnot_CountAttachmentPoints(annot)
+          for (let q = 0; q < quads; q++) {
+            if (!m._FPDFAnnot_GetAttachmentPoints(annot, q, scratch + 16)) continue
+            const g = new DataView(m.HEAPU8.buffer)
+            const pts: [number, number][] = []
+            for (let k = 0; k < 4; k++) pts.push(toDisplay(g.getFloat32(scratch + 16 + k * 8, true), g.getFloat32(scratch + 20 + k * 8, true)))
+            const r = bboxOf(pts)
+            if (r.w > 0 && r.h > 0) rects.push(r)
+          }
+        }
+        if (!rects.length) rects = [bboxOf([toDisplay(rect[0], rect[3]), toDisplay(rect[2], rect[1])])]
+        if (kind === 'note') rects = [{ x: rects[0].x, y: rects[0].y, w: rects[0].w >= 4 ? rects[0].w : 22, h: rects[0].h >= 4 ? rects[0].h : 22 }]
+        rects = rects.map((r) => (r.w > 0 && r.h > 0 ? r : { ...r, w: r.w || 22, h: r.h || 22 }))
+
+        let color: string | null = null
+        if (m._FPDFAnnot_GetColor(annot, 0, scratch + 32, scratch + 36, scratch + 40, scratch + 44)) {
+          const c = new DataView(m.HEAPU8.buffer)
+          color = `#${hex2(c.getUint32(scratch + 32, true))}${hex2(c.getUint32(scratch + 36, true))}${hex2(c.getUint32(scratch + 40, true))}`
+        }
+
+        let fontSize = 12
+        if (kind === 'textbox') {
+          const da = readString(annot, keyDA)
+          const size = /([\d.]+)\s+Tf/.exec(da)
+          if (size) fontSize = Math.max(6, Math.min(72, parseFloat(size[1])))
+          const rgbm = /([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/.exec(da)
+          const grey = /([\d.]+)\s+g\b/.exec(da)
+          if (rgbm) color = `#${hex2(+rgbm[1] * 255)}${hex2(+rgbm[2] * 255)}${hex2(+rgbm[3] * 255)}`
+          else if (grey) color = `#${hex2(+grey[1] * 255).repeat(3)}`
+          else color = '#000000'
+        }
+
+        out.push({ index: i, subtype, kind, rects, color, text: readString(annot, keyContents), fontSize, rect })
+      } finally {
+        m._FPDFPage_CloseAnnot(annot)
+      }
+    }
+  } finally {
+    m.wasmExports.free(scratch)
+    m.wasmExports.free(keyContents)
+    m.wasmExports.free(keyDA)
+  }
+  return out
+}
+
+/**
+ * Removes an annotation from the in-memory document so PDFium stops drawing it (the file itself is untouched).
+ * `removedBefore` is how many annotations with a lower original index were already removed from this page.
+ */
+export function removePageAnnot(lib: PDFiumLibrary, page: PDFiumPage, originalIndex: number, subtype: number, removedBefore: number): boolean {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const current = originalIndex - removedBefore
+  const annot = m._FPDFPage_GetAnnot(p, current)
+  if (!annot) return false
+  const same = m._FPDFAnnot_GetSubtype(annot) === subtype
+  m._FPDFPage_CloseAnnot(annot)
+  return same && m._FPDFPage_RemoveAnnot(p, current) !== 0
 }

@@ -41,7 +41,8 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [ ] Comment list: sort, filter, reply threads, status, summarise, export
 - [x] Colour choice, move, resize, delete, undo/redo, Save and Save As
 - [ ] Properties panel (font, opacity, border), saved tool presets, custom tool sets
-- [ ] Edit annotations already in a file (only newly drawn ones are editable)
+- [x] Edit annotations already in a file: highlight, underline, strikeout, note, text box (select, recolour, move, resize, edit text, delete; unedited ones are left byte-for-byte as they were)
+- [ ] Edit other existing annotation types (shapes, ink, stamps, links) and reply threads
 - [ ] Attach file, sound and links; import and export FDF/XFDF
 - [ ] Review: compare annotation sets across files
 

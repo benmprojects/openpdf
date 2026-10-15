@@ -8,16 +8,18 @@
  */
 import {
   PDFArray,
+  PDFDict,
   PDFDocument,
   PDFHexString,
   PDFName,
+  PDFNumber,
   PDFString,
   type PDFObject,
   StandardFonts,
   type PDFContext,
   type PDFFont,
-  type PDFPage,
-  type PDFRef
+  PDFRef,
+  type PDFPage
 } from 'pdf-lib'
 import {
   hexToRgb,
@@ -120,12 +122,70 @@ function makeForm(ctx: PDFContext, bbox: number[], content: string, resources: L
   return ctx.register(stream)
 }
 
-export async function writeAnnotations(bytes: Uint8Array, annots: Annot[]): Promise<Uint8Array> {
+type Origin = NonNullable<Annot['origin']>
+
+export interface DeletedAnnot {
+  page: number
+  origin: Origin
+}
+
+const SUBTYPE_NAMES: Record<number, string> = { 1: 'Text', 3: 'FreeText', 9: 'Highlight', 10: 'Underline', 12: 'StrikeOut' }
+
+function rectOf(dict: PDFDict): number[] | null {
+  const arr = dict.lookupMaybe(PDFName.of('Rect'), PDFArray)
+  if (!arr || arr.size() < 4) return null
+  const v = [0, 1, 2, 3].map((i) => arr.lookupMaybe(i, PDFNumber)?.asNumber() ?? NaN)
+  return [Math.min(v[0], v[2]), Math.min(v[1], v[3]), Math.max(v[0], v[2]), Math.max(v[1], v[3])]
+}
+
+/** Finds an annotation that was already in the file: by its remembered index first, then by subtype and /Rect. */
+function findExisting(page: PDFPage, origin: Origin): { index: number; dict: PDFDict } | null {
+  const list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+  if (!list) return null
+  const want = SUBTYPE_NAMES[origin.subtype]
+  const matches = (i: number) => {
+    const d = list.lookupMaybe(i, PDFDict)
+    if (!d || d.lookupMaybe(PDFName.of('Subtype'), PDFName)?.decodeText() !== want) return false
+    const r = rectOf(d)
+    return !!r && r.every((x, k) => Math.abs(x - origin.rect[k]) < 1)
+  }
+  const order = [origin.index, ...Array.from({ length: list.size() }, (_, i) => i)]
+  for (const i of order) {
+    if (i >= 0 && i < list.size() && matches(i)) return { index: i, dict: list.lookup(i, PDFDict) }
+  }
+  return null
+}
+
+/**
+ * Writes new annotations, updates edited ones that were already in the file (in place, keeping their other
+ * properties such as author) and removes deleted ones together with their popup.
+ */
+export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], deleted: DeletedAnnot[] = []): Promise<Uint8Array> {
   const pdf = await PDFDocument.load(bytes)
   const ctx = pdf.context
   let font: PDFFont | null = null
   const getFont = async () => (font ??= await pdf.embedFont(StandardFonts.Helvetica))
   const now = PDFString.fromDate(new Date())
+
+  // Resolve what to remove before anything is added, so remembered indices still point at the right entries.
+  const removals = new Map<number, Set<number>>()
+  for (const d of deleted) {
+    if (d.page < 0 || d.page >= pdf.getPageCount()) continue
+    const page = pdf.getPage(d.page)
+    const found = findExisting(page, d.origin)
+    if (!found) continue
+    const set = removals.get(d.page) ?? new Set<number>()
+    set.add(found.index)
+    const list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+    const popup = found.dict.get(PDFName.of('Popup'))
+    if (list && popup) {
+      for (let i = 0; i < list.size(); i++) {
+        const entry = list.get(i)
+        if (entry && entry.toString() === popup.toString()) set.add(i)
+      }
+    }
+    removals.set(d.page, set)
+  }
 
   for (const a of annots) {
     if (a.page < 0 || a.page >= pdf.getPageCount() || !a.rects.length) continue
@@ -212,6 +272,15 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[]): Prom
       }
     }
 
+    if (a.origin) {
+      const existing = findExisting(page, a.origin)
+      if (existing) {
+        const fresh = ctx.obj(dict as never) as unknown as PDFDict
+        for (const [key, value] of fresh.entries()) existing.dict.set(key, value)
+        continue
+      }
+    }
+
     const ref = ctx.register(ctx.obj(dict as never))
     let list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
     if (!list) {
@@ -219,6 +288,16 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[]): Prom
       page.node.set(PDFName.of('Annots'), list)
     }
     list.push(ref)
+  }
+
+  for (const [pageIdx, indices] of removals) {
+    const list = pdf.getPage(pageIdx).node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+    if (!list) continue
+    for (const i of [...indices].sort((x, y) => y - x)) {
+      const entry = list.get(i)
+      list.remove(i)
+      if (entry instanceof PDFRef) ctx.delete(entry)
+    }
   }
 
   return pdf.save()
