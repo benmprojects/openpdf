@@ -2515,3 +2515,22 @@ button.compare-item:hover {
 .lock-banner button {
   margin-left: 10px;
 }
+
+/* Redaction marks: areas that will be removed, shown as a red box until applied. */
+.redact-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.redact-mark {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0;
+  border: 2px solid #d3302b;
+  background: rgba(211, 48, 43, 0.22);
+}
+.redact-mark:hover {
+  background: rgba(211, 48, 43, 0.4);
+}

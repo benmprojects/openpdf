@@ -51,7 +51,10 @@ import { getPageClip, onPageClip, setPageClip } from './pageClipboard'
 import { PDFDocument } from 'pdf-lib'
 import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
-import { findInPage, hitTest, type Match } from './textLogic'
+import { findInPage, hitTest, rangeRects, type Match } from './textLogic'
+import { SanitiseDialog } from './SanitiseDialog'
+import { sanitise, scanHidden, type HiddenInfo } from './sanitise'
+import { redactPages, type RedactMark, type RedactReport } from './redact'
 import { useHistory } from './useHistory'
 import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout'
 import { GAP, PAD, Viewer, type Tool, type ViewAids, type ViewerHandle } from './Viewer'
@@ -205,6 +208,9 @@ import {
   Strikethrough,
   Trash2,
   Type,
+  EyeOff,
+  ShieldAlert,
+  TextSelect,
   Underline,
   Undo2,
   X,
@@ -271,12 +277,13 @@ function mightBeEncrypted(data: Uint8Array): boolean {
   return look(data.subarray(0, 65536)) || (data.length > 65536 && look(data.subarray(data.length - 65536)))
 }
 
-type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
+type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'redact' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
   ['home', 'Home'],
   ['edit', 'Edit'],
   ['forms', 'Forms'],
+  ['redact', 'Redact'],
   ['comment', 'Comment'],
   ['draw', 'Draw'],
   ['measure', 'Measure'],
@@ -1214,6 +1221,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (order) setZDirty(true)
   }
 
+  /** Areas marked for redaction (display space); nothing is removed until they are applied. */
+  const [redactMarks, setRedactMarks] = useState<(RedactMark & { id: number })[]>([])
+  const nextMark = useRef(1)
+  const [redactConfirm, setRedactConfirm] = useState(false)
+  const [hidden, setHidden] = useState<HiddenInfo | null>(null)
   const [linkDraft, setLinkDraft] = useState<{ page: number; rect: { x: number; y: number; w: number; h: number }; to: 'uri' | 'page'; uri: string; page1: string; id?: number } | null>(null)
   const editAnnot = useCallback(
     (id: number | null) => {
@@ -1263,7 +1275,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool === 'editimage' || tool === 'editpath' || tool === 'addimage' || tool === 'formfield' || tool === 'formedit' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'redact' || tool === 'edittext' || tool === 'editimage' || tool === 'editpath' || tool === 'addimage' || tool === 'formfield' || tool === 'formedit' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -1794,6 +1806,55 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     void applyPageEdit((b) => cropPages(b, opPagesRef.current.includes(page) ? opPagesRef.current : [page], { rect }), 'Cropped')
   }
   const opPagesRef = useRef<number[]>([])
+
+  // ---- Redaction -------------------------------------------------------------------------------------
+  const addMarks = (list: RedactMark[]) => setRedactMarks((m) => [...m, ...list.map((x) => ({ ...x, id: nextMark.current++ }))])
+  useEffect(() => setRedactMarks([]), [pages.length])
+  const markSelectionForRedaction = async () => {
+    const parts = (await viewer.current?.selectionRects()) ?? []
+    if (!parts.length) return setNotice({ kind: 'info', text: 'Select some text first, then mark it.' })
+    addMarks(parts.flatMap((p) => p.rects.map((rect) => ({ page: p.page, rect }))))
+    viewer.current?.clearSelection()
+  }
+  const markSearchForRedaction = async () => {
+    if (!client || !matches.length) return setNotice({ kind: 'info', text: 'Search for the text first (Ctrl+F); every match is then marked.' })
+    const list: RedactMark[] = []
+    for (const m of matches) list.push(...rangeRects((await client.pageText(m.page)).boxes, m.from, m.to).map((rect) => ({ page: m.page, rect })))
+    addMarks(list)
+    setNotice({ kind: 'info', text: `Marked ${matches.length} match${matches.length === 1 ? '' : 'es'} for redaction.` })
+  }
+  const openSanitise = async () => {
+    try {
+      setHidden(await scanHidden(annotsDirty ? await applyEdits(bytes) : bytes))
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not look for hidden information: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  const applyRedactions = async () => {
+    setRedactConfirm(false)
+    if (!client || !redactMarks.length) return
+    const marks = redactMarks.map(({ page, rect }) => ({ page, rect }))
+    let report: RedactReport | null = null
+    await applyPageEdit(async (b) => {
+      const r = await redactPages(b, marks, async (pg) => {
+        const [t, i, pa] = await Promise.all([client.textObjects(pg), client.imageObjects(pg), client.pathObjects(pg)])
+        return { texts: t.objects, textTotal: t.total, images: i.objects, imageTotal: i.total, paths: pa.objects, pathTotal: pa.total }
+      })
+      report = r.report
+      return r.bytes
+    })
+    if (!report) return
+    const r: RedactReport = report
+    setRedactMarks([])
+    setTool('select')
+    const parts = [r.text && `${r.text} piece${r.text === 1 ? '' : 's'} of text`, r.images && `${r.images} image${r.images === 1 ? '' : 's'}`, r.shapes && `${r.shapes} shape${r.shapes === 1 ? '' : 's'}`, r.annotations && `${r.annotations} annotation${r.annotations === 1 ? '' : 's'}`].filter(Boolean)
+    const done = `Redacted: ${parts.length ? parts.join(', ') : 'nothing but the area'} removed.`
+    setNotice(
+      r.unchecked.length
+        ? { kind: 'error', text: `${done} Page${r.unchecked.length === 1 ? '' : 's'} ${compactRanges(r.unchecked)} also draw${r.unchecked.length === 1 ? 's' : ''} content from forms, which could not be checked: look at the result before sharing it.` }
+        : { kind: 'info', text: done }
+    )
+  }
 
   const [hasPageClip, setHasPageClip] = useState(() => getPageClip() !== null)
   useEffect(() => onPageClip(() => setHasPageClip(getPageClip() !== null)), [])
@@ -2624,6 +2685,22 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               {!formFields.length && <p className="muted ribbon-note">This document has no form fields.</p>}
             </>
           )}
+          {ribbon === 'redact' && (
+            <>
+              <RGroup label="Mark">
+                <RB big icon={EyeOff} label="Mark area" onClick={() => setTool(tool === 'redact' ? 'select' : 'redact')} pressed={tool === 'redact'} disabled={!pages.length || busy || locked} title="Drag a box over what is to be removed" />
+                <RB big icon={TextSelect} label="Mark text" onClick={() => void markSelectionForRedaction()} disabled={!pages.length || busy || locked} title="Mark the text you have selected" />
+                <RB big icon={Search} label="Mark search" onClick={() => void markSearchForRedaction()} disabled={!pages.length || busy || locked} title="Mark every match of the current search (Ctrl+F to search)" />
+              </RGroup>
+              <RGroup label="Apply">
+                <RB big icon={ShieldAlert} label="Apply" onClick={() => setRedactConfirm(true)} disabled={!redactMarks.length || busy || locked} title="Permanently remove what is under the marks" />
+                <RB big icon={X} label="Clear marks" onClick={() => setRedactMarks([])} disabled={!redactMarks.length} title="Take all the marks off without removing anything" />
+              </RGroup>
+              <RGroup label="Sanitise">
+                <RB big icon={Eraser} label="Hidden information" onClick={() => void openSanitise()} disabled={!pages.length || busy || locked} title="Find and remove metadata, attached files, scripts and other things that are not on the pages" />
+              </RGroup>
+            </>
+          )}
           {ribbon === 'layout' && (
             <>
               <RGroup label="Header and footer">
@@ -2862,6 +2939,44 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             setNotice({ kind: 'info', text: 'Security removed. Save to write the unprotected file.' })
           }}
         />
+      )}
+      {hidden && (
+        <SanitiseDialog
+          found={hidden}
+          onClose={() => setHidden(null)}
+          onApply={(o) => {
+            setHidden(null)
+            let removed: HiddenInfo | null = null
+            void applyPageEdit(async (b) => {
+              const r = await sanitise(b, o)
+              removed = r.bytes.length ? r.removed : null
+              return r.bytes
+            }).then(() => {
+              const r = removed as HiddenInfo | null
+              if (!r) return
+              const parts = (Object.entries(r) as [string, number][]).filter(([, n]) => n > 0).map(([k]) => k)
+              setNotice({ kind: 'info', text: parts.length ? `Removed hidden information: ${parts.join(', ')}.` : 'Nothing was removed.' })
+            })
+          }}
+        />
+      )}
+      {redactConfirm && (
+        <Modal title="Apply redactions" onClose={() => setRedactConfirm(false)}>
+          <div className="marks-form">
+            <p>
+              {redactMarks.length} marked area{redactMarks.length === 1 ? '' : 's'} on {new Set(redactMarks.map((m) => m.page)).size} page{new Set(redactMarks.map((m) => m.page)).size === 1 ? '' : 's'}. The text, images and shapes under them are removed from the pages and each area is covered with a black box.
+            </p>
+            <p className="muted">Text is removed a whole line at a time, so a line that is only partly marked goes entirely. Once the file is saved this cannot be undone.</p>
+            <div className="marks-actions">
+              <button type="button" onClick={() => setRedactConfirm(false)}>
+                Cancel
+              </button>
+              <button className="primary" type="button" onClick={() => void applyRedactions()}>
+                Redact
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
       {ownerPrompt && (
         <Modal title="Permissions password" onClose={() => setOwnerPrompt(null)}>
@@ -3242,6 +3357,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onGuides={setGuides}
               onErase={eraseInk}
               onCropRect={cropToRect}
+              onRedactRect={(page, rect) => addMarks([{ page, rect }])}
+              redactMarks={redactMarks}
+              onUnmark={(id) => setRedactMarks((m) => m.filter((x) => x.id !== id))}
               onLinkRect={(page, rect) => setLinkDraft({ page, rect, to: 'uri', uri: 'https://', page1: String(Math.min(pages.length, page + 2)) })}
               onChangeImage={(page, obj, total, change) =>
                 void applyPageEdit((b) => transformImage(b, { page, ordinal: obj.ordinal, total, matrix: obj.matrix }, change), change ? 'Image updated' : 'Image deleted')

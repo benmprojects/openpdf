@@ -85,6 +85,8 @@ export type Tool =
   | 'fileattach'
   | 'sound'
   | 'crop'
+  /** Redaction: drag a box on a page to mark what is to be removed. */
+  | 'redact'
   | 'edittext'
   | 'editimage'
   | 'editpath'
@@ -141,6 +143,11 @@ interface Props {
   measurements: Measurement[]
   /** The crop tool: a box dragged on one page, in display space (the page as shown, before view rotation). */
   onCropRect: (page: number, rect: Rect) => void
+  /** The redact tool: a box dragged on one page, in display space. */
+  onRedactRect: (page: number, rect: Rect) => void
+  /** Areas marked for redaction, drawn over their pages; clicking one takes it off. */
+  redactMarks: { id: number; page: number; rect: Rect }[]
+  onUnmark: (id: number) => void
   /** The link tool: a box dragged on one page, in page points (unrotated frame). */
   onLinkRect: (page: number, rect: Rect) => void
   /** A link was clicked: go to a page, or (after asking) open a web address. */
@@ -224,6 +231,9 @@ export function Viewer({
   textEditReady,
   onLinkRect,
   onCropRect,
+  onRedactRect,
+  redactMarks,
+  onUnmark,
   tool,
   annots,
   selectedAnnot,
@@ -681,7 +691,7 @@ export function Viewer({
         setMeasureDraft({ kind: measureKind, page, points, cursor: null })
         return
       }
-      if (tool === 'snapshot' || tool === 'link' || tool === 'crop' || tool === 'formfield') {
+      if (tool === 'snapshot' || tool === 'link' || tool === 'crop' || tool === 'redact' || tool === 'formfield') {
         const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
         if (!pageEl) return
         e.preventDefault()
@@ -701,7 +711,7 @@ export function Viewer({
           const y0 = Math.max(0, Math.min(a.y, b.y))
           const x1 = Math.min(size.width, Math.max(a.x, b.x))
           const y1 = Math.min(size.height, Math.max(a.y, b.y))
-          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : tool === 'crop' ? onCropRect : tool === 'formfield' ? onFieldRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : tool === 'crop' ? onCropRect : tool === 'redact' ? onRedactRect : tool === 'formfield' ? onFieldRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
         }
         window.addEventListener('mousemove', move)
         window.addEventListener('mouseup', up)
@@ -932,7 +942,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect, onCropRect, onFieldRect]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect, onCropRect, onRedactRect, onFieldRect]
   )
 
   const ordered = useMemo(() => {
@@ -1091,6 +1101,8 @@ export function Viewer({
                 onReplaceImage={onReplaceImage}
                 onChangePath={onChangePath}
                 forms={forms}
+                redactMarks={redactMarks.filter((m) => m.page === i)}
+                onUnmark={onUnmark}
                 textEditReady={textEditReady}
                 onVisible={loadLinks}
                 eraseTrail={eraseTrail && eraseTrail.page === i ? eraseTrail : undefined}
@@ -1147,6 +1159,8 @@ export function Viewer({
 }
 
 interface PageViewProps {
+  redactMarks: { id: number; page: number; rect: Rect }[]
+  onUnmark: (id: number) => void
   client: PdfClient
   index: number
   size: PageSize
@@ -1194,7 +1208,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, forms, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const hasForms = !!forms && forms.fields.length > 0
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -1383,6 +1397,21 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
       {annotProps.tool === 'edittext' && textEditReady && <TextEditLayer client={client} page={index} zoom={zoom} onCommit={onEditText} />}
       {annotProps.tool === 'editimage' && textEditReady && <ObjectEditLayer kind="image" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangeImage} onReplace={onReplaceImage} />}
       {annotProps.tool === 'editpath' && textEditReady && <ObjectEditLayer kind="path" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangePath} />}
+      {redactMarks.length > 0 && (
+        <div className="redact-layer">
+          {redactMarks.map((m) => (
+            <button
+              key={m.id}
+              className="redact-mark"
+              aria-label="Marked for redaction: click to remove the mark"
+              title="Marked for redaction: click to remove the mark"
+              style={{ left: m.rect.x * zoom, top: m.rect.y * zoom, width: m.rect.w * zoom, height: m.rect.h * zoom }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => onUnmark(m.id)}
+            />
+          ))}
+        </div>
+      )}
       {links && links.length > 0 && (
         <div className="link-layer" aria-hidden>
           {links.flatMap((l, k) =>

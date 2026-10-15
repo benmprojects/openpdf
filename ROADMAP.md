@@ -79,7 +79,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 
 ## Phase 6: Security and signatures (P1)
 - [x] Password and permission encryption (AES-256), remove security (File > Security; opening encrypted files with the password, restricted files read-only until the owner password; re-encrypted on save)
-- [ ] Redaction (text, region, search and redact, true content removal) and metadata sanitise
+- [x] Redaction (mark an area, selected text or search results; applying removes the text, images and shapes from the page content and deletes annotations under the marks) and metadata sanitise (Redact tab > Hidden information). Limits: text goes a whole line at a time; an image partly under a mark is removed whole; pages that draw form XObjects are flagged, not cleaned
 - [ ] Digital signatures: create, validate, timestamp, certificate store (Windows cert store)
 - [ ] Visible signature appearances; certify documents
 - [ ] Verify PDF/A and PDF/UA compliance flags
