@@ -79,6 +79,7 @@ export type Tool =
   | 'link'
   | 'fileattach'
   | 'sound'
+  | 'crop'
 
 export interface DrawStyle {
   color: string
@@ -127,6 +128,8 @@ interface Props {
   /** How page colours are shown: as they are, inverted for night reading, or high contrast. */
   pageColours: 'normal' | 'night' | 'contrast'
   measurements: Measurement[]
+  /** The crop tool: a box dragged on one page, in display space (the page as shown, before view rotation). */
+  onCropRect: (page: number, rect: Rect) => void
   /** The link tool: a box dragged on one page, in page points (unrotated frame). */
   onLinkRect: (page: number, rect: Rect) => void
   /** A link was clicked: go to a page, or (after asking) open a web address. */
@@ -188,6 +191,7 @@ export function Viewer({
   onErase,
   onFollowLink,
   onLinkRect,
+  onCropRect,
   tool,
   annots,
   selectedAnnot,
@@ -644,7 +648,7 @@ export function Viewer({
         setMeasureDraft({ kind: measureKind, page, points, cursor: null })
         return
       }
-      if (tool === 'snapshot' || tool === 'link') {
+      if (tool === 'snapshot' || tool === 'link' || tool === 'crop') {
         const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
         if (!pageEl) return
         e.preventDefault()
@@ -664,7 +668,7 @@ export function Viewer({
           const y0 = Math.max(0, Math.min(a.y, b.y))
           const x1 = Math.min(size.width, Math.max(a.x, b.x))
           const y1 = Math.min(size.height, Math.max(a.y, b.y))
-          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : tool === 'crop' ? onCropRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
         }
         window.addEventListener('mousemove', move)
         window.addEventListener('mouseup', up)
@@ -895,7 +899,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect, onCropRect]
   )
 
   const ordered = useMemo(() => {

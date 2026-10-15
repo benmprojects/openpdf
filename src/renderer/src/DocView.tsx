@@ -60,6 +60,8 @@ import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
 import { annotsFromImported } from './importMap'
+import { addBackground, addHeaderFooter, addWatermark, cropPages, marksPresent, removeMarks, resizePages, uncropPages, type MarkKind } from './pageMarks'
+import { PageMarksDialog, type MarksMode, type MarksRequest } from './PageMarksDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
 import { ComparePanel } from './ComparePanel'
 import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
@@ -96,6 +98,14 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  PanelTop,
+  Hash,
+  Barcode,
+  Droplets,
+  PaintBucket,
+  Crop,
+  SquareDashed,
+  Maximize2,
   ClipboardPaste,
   CopyPlus,
   GitCompare,
@@ -207,7 +217,7 @@ interface Props {
   jump?: SearchJump
 }
 
-type RibbonTab = 'file' | 'home' | 'comment' | 'draw' | 'measure' | 'organise' | 'view'
+type RibbonTab = 'file' | 'home' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
   ['home', 'Home'],
@@ -215,6 +225,7 @@ const RIBBON_TABS: [RibbonTab, string][] = [
   ['draw', 'Draw'],
   ['measure', 'Measure'],
   ['organise', 'Organise'],
+  ['layout', 'Layout'],
   ['view', 'View']
 ]
 
@@ -864,7 +875,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -1236,6 +1247,43 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const GRID_MM = [5, 10, 20, 50]
 
   const commentAnnots = useMemo(() => annots.filter((a) => a.kind !== 'link'), [annots])
+
+  // ---- Page marks and boxes (Layout tab) -------------------------------------------------------------
+  const [marksMode, setMarksMode] = useState<MarksMode | null>(null)
+  const [presentMarks, setPresentMarks] = useState<Set<MarkKind>>(new Set())
+  useEffect(() => {
+    let cancelled = false
+    marksPresent(bytes).then((m) => !cancelled && setPresentMarks(m))
+    return () => {
+      cancelled = true
+    }
+  }, [bytes])
+  const applyMarks = async (r: MarksRequest) => {
+    setMarksMode(null)
+    const info = { fileName: name, labels: pageLabels }
+    const count = (p: number[]) => `${p.length} page${p.length === 1 ? '' : 's'}`
+    if (r.mode === 'headerfooter' || r.mode === 'pagenumbers' || r.mode === 'bates')
+      return applyPageEdit((b) => addHeaderFooter(b, r.spec, info), `Added ${r.mode === 'bates' ? 'Bates numbers' : r.mode === 'pagenumbers' ? 'page numbers' : 'a header and footer'} to ${count(r.spec.pages)}`)
+    if (r.mode === 'watermark') return applyPageEdit((b) => addWatermark(b, r.spec), `Added a watermark to ${count(r.spec.pages)}`)
+    if (r.mode === 'background') return applyPageEdit((b) => addBackground(b, r.spec), `Added a background to ${count(r.spec.pages)}`)
+    if (r.mode === 'crop') return applyPageEdit((b) => cropPages(b, r.pages, r.margins), `Cropped ${count(r.pages)}`)
+    if (r.mode === 'uncrop') return applyPageEdit((b) => uncropPages(b, r.pages), `Removed cropping from ${count(r.pages)}`)
+    if (r.mode === 'resize') return applyPageEdit((b) => resizePages(b, r.pages, r.width, r.height, r.fit), `Resized ${count(r.pages)}`)
+    if (r.mode !== 'remove') return
+    const kinds = r.kinds
+    let removed = 0
+    await applyPageEdit(async (b) => {
+      const out = await removeMarks(b, kinds)
+      removed = out.removed
+      return out.bytes
+    })
+    setNotice({ kind: 'info', text: removed ? `Removed ${removed} mark${removed === 1 ? '' : 's'}` : 'There were no such marks to remove' })
+  }
+  const cropToRect = (page: number, rect: { x: number; y: number; w: number; h: number }) => {
+    setTool('select')
+    void applyPageEdit((b) => cropPages(b, opPagesRef.current.includes(page) ? opPagesRef.current : [page], { rect }), 'Cropped')
+  }
+  const opPagesRef = useRef<number[]>([])
 
   const [hasPageClip, setHasPageClip] = useState(() => getPageClip() !== null)
   useEffect(() => onPageClip(() => setHasPageClip(getPageClip() !== null)), [])
@@ -1676,6 +1724,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const zoomValue = typeof mode === 'number' ? (ZOOM_STEPS.includes(mode) ? String(mode) : 'custom') : mode
   const opPages = pageSel.length ? pageSel : [Math.min(currentPage, Math.max(0, pages.length - 1))]
+  opPagesRef.current = pageSel
   const undoButtons = (
     <>
       <RB
@@ -1949,6 +1998,31 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
             </>
           )}
+          {ribbon === 'layout' && (
+            <>
+              <RGroup label="Header and footer">
+                <RB big icon={PanelTop} label="Header & footer" onClick={() => setMarksMode('headerfooter')} disabled={!pages.length || busy} title="Add a header and footer to pages" />
+                <RStack>
+                  <RB icon={Hash} label="Page numbers" onClick={() => setMarksMode('pagenumbers')} disabled={!pages.length || busy} title="Add page numbers" />
+                  <RB icon={Barcode} label="Bates numbers" onClick={() => setMarksMode('bates')} disabled={!pages.length || busy} title="Add Bates numbers (prefix and running number)" />
+                </RStack>
+              </RGroup>
+              <RGroup label="Watermark">
+                <RB big icon={Droplets} label="Watermark" onClick={() => setMarksMode('watermark')} disabled={!pages.length || busy} title="Add a text or picture watermark" />
+                <RB big icon={PaintBucket} label="Background" onClick={() => setMarksMode('background')} disabled={!pages.length || busy} title="Add a background colour or picture behind the pages" />
+              </RGroup>
+              <RGroup label="Page size">
+                <RStack>
+                  <RB icon={Crop} label="Crop…" onClick={() => setMarksMode('crop')} disabled={!pages.length || busy} title="Crop pages by margins" />
+                  <RB icon={SquareDashed} label="Crop tool" onClick={() => setTool(tool === 'crop' ? 'select' : 'crop')} pressed={tool === 'crop'} disabled={!pages.length || busy} title="Drag a box on a page to crop to it (the selected thumbnails get the same box)" />
+                  <RB icon={Maximize2} label="Resize…" onClick={() => setMarksMode('resize')} disabled={!pages.length || busy} title="Change the paper size of pages" />
+                </RStack>
+              </RGroup>
+              <RGroup label="Remove">
+                <RB big icon={Eraser} label="Remove marks" onClick={() => setMarksMode('remove')} disabled={!pages.length || busy || !presentMarks.size} title="Remove headers, footers, numbers, watermarks or backgrounds added with OpenPDF" />
+              </RGroup>
+            </>
+          )}
           {ribbon === 'view' && (
             <>
               <RGroup label="Panes">
@@ -2112,6 +2186,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             setPresenting(null)
             goTo(p)
           }}
+        />
+      )}
+
+      {marksMode && (
+        <PageMarksDialog
+          mode={marksMode}
+          pageCount={pages.length}
+          currentPage={currentPage}
+          selected={pageSel}
+          present={presentMarks}
+          onPickImage={async () => (await window.openpdf.pickFile({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg'] }))?.data ?? null}
+          onApply={(r) => void applyMarks(r)}
+          onClose={() => setMarksMode(null)}
         />
       )}
 
@@ -2429,6 +2516,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               guides={guides}
               onGuides={setGuides}
               onErase={eraseInk}
+              onCropRect={cropToRect}
               onLinkRect={(page, rect) => setLinkDraft({ page, rect, to: 'uri', uri: 'https://', page1: String(Math.min(pages.length, page + 2)) })}
               onFollowLink={(l) => (l.page !== undefined ? goTo(l.page) : l.uri ? void window.openpdf.openLink(l.uri) : undefined)}
               tool={tool}

@@ -1568,6 +1568,58 @@ button.compare-item:hover {
   font-size: 12px;
   flex: none;
 }
+.marks-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.marks-slots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.marks-slots label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.marks-slots input,
+.marks-form .form-grid input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']) {
+  min-height: 28px;
+  padding: 3px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.marks-form input[type='number'] {
+  width: 5.5em;
+}
+.marks-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.marks-form label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.marks-form .contents {
+  display: contents;
+}
+.marks-remove {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.marks-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .page-row {
   display: flex;
   align-items: center;

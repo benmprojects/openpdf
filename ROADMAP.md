@@ -57,8 +57,8 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Extract and insert pages (verified end to end with the dialog test hook: saved files checked with PyMuPDF; the real native dialog windows were not exercised)
 - [x] Merge and split by page count (same; split never overwrites existing files)
 - [x] Copy and paste pages (also between documents), duplicate, replace with pages from another PDF; split every N pages, at top-level bookmarks, or by file size
-- [ ] Crop, resize, headers and footers, Bates numbering, page numbers
-- [ ] Watermarks and backgrounds
+- [x] Crop (margins or crop tool, remove cropping), resize to a paper size (scale to fit), headers and footers with codes, Bates numbering, page numbers (Layout tab; marks are tagged so they can be removed)
+- [x] Watermarks (text or picture, angle, opacity, over or behind) and backgrounds (colour or picture), removable
 - [ ] Bookmarks, page labels and link editing
 - [ ] Optimise and compress, linearise, remove unused objects
 - [ ] Document properties and metadata editing, XMP
