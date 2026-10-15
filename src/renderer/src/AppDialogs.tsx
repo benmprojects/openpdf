@@ -4,11 +4,34 @@ import type { Settings } from '../../preload'
 /** A centred modal panel. Esc and a click on the backdrop close it. */
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const panel = useRef<HTMLDivElement>(null)
+  // Focus goes into the dialog when it opens and back to what opened it when it closes.
+  const opener = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => {
+      const el = opener.current
+      if (el && el.isConnected) el.focus()
+    }
+  }, [])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation()
         onClose()
+      } else if (e.key === 'Tab' && panel.current) {
+        // Tab stays inside the dialog: from the last control it goes to the first, and Shift+Tab the other way.
+        const stops = [...panel.current.querySelectorAll<HTMLElement>('input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')].filter((el) => el.offsetParent !== null)
+        if (!stops.length) return
+        const first = stops[0]
+        const last = stops[stops.length - 1]
+        const at = document.activeElement
+        if (e.shiftKey && (at === first || !panel.current.contains(at))) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && (at === last || !panel.current.contains(at))) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     window.addEventListener('keydown', onKey, true)

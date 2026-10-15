@@ -9,9 +9,15 @@
   --border: #d9dce3;
   --border-strong: #c3c8d1;
   --text: #1c2027;
-  --muted: #646b78;
+  --muted: #5c6370;
   --accent: #c8323c; /* OpenPDF red */
+  --accent-text: #c8323c; /* the accent as text colour on panels */
+  --accent-fill: #c8323c; /* behind white text */
+  --accent-fill-hover: #a8252f;
   --accent-strong: #a8252f;
+  --ok: #166534;
+  --warn: #8a5300;
+  --bad: #b42318;
   --accent-soft: rgba(200, 50, 60, 0.1);
   --focus: #2f6fdf;
   --pressed: #e4e9f4;
@@ -39,7 +45,13 @@
     --text: #e6e8eb;
     --muted: #9ba1ab;
     --accent: #e0545d;
+    --accent-text: #f0757d;
+    --accent-fill: #c8323c;
+    --accent-fill-hover: #a8252f;
     --accent-strong: #f0707a;
+    --ok: #6ee7a0;
+    --warn: #f5b94e;
+    --bad: #ff8a80;
     --accent-soft: rgba(224, 84, 93, 0.16);
     --focus: #6b9cff;
     --pressed: #2f3644;
@@ -140,13 +152,13 @@ textarea:focus-visible,
 }
 .primary {
   color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   font-weight: 600;
 }
 .primary:hover:not(:disabled) {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
+  background: var(--accent-fill-hover);
+  border-color: var(--accent-fill-hover);
 }
 .primary.big {
   min-height: 38px;
@@ -276,7 +288,7 @@ kbd {
 }
 .tab-icon {
   flex: none;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .tab-name {
   overflow: hidden;
@@ -375,7 +387,7 @@ kbd {
 }
 .recent-icon {
   flex: none;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .recent-text {
   display: flex;
@@ -551,7 +563,7 @@ kbd {
   color: var(--text);
 }
 .rtab.on {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .rtab.on::after {
@@ -656,7 +668,7 @@ kbd {
   color: var(--text);
 }
 .rb:not(:disabled) .rb-icon {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .rb[aria-pressed='true'] .rb-icon {
   color: var(--focus);
@@ -797,7 +809,7 @@ kbd {
   align-items: center;
   gap: 8px;
   padding: 8px 8px 8px 14px;
-  color: var(--accent);
+  color: var(--accent-text);
   border-bottom: 1px solid var(--border);
 }
 .search-panel-head h2 {
@@ -1238,7 +1250,7 @@ kbd {
   min-width: 120px;
   height: 30px;
   padding: 2px 8px;
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 700;
   font-size: 11px;
   letter-spacing: 0.03em;
@@ -2031,7 +2043,7 @@ button.compare-item:hover {
   font-variant-numeric: tabular-nums;
 }
 .thumb.current span {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .thumb.current canvas {
@@ -2222,7 +2234,7 @@ button.compare-item:hover {
 }
 .side-list-icon {
   flex: none;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .side-list-text {
   display: flex;
@@ -2309,7 +2321,7 @@ button.compare-item:hover {
   place-items: center;
   font-size: 18px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border: 2px dashed var(--accent);
   border-radius: 12px;
@@ -2475,7 +2487,7 @@ button.compare-item:hover {
   padding: 0 3px;
   font: 600 10px/14px Helvetica, Arial, sans-serif;
   color: #fff;
-  background: var(--accent);
+  background: var(--accent-fill);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2578,13 +2590,13 @@ button.compare-item:hover {
   padding: 2px 0;
 }
 .std-pass span:first-child {
-  color: #1c8a3a;
+  color: var(--ok);
 }
 .std-warn span:first-child {
-  color: #c77d00;
+  color: var(--warn);
 }
 .std-fail span:first-child {
-  color: #d3302b;
+  color: var(--bad);
 }
 
 /* Batch processing dialog */
@@ -2686,4 +2698,51 @@ button.compare-item:hover {
 }
 .link-btn:hover .side-list-name {
   text-decoration: underline;
+}
+
+.side-toolbar button {
+  min-height: 28px;
+  padding: 4px 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.side-toolbar button:hover:not(:disabled) {
+  background: var(--panel-3);
+}
+.side-toolbar button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Plain buttons in dialogs and panes: the system's default grey does not meet contrast in dark mode. */
+button:not([class]) {
+  min-height: 28px;
+  padding: 4px 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+button:not([class]):hover:not(:disabled) {
+  background: var(--panel-3);
+}
+button:not([class]):disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* People who ask their system for less motion get none. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
