@@ -53,6 +53,7 @@ import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from 
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
 import { BatchDialog } from './BatchDialog'
+import { CompareDocsDialog } from './CompareDocsDialog'
 import { CreateDialog, type CreateRequest } from './CreateDialog'
 import { imagesToPdf, textToPdf } from './createPdf'
 import { ScanDialog, type ScanRequest } from './ScanDialog'
@@ -1874,6 +1875,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [officeReady, setOfficeReady] = useState(true)
   const [exportImagesOpen, setExportImagesOpen] = useState(false)
   const [batchOpen, setBatchOpen] = useState(false)
+  const [compareOpen, setCompareOpen] = useState(false)
   const [ocrOpen, setOcrOpen] = useState(false)
   const [scanOpen, setScanOpen] = useState(false)
   useEffect(() => {
@@ -2880,6 +2882,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Documents">
                 <RB big icon={Files} label="Merge" onClick={mergeFiles} disabled={!pages.length || busy} title="Merge: add the pages of other PDFs to the end" />
                 <RB big icon={Scissors} label="Split" onClick={() => void runPageOp({ kind: 'split' }, opPages)} disabled={!pages.length || busy} title="Split into files of a set number of pages" />
+                <RB big icon={GitCompare} label="Compare" onClick={() => setCompareOpen(true)} disabled={!pages.length || busy} title="Compare this document with another PDF: the words, and how the pages look" />
               </RGroup>
               <RGroup label="Optimise">
                 <RB big icon={Gauge} label="Optimise" onClick={() => setOptimising(true)} disabled={!pages.length || busy || locked} title="Make the file smaller: reduce pictures, compress, remove unused objects, linearise" />
@@ -3289,6 +3292,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       )}
       {scanOpen && <ScanDialog onScan={runScan} onClose={() => setScanOpen(false)} />}
       {ocrOpen && <OcrDialog pageCount={pages.length} currentPage={currentPage} onRun={(r) => void runOcr(r)} onClose={() => setOcrOpen(false)} />}
+      {compareOpen && client && <CompareDocsDialog current={{ name, client, pages }} onClose={() => setCompareOpen(false)} />}
       {batchOpen && <BatchDialog onClose={() => setBatchOpen(false)} />}
       {exportImagesOpen && <ExportImagesDialog pageCount={pages.length} currentPage={currentPage} onExport={(r) => void runExportImages(r)} onClose={() => setExportImagesOpen(false)} />}
       {createFrom && <CreateDialog kind={createFrom.kind} files={createFrom.files.map((f) => f.name)} onCreate={runCreate} onClose={() => setCreateFrom(null)} />}

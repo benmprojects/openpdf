@@ -94,7 +94,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 ## Phase 8: Productivity and automation (P2)
 - [x] Batch processing and action wizard (watermark, OCR, optimise on folders) (File > Batch: ordered steps, saved actions, shareable action files; originals are never changed or overwritten)
 - [x] Command-line interface and scripting API (`OpenPDF --batch <action> --out <folder> ...`, action files as JSON, exit codes and a JSON report; the scripting surface is the action file, there is no embedded scripting language)
-- [ ] Compare two documents (text and visual)
+- [x] Compare two documents (text and visual) (Organise > Compare: word-level changes with context and pages; page overlays with red for only-in-first and blue for only-in-second, and a check of every page)
 - [ ] Portfolios/packages, embedded files
 - [ ] 3D, multimedia and rich media playback (low priority)
 - [ ] Plugin API and extension store
