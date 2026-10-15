@@ -53,6 +53,8 @@ import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from 
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
 import { BatchDialog } from './BatchDialog'
+import { MediaPlayerDialog } from './MediaPlayerDialog'
+import { findMedia, type MediaItem } from './media'
 import { appEnv, describeDocument, runSteps } from './batch'
 import { PluginsDialog } from './PluginsDialog'
 import { normaliseResult } from '../../shared/plugins'
@@ -480,6 +482,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setNotice({ kind: 'error', text: `Could not save the attachment: ${e instanceof Error ? e.message : String(e)}` })
     }
   }
+  const [media, setMedia] = useState<MediaItem[] | null>(null)
+  const [player, setPlayer] = useState<MediaItem | null>(null)
+  const saveMedia = async (m: MediaItem) => {
+    const saved = await window.openpdf.saveAttachment(m.name, m.read())
+    if (saved) setNotice({ kind: 'info', text: `Saved ${saved}` })
+  }
   const [portfolioFiles, setPortfolioFiles] = useState<{ name: string; data: Uint8Array }[] | null>(null)
   const addAttachments = async () => {
     const files = await window.openpdf.pickFiles()
@@ -857,6 +865,18 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }, [])
   const [lastMarkup, setLastMarkup] = useState<AnnotKind>('highlight')
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
+  // Media is looked for when its tab is shown (reading the structure of a large file takes a moment).
+  useEffect(() => {
+    if (sidebar !== 'media') return
+    let live = true
+    setMedia(null)
+    findMedia(bytes)
+      .then((m) => live && setMedia(m))
+      .catch(() => live && setMedia([]))
+    return () => {
+      live = false
+    }
+  }, [sidebar, bytes])
   // A portfolio opens on its list of files.
   useEffect(() => {
     void isPortfolio(data)
@@ -3343,6 +3363,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }}
         />
       )}
+      {player && <MediaPlayerDialog item={player} onClose={() => setPlayer(null)} />}
       {pluginsOpen && client && (
         <PluginsDialog
           onClose={() => setPluginsOpen(false)}
@@ -3749,6 +3770,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onRemoveAttachment={locked ? undefined : removeAttachment}
                 onSaveAllAttachments={() => void saveAllAttachments()}
                 layers={layers}
+                media={media}
+                onPlayMedia={setPlayer}
+                onSaveMedia={(m) => void saveMedia(m)}
                 isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
                 onToggleLayer={toggleLayer}
                 onEditOutline={locked ? undefined : editOutline}

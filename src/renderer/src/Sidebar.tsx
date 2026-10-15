@@ -15,19 +15,22 @@ import {
   MessageSquare,
   Paperclip,
   PencilLine,
+  Clapperboard,
+  Play,
   Trash2,
   X,
   type LucideIcon
 } from 'lucide-react'
 import { indentAt, insertAfter, moveAt, nodeAt, outdentAt, removeAt, updateAt, type BookmarkNode, type Path } from './outlineEdit'
 import type { Layer } from './layers'
+import type { MediaItem } from './media'
 import { getPageClip, onPageClip } from './pageClipboard'
 import { useEffect, useRef, useState } from 'react'
 import type { AttachmentInfo, OutlineNode, PageSize, PdfClient } from './pdfClient'
 
 const THUMB_WIDTH = 132
 
-export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers'
+export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media'
 
 /** A page edit requested from the thumbnail pane. `move.before` is an index in the current order (page count = end). */
 export type PageOp =
@@ -64,6 +67,10 @@ interface Props {
   onRemoveAttachment?: (a: AttachmentInfo) => void
   onSaveAllAttachments?: () => void
   layers: Layer[]
+  /** Audio, video and 3D found in the document; null while it is being looked for. */
+  media: MediaItem[] | null
+  onPlayMedia: (m: MediaItem) => void
+  onSaveMedia: (m: MediaItem) => void
   isLayerVisible: (key: string) => boolean
   onToggleLayer: (key: string) => void
   /** The Comments tab, rendered by the document view. */
@@ -77,7 +84,8 @@ const TABS: [SidebarTab, string, LucideIcon][] = [
   ['bookmarks', 'Bookmarks', Bookmark],
   ['comments', 'Comments', MessageSquare],
   ['attachments', 'Attachments', Paperclip],
-  ['layers', 'Layers', Layers]
+  ['layers', 'Layers', Layers],
+  ['media', 'Media', Clapperboard]
 ]
 
 export function Sidebar(props: Props) {
@@ -109,6 +117,8 @@ export function Sidebar(props: Props) {
         props.comments
       ) : tab === 'attachments' ? (
         <Attachments list={props.attachments} onSave={props.onSaveAttachment} onAdd={props.onAddAttachments} onRemove={props.onRemoveAttachment} onSaveAll={props.onSaveAllAttachments} />
+      ) : tab === 'media' ? (
+        <MediaList list={props.media} onGoTo={onGoTo} onPlay={props.onPlayMedia} onSave={props.onSaveMedia} />
       ) : (
         <LayerList layers={props.layers} isVisible={props.isLayerVisible} onToggle={props.onToggleLayer} />
       )}
@@ -169,6 +179,38 @@ function Attachments({ list, onSave, onAdd, onRemove, onSaveAll }: { list: Attac
         </ul>
       )}
     </>
+  )
+}
+
+function MediaList({ list, onGoTo, onPlay, onSave }: { list: MediaItem[] | null; onGoTo: (page: number) => void; onPlay: (m: MediaItem) => void; onSave: (m: MediaItem) => void }) {
+  if (list === null) return <div className="side-empty">Looking for media…</div>
+  if (!list.length) return <div className="side-empty">This document has no audio, video or 3D content.</div>
+  return (
+    <ul className="side-list" aria-label="Media">
+      {list.map((m) => (
+        <li key={m.id}>
+          <Clapperboard className="side-list-icon" size={18} strokeWidth={1.6} aria-hidden />
+          <span className="side-list-text">
+            <button className="link-btn" onClick={() => onGoTo(m.page)} title="Go to the page">
+              <span className="side-list-name">{m.name}</span>
+            </button>
+            <span className="muted small">
+              {m.kind === '3d' ? '3D content: cannot be shown here' : `${m.kind === 'audio' ? 'Audio' : 'Video'} · ${formatSize(m.size)}${m.playable ? '' : ' · this format cannot be played here'}`} · page {m.page + 1}
+            </span>
+          </span>
+          {m.playable && (
+            <button className="icon-btn" onClick={() => onPlay(m)} aria-label={`Play ${m.name}`} title="Play">
+              <Play size={16} strokeWidth={1.8} aria-hidden />
+            </button>
+          )}
+          {m.kind !== '3d' && (
+            <button className="icon-btn" onClick={() => onSave(m)} aria-label={`Save ${m.name}`} title="Save a copy of this file…">
+              <Download size={16} strokeWidth={1.8} aria-hidden />
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
   )
 }
 

@@ -96,7 +96,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Command-line interface and scripting API (`OpenPDF --batch <action> --out <folder> ...`, action files as JSON, exit codes and a JSON report; the scripting surface is the action file, there is no embedded scripting language)
 - [x] Compare two documents (text and visual) (Organise > Compare: word-level changes with context and pages; page overlays with red for only-in-first and blue for only-in-second, and a check of every page)
 - [x] Portfolios/packages, embedded files (Attachments pane: add, save all, remove; Convert > Portfolio makes a package with a cover page and a /Collection entry; portfolios open on their file list)
-- [ ] 3D, multimedia and rich media playback (low priority)
+- [x] 3D, multimedia and rich media playback (low priority) (Media pane: audio and video from Screen, Movie and RichMedia annotations play in the built-in player or can be saved; 3D content is listed but NOT rendered: there is no U3D or PRC viewer)
 - [x] Plugin API and extension store (File > Plugins: sandboxed script plugins that return batch steps within the permissions in their manifest; install from a folder, a zip or a catalogue with SHA-256 checking, no catalogue is hosted by this project, the address is the user's)
 - [x] Optional cloud connectors (OneDrive, SharePoint, Google Drive) (Places menu: synced OneDrive, SharePoint, Google Drive and Dropbox folders found on the computer, opened as real folders. No direct API connection: that needs an app registration with each provider)
 

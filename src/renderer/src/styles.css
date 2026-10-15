@@ -2674,3 +2674,16 @@ button.compare-item:hover {
   overflow: auto;
   min-width: 340px;
 }
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.link-btn:hover .side-list-name {
+  text-decoration: underline;
+}
