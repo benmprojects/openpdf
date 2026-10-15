@@ -17,7 +17,8 @@ Everything below is committed (see `git log`). Phase 3 was built in a second ses
 ## Verified and not verified
 - Verified in the running app (CDP, on a copy of a test PDF): page selection, rotate with undo/redo, delete with undo and the Delete key, drag reorder with undo, the Extract and Split dialogs opening with the right prefilled values, no console errors, and the right-click menu staying inside the 798 px window (last thumb near the bottom, first thumb at the top-left, a click near the right edge; all eight items reachable; edges are within half a pixel of the window edge).
 - Verified by script: `npx tsx scripts/pageops-check.mts` passes 10 of 10 (the pdf-lib operations and the page-range parser).
-- **Not verified (needs a hand test):** the native file dialogs used by insert and merge, the save step inside extract, and split (including writing the files into a chosen folder). The CDP harness cannot drive native dialogs.
+- Verified end to end with the dialog test hook (`OPENPDF_E2E=1`, see `src/main/index.ts`): insert (page order and undo), merge, extract (including a typed range) and split (two files, second run did not overwrite). Saved files were checked with PyMuPDF; no console errors.
+- **Still not verified:** the real native dialog windows themselves (open, save, folder pick). The hook replaces them, so what is untested is Electron's dialog calls, not our page logic.
 - The Save As dialog, the close-with-unsaved-changes prompts and window close with unsaved changes are also still untested by hand.
 
 ## Known issues and limits
@@ -31,10 +32,9 @@ Everything below is committed (see `git log`). Phase 3 was built in a second ses
 - Git: no remote yet.
 
 ## Suggested next steps
-1. Hand-test the native-dialog operations (insert, merge, extract-save, split), then tick the matching ROADMAP items.
-2. Finish Phase 1 gaps that users notice first: print and rotate view.
-3. Add Vitest and move the CDP checks into a repeatable e2e script.
-4. Remaining Phase 3: watermarks, headers and footers, page numbers, then metadata.
+1. Finish Phase 1 gaps that users notice first: print and rotate view.
+2. Add Vitest and move the CDP checks into a repeatable e2e script.
+3. Remaining Phase 3: watermarks, headers and footers, page numbers, then metadata.
 
 ## Decisions already made
 Electron + React + PDFium; MIT licence; do not write our own engine; no reverse engineering of proprietary software; KillerPDF (GPLv3) and Stirling-PDF are references only.

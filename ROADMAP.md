@@ -50,8 +50,8 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 
 ## Phase 3: Page and document organisation (P0)
 - [x] Rotate, delete and reorder pages (thumbnail pane: select, right-click menu, drag; undo/redo; verified in the app)
-- [ ] Extract and insert pages: built, and the pdf-lib operations pass `scripts/pageops-check.mts`, but the native file dialogs and saved output have not been hand-tested
-- [ ] Merge and split by page count: built, same caveat as above (native dialogs, folder writing)
+- [x] Extract and insert pages (verified end to end with the dialog test hook: saved files checked with PyMuPDF; the real native dialog windows were not exercised)
+- [x] Merge and split by page count (same; split never overwrites existing files)
 - [ ] Copy and replace pages; split by bookmark or size
 - [ ] Crop, resize, headers and footers, Bates numbering, page numbers
 - [ ] Watermarks and backgrounds
