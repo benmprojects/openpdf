@@ -4,6 +4,8 @@ import type { EncryptionInfo, EncryptOptions } from '../shared/pdfSecurity'
 import type { PrintLayout } from '../shared/printLayout'
 import type { ImageStamp } from '../main/stamps'
 import type { CertInfo, ChainResult, SignSource } from '../main/signing'
+import type { OcrResult } from '../main/ocr'
+import type { ScanOptions, ScannerInfo } from '../main/scan'
 
 export type { ImageStamp }
 
@@ -56,6 +58,14 @@ const api = {
   decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
   /** The file encrypted with new passwords and permissions. */
   encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** Scanners Windows knows about. */
+  listScanners: (): Promise<ScannerInfo[]> => ipcRenderer.invoke('scan:devices'),
+  /** Scans; one PNG per sheet (empty when the scanner's own window was cancelled). */
+  scan: (o: ScanOptions): Promise<Uint8Array[]> => ipcRenderer.invoke('scan:acquire', o),
+  /** Languages text recognition offers, and which are already on this computer. */
+  ocrLanguages: (): Promise<{ installed: string[]; all: [string, string][] }> => ipcRenderer.invoke('ocr:languages'),
+  /** Recognises the text in a page image (PNG or JPEG). */
+  ocrRecognise: (image: Uint8Array, languages: string[]): Promise<OcrResult> => ipcRenderer.invoke('ocr:recognise', image, languages),
   /** Picks several files at once (empty when cancelled). */
   pickFiles: (filter?: { name: string; ext: string[] }): Promise<{ name: string; data: Uint8Array }[]> => ipcRenderer.invoke('file:pick-many', filter),
   /** Asks for an .html file and prints it to a PDF (scripts and network off); null when cancelled. */

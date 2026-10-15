@@ -59,9 +59,9 @@ export async function normalisePicture(data: Uint8Array): Promise<{ kind: 'png' 
 }
 
 /** Page size for a picture: its own size at 96 dpi, or a standard page it is fitted to (turned sideways when it is wide). */
-export function pageFor(pixelW: number, pixelH: number, choice: PageSizeChoice): { page: [number, number]; box: { x: number; y: number; w: number; h: number } } {
+export function pageFor(pixelW: number, pixelH: number, choice: PageSizeChoice, dpi = 96): { page: [number, number]; box: { x: number; y: number; w: number; h: number } } {
   if (choice === 'image') {
-    const k = Math.min(0.75, MAX_PT / Math.max(pixelW, pixelH))
+    const k = Math.min(72 / dpi, MAX_PT / Math.max(pixelW, pixelH))
     const w = pixelW * k
     const h = pixelH * k
     return { page: [w, h], box: { x: 0, y: 0, w, h } }
@@ -76,12 +76,12 @@ export function pageFor(pixelW: number, pixelH: number, choice: PageSizeChoice):
 }
 
 /** A PDF with one picture per page. */
-export async function imagesToPdf(images: { name: string; data: Uint8Array }[], choice: PageSizeChoice = 'image'): Promise<Uint8Array> {
+export async function imagesToPdf(images: { name: string; data: Uint8Array }[], choice: PageSizeChoice = 'image', dpi = 96): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   for (const img of images) {
     const pic = await normalisePicture(img.data)
     const embedded = pic.kind === 'png' ? await doc.embedPng(pic.data) : await doc.embedJpg(pic.data)
-    const { page, box } = pageFor(embedded.width, embedded.height, choice)
+    const { page, box } = pageFor(embedded.width, embedded.height, choice, dpi)
     doc.addPage(page).drawImage(embedded, { x: box.x, y: box.y, width: box.w, height: box.h })
   }
   return doc.save()

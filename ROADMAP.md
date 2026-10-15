@@ -85,10 +85,10 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Verify PDF/A and PDF/UA compliance flags (File > Standards: the XMP claim and basic checks; not a full validator)
 
 ## Phase 7: OCR and conversion (P1)
-- [ ] OCR scanned pages to searchable text (Tesseract WASM, multiple languages)
+- [x] OCR scanned pages to searchable text (Tesseract WASM, multiple languages) (Convert tab > OCR; English bundled, 30 more languages downloaded on first use)
 - [x] Import: images, Word, Excel (via optional LibreOffice integration), HTML, text (Convert tab; Office files need LibreOffice, whose path is built but not checked here because it is not installed)
 - [x] Export: images (PNG, JPEG, TIFF), text, Word (best effort), HTML (Convert tab; text formats keep headings and paragraphs, not pictures or layout)
-- [ ] Scan from TWAIN/WIA scanners
+- [x] Scan from TWAIN/WIA scanners (Convert tab > Scan, through WIA: the scanner's own window, or direct from the glass or a feeder; TWAIN-only devices are not supported; not tried on hardware)
 - [ ] Create PDF from clipboard and screenshots (done); PDF/A output (not yet)
 
 ## Phase 8: Productivity and automation (P2)

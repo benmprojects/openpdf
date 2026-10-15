@@ -54,6 +54,9 @@ import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
 import { CreateDialog, type CreateRequest } from './CreateDialog'
 import { imagesToPdf, textToPdf } from './createPdf'
+import { ScanDialog, type ScanRequest } from './ScanDialog'
+import { OcrDialog, type OcrRequest } from './OcrDialog'
+import { addTextLayer, fontsForLanguages, type OcrInput } from './ocrLayer'
 import { ExportImagesDialog, type ExportImagesRequest } from './ExportDialog'
 import { bodySize, encodePage, pageFileName, scaleFor, structurePage, toDocx, toHtml, type ExportBlock } from './exportDoc'
 import { groupBlocks } from './textBlocks'
@@ -221,6 +224,8 @@ import {
   Type,
   BadgeCheck,
   EyeOff,
+  ScanLine,
+  ScanText,
   FileSignature,
   ShieldAlert,
   TextSelect,
@@ -1850,6 +1855,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [createFrom, setCreateFrom] = useState<{ kind: 'images' | 'text'; files: { name: string; data: Uint8Array }[] } | null>(null)
   const [officeReady, setOfficeReady] = useState(true)
   const [exportImagesOpen, setExportImagesOpen] = useState(false)
+  const [ocrOpen, setOcrOpen] = useState(false)
+  const [scanOpen, setScanOpen] = useState(false)
   useEffect(() => {
     void window.openpdf.officeAvailable().then(setOfficeReady, () => setOfficeReady(false))
   }, [])
@@ -1896,6 +1903,80 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       return { name, data: await imagesToPdf([{ name, data: png }], 'image') }
     })
 
+  const runOcr = async (r: OcrRequest) => {
+    setOcrOpen(false)
+    if (!client) return
+    const scale = r.dpi / 72
+    const inputs: OcrInput[] = []
+    let confidence = 0
+    let todo = 0
+    setBusy(true)
+    try {
+      const list: number[] = []
+      for (let p = 0; p < pages.length; p++) {
+        if (r.scope === 'current' && p !== currentPage) continue
+        if (r.scope === 'blank' && (await client.pageText(p)).text.trim().length > 20) continue
+        list.push(p)
+      }
+      if (!list.length) {
+        setNotice({ kind: 'info', text: 'Every page already has text. Choose "All pages" to recognise them anyway.' })
+        return
+      }
+      for (const p of list) {
+        todo++
+        setNotice({ kind: 'info', text: `Recognising page ${p + 1} (${todo} of ${list.length})…` })
+        const rendered = await client.render(p, Math.min(scale, Math.sqrt(40_000_000 / (pages[p].width * pages[p].height))))
+        const png = await encodeRotatedPng(rendered.width, rendered.height, rendered.data, 0)
+        const res = await window.openpdf.ocrRecognise(png, r.languages)
+        confidence += res.confidence
+        inputs.push({ page: p, scale: rendered.width / pages[p].width, lines: res.lines })
+      }
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Text recognition failed: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    } finally {
+      setBusy(false)
+    }
+    // Non-Latin languages need an installed font that has their letters.
+    let font: Uint8Array | null = null
+    for (const family of fontsForLanguages(r.languages)) {
+      font = (await window.openpdf.findFont(family, false, false).catch(() => null))?.data ?? null
+      if (font) break
+    }
+    let words = 0
+    let skipped = 0
+    await applyPageEdit(async (b) => {
+      const out = await addTextLayer(b, inputs, font)
+      words = out.words
+      skipped = out.skipped
+      return out.bytes
+    })
+    setNotice({ kind: 'info', text: `Recognised ${words} word${words === 1 ? '' : 's'} on ${inputs.length} page${inputs.length === 1 ? '' : 's'} (average confidence ${Math.round(confidence / Math.max(1, inputs.length))}%).${skipped ? ` ${skipped} word${skipped === 1 ? '' : 's'} could not be written with the available font.` : ''}` })
+  }
+  const runScan = (r: ScanRequest) => {
+    setScanOpen(false)
+    void makeNew('Could not scan', async () => {
+      setNotice({ kind: 'info', text: 'Scanning…' })
+      const sheets = await window.openpdf.scan(r)
+      if (!sheets.length) {
+        setNotice({ kind: 'info', text: 'Nothing was scanned.' })
+        return null
+      }
+      // Direct scans know their resolution; the scanner's own window does not say, so 200 dpi is assumed for the page size.
+      const dpi = r.source === 'dialog' ? 200 : r.dpi
+      let bytes = await imagesToPdf(sheets.map((data, i) => ({ name: `scan${i + 1}.png`, data })), 'image', dpi)
+      if (r.ocr) {
+        const inputs: OcrInput[] = []
+        for (let i = 0; i < sheets.length; i++) {
+          setNotice({ kind: 'info', text: `Recognising text on sheet ${i + 1} of ${sheets.length}…` })
+          inputs.push({ page: i, scale: dpi / 72, lines: (await window.openpdf.ocrRecognise(sheets[i], ['eng'])).lines })
+        }
+        bytes = (await addTextLayer(bytes, inputs)).bytes
+      }
+      setNotice({ kind: 'info', text: `Scanned ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}.` })
+      return { name: `Scan ${today()}.pdf`, data: bytes }
+    })
+  }
   const exportStem = () => stem(name) || 'document'
   const runExportImages = async (r: ExportImagesRequest) => {
     setExportImagesOpen(false)
@@ -2929,6 +3010,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RB big icon={Globe} label="HTML" onClick={() => void exportAs('html')} disabled={!pages.length || busy} title="Save the text as a web page, with headings and paragraphs (pictures and layout are not kept)" />
               <RB big icon={FileOutput} label="Word" onClick={() => void exportAs('docx')} disabled={!pages.length || busy} title="Save the text as a Word document, with headings and paragraphs (best effort: pictures and layout are not kept)" />
             </RGroup>
+            <RGroup label="Recognise">
+              <RB big icon={ScanText} label="OCR" onClick={() => setOcrOpen(true)} disabled={!pages.length || busy || locked} title="Recognise the text in scanned pages so they can be searched and copied" />
+            </RGroup>
+            <RGroup label="Scan">
+              <RB big icon={ScanLine} label="Scan" onClick={() => setScanOpen(true)} disabled={busy} title="Scan paper with a scanner connected to this computer" />
+            </RGroup>
             <RGroup label="Create PDF">
               <RB big icon={ImageIcon} label="From pictures" onClick={() => void pickToCreate('images')} disabled={busy} title="Make a PDF from PNG, JPEG, GIF, BMP, WebP or TIFF pictures, one per page" />
               <RB big icon={FileText} label="From text" onClick={() => void pickToCreate('text')} disabled={busy} title="Make a PDF from a plain text file" />
@@ -3197,6 +3284,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }}
         />
       )}
+      {scanOpen && <ScanDialog onScan={runScan} onClose={() => setScanOpen(false)} />}
+      {ocrOpen && <OcrDialog pageCount={pages.length} currentPage={currentPage} onRun={(r) => void runOcr(r)} onClose={() => setOcrOpen(false)} />}
       {exportImagesOpen && <ExportImagesDialog pageCount={pages.length} currentPage={currentPage} onExport={(r) => void runExportImages(r)} onClose={() => setExportImagesOpen(false)} />}
       {createFrom && <CreateDialog kind={createFrom.kind} files={createFrom.files.map((f) => f.name)} onCreate={runCreate} onClose={() => setCreateFrom(null)} />}
       {signOpen && <SignDialog canCertify={sigRows.length === 0} onSign={startSign} onClose={() => setSignOpen(false)} />}

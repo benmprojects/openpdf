@@ -8,6 +8,8 @@ import { editMenuTemplate } from './spellMenu'
 import { copyEncryption, decryptPdf, encryptionInfo, encryptPdf, runQpdf } from './qpdf'
 import { chainStatus, listCertificates, pfxInfo, signCms, type SignSource } from './signing'
 import { findLibreOffice, htmlToPdf, officeToPdf, screenshot } from './convert'
+import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
+import { listScanners, scan, type ScanOptions } from './scan'
 import { addStamps, listStamps, removeStamp } from './stamps'
 import {
   addRecent,
@@ -253,6 +255,18 @@ ipcMain.handle('file:pick-one', async (e, filter?: { name: string; ext: string[]
   if (data.length > 100 * 1024 * 1024) throw new Error('Files over 100 MB cannot be attached.')
   return { name: basename(path), data: new Uint8Array(data) }
 })
+
+/** Scanning through Windows' WIA. Tests give picture paths separated by "|" instead of using a scanner. */
+ipcMain.handle('scan:devices', () => listScanners())
+ipcMain.handle('scan:acquire', async (_e, o: ScanOptions) => {
+  if (e2e && process.env.OPENPDF_E2E_SCAN) return Promise.all(process.env.OPENPDF_E2E_SCAN.split('|').map(async (f) => new Uint8Array(await readFile(f))))
+  return scan(o)
+})
+
+/** Text recognition (OCR): the languages, and one page image at a time. */
+ipcMain.handle('ocr:languages', async () => ({ installed: await installedLanguages(), all: OCR_LANGUAGES }))
+ipcMain.handle('ocr:recognise', (_e, image: Uint8Array, langs: unknown) => recognise(new Uint8Array(image), Array.isArray(langs) ? langs.filter((l): l is string => typeof l === 'string') : []))
+app.on('before-quit', () => void stopOcr())
 
 /** Picks several files (images to combine into a PDF, say). Tests give their paths separated by "|". */
 ipcMain.handle('file:pick-many', async (e, filter?: { name: string; ext: string[] }) => {
