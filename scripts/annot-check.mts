@@ -6,8 +6,8 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { deflateSync } from 'node:zlib'
 import { PDFiumLibrary } from '@hyzyla/pdfium'
 import { writeAnnotations } from '../src/renderer/src/annotWrite'
-import type { Annot } from '../src/renderer/src/annotations'
-import { readPageText } from '../src/renderer/src/pdfiumRaw'
+import { stampSize, withBounds, type Annot } from '../src/renderer/src/annotations'
+import { readPageAnnots, readPageText } from '../src/renderer/src/pdfiumRaw'
 import { findInPage, rangeRects } from '../src/renderer/src/textLogic'
 
 const [inPath, outPath, prefix] = process.argv.slice(2)
@@ -62,13 +62,20 @@ for (let p = 0; p < pageCount; p++) {
   const fox = findInPage(pt, p, 'fox', true, false)
   const mk = (kind: Annot['kind'], rects: Annot['rects'], extra: Partial<Annot> = {}): Annot => ({
     id: id++, page: p, kind, color: kind === 'highlight' ? '#ffd400' : kind === 'note' ? '#ffd400' : kind === 'textbox' ? '#1f5fd1' : '#e5322d',
-    rects, text: '', fontSize: 12, ...extra
+    rects, text: '', fontSize: 12, lineWidth: 2, ...extra
   })
   annots.push(mk('highlight', rangeRects(pt.boxes, fox[0].from, fox[0].to)))
   annots.push(mk('underline', rangeRects(pt.boxes, 4, 14)))
   annots.push(mk('strikeout', rangeRects(pt.boxes, 30, 38)))
   annots.push(mk('note', [{ x: 400, y: 100, w: 22, h: 22 }], { text: 'A sticky note' }))
   annots.push(mk('textbox', [{ x: 60, y: 300, w: 180, h: 54 }], { text: 'Hello text box, this wraps over lines. é ü 😀' }))
+  annots.push(mk('rectangle', [{ x: 300, y: 380, w: 120, h: 60 }]))
+  annots.push(mk('ellipse', [{ x: 300, y: 460, w: 120, h: 60 }], { lineWidth: 4 }))
+  annots.push(withBounds(mk('line', [], { points: [[{ x: 60, y: 480 }, { x: 240, y: 540 }]] })))
+  annots.push(withBounds(mk('arrow', [], { points: [[{ x: 60, y: 600 }, { x: 240, y: 560 }]], lineWidth: 3 })))
+  annots.push(withBounds(mk('ink', [], { points: [[{ x: 60, y: 650 }, { x: 100, y: 690 }, { x: 140, y: 650 }, { x: 180, y: 690 }]], lineWidth: 3 })))
+  const sz = stampSize('APPROVED')
+  annots.push(mk('stamp', [{ x: 300, y: 560, w: sz.w, h: sz.h }], { text: 'APPROVED' }))
 }
 const out = await writeAnnotations(src, annots)
 writeFileSync(outPath, out)
@@ -100,6 +107,18 @@ for (let p = 0; p < pageCount; p++) {
   const note = mine.find((a) => a.kind === 'note')!.rects[0]
   const tb = mine.find((a) => a.kind === 'textbox')!.rects[0]
   const ul = mine.find((a) => a.kind === 'underline')!.rects[0]
+  const rectA = mine.find((a) => a.kind === 'rectangle')!.rects[0]
+  const ellA = mine.find((a) => a.kind === 'ellipse')!.rects[0]
+  const stampA = mine.find((a) => a.kind === 'stamp')!.rects[0]
+  const lineA = mine.find((a) => a.kind === 'line')!.points![0]
+  const arrowA = mine.find((a) => a.kind === 'arrow')!.points![0]
+  const inkA = mine.find((a) => a.kind === 'ink')!.points![0]
+  const nearRed = (x: number, y: number) => countIn({ x: x - 2, y: y - 2, w: 5, h: 5 }, red) > 0.2
+  console.log(
+    `  shapes: rect top edge ${nearRed(rectA.x + rectA.w / 2, rectA.y + 1)}, ellipse left ${nearRed(ellA.x + 2, ellA.y + ellA.h / 2)},`,
+    `line mid ${nearRed((lineA[0].x + lineA[1].x) / 2, (lineA[0].y + lineA[1].y) / 2)}, arrow mid ${nearRed((arrowA[0].x + arrowA[1].x) / 2, (arrowA[0].y + arrowA[1].y) / 2)},`,
+    `ink vertex ${nearRed(inkA[1].x, inkA[1].y)}, stamp border ${nearRed(stampA.x + stampA.w / 2, stampA.y + 1)}, stamp interior red`, countIn(stampA, red)
+  )
   console.log(
     `page ${p} ${r.width}x${r.height}`,
     'highlight yellow', countIn(hl, yellow),
@@ -108,4 +127,21 @@ for (let p = 0; p < pageCount; p++) {
     '| underline red', countIn({ x: ul.x, y: ul.y + ul.h * 0.88 - 1, w: ul.w, h: 3 }, red)
   )
   page.close()
+}
+
+// Round trip: read the written annotations back through the importer and compare geometry.
+const back = await lib.loadDocument(out.slice())
+const pg = back.getPage(0)
+const got = readPageAnnots(lib, pg)
+pg.close()
+const want = annots.filter((a) => a.page === 0)
+console.log('re-imported kinds:', got.map((g) => g.kind).join(' '))
+for (const w of want) {
+  const g = got.find((x) => x.kind === w.kind && Math.abs(x.rects[0].x - w.rects[0].x) < 6 && Math.abs(x.rects[0].y - w.rects[0].y) < 6)
+  if (!g) {
+    console.log(`  MISSING ${w.kind} at`, JSON.stringify(w.rects[0]))
+    continue
+  }
+  const d = Math.max(...['x', 'y', 'w', 'h'].map((k) => Math.abs((g.rects[0] as never)[k] - (w.rects[0] as never)[k])))
+  console.log(`  ${w.kind}: max rect deviation ${d.toFixed(2)}pt, width ${g.lineWidth}${w.kind === 'stamp' ? ', label ' + g.text : ''}`)
 }

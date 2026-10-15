@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react'
+import { ShapeLayer, type Gesture } from './ShapeLayer'
 import {
+  isShapeKind,
   STRIKEOUT_AT,
   TEXTBOX_LINE_HEIGHT,
   TEXTBOX_PADDING,
@@ -24,11 +26,11 @@ interface Props {
   onSelect: (id: number | null) => void
   onMove: (id: number, dx: number, dy: number) => void
   onResize: (id: number, w: number, h: number) => void
+  onReshape: (id: number, index: number, dx: number, dy: number) => void
+  pageSize: { width: number; height: number }
   onEdit: (id: number | null) => void
   onText: (id: number, text: string) => void
 }
-
-type Gesture = { id: number; kind: 'move' | 'resize'; dx: number; dy: number }
 
 export function AnnotLayer({
   annots,
@@ -41,12 +43,14 @@ export function AnnotLayer({
   onSelect,
   onMove,
   onResize,
+  onReshape,
+  pageSize,
   onEdit,
   onText
 }: Props) {
   const [gesture, setGesture] = useState<Gesture | null>(null)
 
-  const begin = (e: React.MouseEvent, a: Annot, kind: 'move' | 'resize') => {
+  const begin = (e: React.MouseEvent, a: Annot, kind: Gesture['kind'], index?: number) => {
     if (e.button !== 0 || !interactive) return
     e.stopPropagation()
     e.preventDefault()
@@ -61,7 +65,7 @@ export function AnnotLayer({
       if (!moved && Math.hypot(dx, dy) < 3) return
       if (!moved) onTouch(a.id)
       moved = true
-      setGesture({ id: a.id, kind, dx, dy })
+      setGesture({ id: a.id, kind, dx, dy, index })
     }
     const up = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', move)
@@ -71,6 +75,7 @@ export function AnnotLayer({
       const dx = (ev.clientX - sx) / zoom
       const dy = (ev.clientY - sy) / zoom
       if (kind === 'move') onMove(a.id, dx, dy)
+      else if (kind === 'reshape') onReshape(a.id, index ?? 0, dx, dy)
       else onResize(a.id, a.rects[0].w + dx, a.rects[0].h + dy)
     }
     window.addEventListener('mousemove', move)
@@ -80,6 +85,7 @@ export function AnnotLayer({
   return (
     <div className="annot-layer">
       {annots.map((a) => {
+        if (isShapeKind(a.kind) || a.kind === 'stamp') return null
         const selected = a.id === selectedId
         const ghost = a.origin !== undefined && !touched.has(a.id)
         if (isMarkup(a.kind)) {
@@ -165,6 +171,16 @@ export function AnnotLayer({
           </div>
         )
       })}
+      <ShapeLayer
+        annots={annots.filter((a) => isShapeKind(a.kind) || a.kind === 'stamp')}
+        zoom={zoom}
+        pageSize={pageSize}
+        interactive={interactive}
+        selectedId={selectedId}
+        touched={touched}
+        gesture={gesture}
+        begin={begin}
+      />
     </div>
   )
 }

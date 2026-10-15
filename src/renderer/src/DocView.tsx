@@ -5,8 +5,15 @@ import {
   TEXTBOX_DEFAULT,
   annotLabel,
   colorChoices,
+  DEFAULT_LINE_WIDTH,
+  LINE_WIDTHS,
+  STAMP_LABELS,
   defaultColor,
+  isShapeKind,
   signature,
+  stampSize,
+  translated,
+  withBounds,
   type Annot,
   type AnnotKind
 } from './annotations'
@@ -114,13 +121,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [selectedAnnot, setSelectedAnnot] = useState<number | null>(null)
   const [editingAnnot, setEditingAnnot] = useState<number | null>(null)
   const [hasTextSelection, setHasTextSelection] = useState(false)
-  const [colors, setColors] = useState<Record<AnnotKind, string>>(() => ({
-    highlight: defaultColor('highlight'),
-    underline: defaultColor('underline'),
-    strikeout: defaultColor('strikeout'),
-    note: defaultColor('note'),
-    textbox: defaultColor('textbox')
-  }))
+  const [colors, setColors] = useState<Record<AnnotKind, string>>(() => {
+    const kinds: AnnotKind[] = ['highlight', 'underline', 'strikeout', 'note', 'textbox', 'line', 'arrow', 'rectangle', 'ellipse', 'ink', 'stamp']
+    return Object.fromEntries(kinds.map((k) => [k, defaultColor(k)])) as Record<AnnotKind, string>
+  })
+  const [drawWidth, setDrawWidth] = useState(DEFAULT_LINE_WIDTH)
+  const [stampLabel, setStampLabel] = useState(STAMP_LABELS[0])
   const [lastMarkup, setLastMarkup] = useState<AnnotKind>('highlight')
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -157,6 +163,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               rects: r.rects,
               text: r.text,
               fontSize: r.fontSize,
+              lineWidth: r.lineWidth,
+              points: r.points,
               origin: { index: r.index, subtype: r.subtype, rect: r.rect }
             }
             imported.push(a)
@@ -206,7 +214,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     color: colors[kind],
     rects,
     text,
-    fontSize: DEFAULT_FONT_SIZE
+    fontSize: DEFAULT_FONT_SIZE,
+    lineWidth: 1
   })
 
   const markSelection = useCallback(
@@ -223,19 +232,49 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   )
 
   const place = useCallback(
-    (kind: 'note' | 'textbox', page: number, x: number, y: number) => {
+    (kind: 'note' | 'textbox' | 'stamp', page: number, x: number, y: number) => {
       const size = pages[page]
       if (!size) return
-      const w = kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.w
-      const h = kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.h
-      const rect = { x: Math.max(0, Math.min(size.width - w, x)), y: Math.max(0, Math.min(size.height - h, y)), w, h }
-      const a = newAnnot(kind, page, [rect])
+      const stamp = kind === 'stamp' ? stampSize(stampLabel) : null
+      const w = stamp ? stamp.w : kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.w
+      const h = stamp ? stamp.h : kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.h
+      const left = stamp ? x - w / 2 : x // a stamp is placed centred on the click
+      const top = stamp ? y - h / 2 : y
+      const rect = { x: Math.max(0, Math.min(size.width - w, left)), y: Math.max(0, Math.min(size.height - h, top)), w, h }
+      const a = newAnnot(kind, page, [rect], stamp ? stampLabel : '')
+      if (stamp) a.lineWidth = 2
       history.commit((list) => [...list, a])
       setSelectedAnnot(a.id)
-      setEditingAnnot(a.id)
+      if (!stamp) setEditingAnnot(a.id)
       setTool('select')
     },
-    [pages, colors, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
+    [pages, colors, stampLabel, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  const createShape = useCallback(
+    (shape: Omit<Annot, 'id'>) => {
+      const a: Annot = { ...shape, id: nextAnnotId.current++ }
+      history.commit((list) => [...list, a])
+      setSelectedAnnot(a.id)
+    },
+    [history.commit]
+  )
+
+  const reshapeAnnot = useCallback(
+    (id: number, index: number, dx: number, dy: number) => {
+      touch(id)
+      history.commit((list) =>
+        list.map((a) => {
+          if (a.id !== id || !a.points) return a
+          const size = pages[a.page]
+          const first = a.points[0].map((p, i) =>
+            i === index ? { x: Math.max(0, Math.min(size.width, p.x + dx)), y: Math.max(0, Math.min(size.height, p.y + dy)) } : p
+          )
+          return withBounds({ ...a, points: [first, ...a.points.slice(1)] })
+        })
+      )
+    },
+    [pages, history.commit, touch]
   )
 
   const moveAnnot = useCallback(
@@ -248,7 +287,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           const r = a.rects[0]
           const x = Math.max(0, Math.min(size.width - r.w, r.x + dx))
           const y = Math.max(0, Math.min(size.height - r.h, r.y + dy))
-          return { ...a, rects: [{ ...r, x, y }] }
+          return translated(a, x - r.x, y - r.y)
         })
       )
     },
@@ -305,13 +344,35 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   )
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
-  const swatchKind: AnnotKind = selected?.kind ?? (tool === 'note' ? 'note' : tool === 'textbox' ? 'textbox' : lastMarkup)
+  const toolKind: AnnotKind | null =
+    tool === 'select' || tool === 'hand' ? null : tool // every remaining tool is named after the kind it creates
+  const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
+  const showWidth = isShapeKind(swatchKind) || swatchKind === 'stamp'
+  const activeWidth = selected && (isShapeKind(selected.kind) || selected.kind === 'stamp') ? selected.lineWidth : drawWidth
   const activeColor = selected ? selected.color : colors[swatchKind]
 
   const pickColor = (c: string) => {
     setColors((m) => ({ ...m, [swatchKind]: c }))
     if (selected) touch(selected.id)
     if (selected) history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, color: c } : a)))
+  }
+
+  const pickWidth = (w: number) => {
+    setDrawWidth(w)
+    if (selected && (isShapeKind(selected.kind) || selected.kind === 'stamp')) {
+      touch(selected.id)
+      history.commit((list) => list.map((a) => (a.id === selected.id ? withBounds({ ...a, lineWidth: w }) : a)))
+    }
+  }
+
+  const pickStamp = (label: string) => {
+    setStampLabel(label)
+    if (selected?.kind === 'stamp') {
+      touch(selected.id)
+      history.commit((list) =>
+        list.map((a) => (a.id === selected.id ? { ...a, text: label, rects: [{ ...a.rects[0], w: stampSize(label).w }] } : a))
+      )
+    }
   }
 
   const save = useCallback(
@@ -591,6 +652,41 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           Text box
         </button>
         <span className="sep" />
+        {(
+          [
+            ['line', 'Line', 'Draw a line: drag. Hold Shift for 45 degree steps'],
+            ['arrow', 'Arrow', 'Draw an arrow: drag. Hold Shift for 45 degree steps'],
+            ['rectangle', 'Rectangle', 'Draw a rectangle: drag. Hold Shift for a square'],
+            ['ellipse', 'Ellipse', 'Draw an ellipse: drag. Hold Shift for a circle'],
+            ['ink', 'Pencil', 'Draw freehand: drag']
+          ] as const
+        ).map(([k, label, hint]) => (
+          <button key={k} onClick={() => setTool(tool === k ? 'select' : k)} disabled={!pages.length} aria-pressed={tool === k} title={hint}>
+            {label}
+          </button>
+        ))}
+        <button onClick={() => setTool(tool === 'stamp' ? 'select' : 'stamp')} disabled={!pages.length} aria-pressed={tool === 'stamp'} title="Place a stamp: click on the page">
+          Stamp
+        </button>
+        {swatchKind === 'stamp' && (
+          <select value={selected?.kind === 'stamp' ? selected.text : stampLabel} onChange={(e) => pickStamp(e.target.value)} aria-label="Stamp text">
+            {STAMP_LABELS.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+        )}
+        {showWidth && (
+          <select value={activeWidth} onChange={(e) => pickWidth(Number(e.target.value))} aria-label="Line width" title="Line width">
+            {(LINE_WIDTHS.includes(activeWidth) ? LINE_WIDTHS : [...LINE_WIDTHS, activeWidth].sort((a, b) => a - b)).map((w) => (
+              <option key={w} value={w}>
+                {w} pt
+              </option>
+            ))}
+          </select>
+        )}
+        <span className="sep" />
         <span className="swatches" role="group" aria-label={`${annotLabel(swatchKind)} colour`}>
           {colorChoices(swatchKind).map((c) => (
             <button
@@ -729,6 +825,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               epoch={epoch}
               onAnnotText={finishText}
               onPlace={place}
+              drawStyle={{ color: colors[toolKind ?? 'line'], lineWidth: drawWidth }}
+              onCreateShape={createShape}
+              onReshapeAnnot={reshapeAnnot}
               onSelectionChange={setHasTextSelection}
               matches={matches}
               currentMatch={current}

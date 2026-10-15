@@ -36,8 +36,10 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [ ] Squiggly, replace text, insert caret
 - [x] Sticky note, text box (free text)
 - [ ] Callout, typewriter
-- [ ] Line, arrow, rectangle, ellipse, polygon, polyline, cloud, pencil/ink, eraser
-- [ ] Stamps (built-in, custom image, dynamic with date, time and user)
+- [x] Line, arrow, rectangle, ellipse, pencil/ink (move, reshape, resize, colour, width)
+- [ ] Polygon, polyline, cloud, eraser, fill colour, dashed lines
+- [x] Stamps: built-in text stamps (colour, resize)
+- [ ] Custom image stamps, dynamic stamps with date, time and user
 - [ ] Comment list: sort, filter, reply threads, status, summarise, export
 - [x] Colour choice, move, resize, delete, undo/redo, Save and Save As
 - [ ] Properties panel (font, opacity, border), saved tool presets, custom tool sets

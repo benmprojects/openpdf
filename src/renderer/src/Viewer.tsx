@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { AnnotLayer } from './AnnotLayer'
-import { isMarkup, pointInRect, NOTE_SIZE, type Annot } from './annotations'
+import { isMarkup, pointInRect, simplifyPath, withBounds, NOTE_SIZE, type Annot, type Pt } from './annotations'
 import type { PageSize, PdfClient } from './pdfClient'
 import type { PageText } from './pdfiumRaw'
 import {
@@ -28,7 +28,40 @@ export interface ViewerHandle {
   selectionRects(): Promise<{ page: number; rects: Rect[] }[]>
 }
 
-export type Tool = 'select' | 'hand' | 'note' | 'textbox'
+export type Tool =
+  | 'select'
+  | 'hand'
+  | 'note'
+  | 'textbox'
+  | 'line'
+  | 'arrow'
+  | 'rectangle'
+  | 'ellipse'
+  | 'ink'
+  | 'stamp'
+
+export interface DrawStyle {
+  color: string
+  lineWidth: number
+}
+
+function isShapeTool(t: Tool): t is 'line' | 'arrow' | 'rectangle' | 'ellipse' | 'ink' {
+  return t === 'line' || t === 'arrow' || t === 'rectangle' || t === 'ellipse' || t === 'ink'
+}
+
+/** Snap a drag to 45 degree steps (lines) or to a square (rectangles and ellipses). */
+function constrain(kind: string, a: Pt, b: Pt): Pt {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  if (kind === 'rectangle' || kind === 'ellipse') {
+    const s = Math.max(Math.abs(dx), Math.abs(dy))
+    return { x: a.x + Math.sign(dx || 1) * s, y: a.y + Math.sign(dy || 1) * s }
+  }
+  const step = Math.PI / 4
+  const ang = Math.round(Math.atan2(dy, dx) / step) * step
+  const len = Math.hypot(dx, dy)
+  return { x: a.x + len * Math.cos(ang), y: a.y + len * Math.sin(ang) }
+}
 
 interface Props {
   client: PdfClient
@@ -47,7 +80,10 @@ interface Props {
   onResizeAnnot: (id: number, w: number, h: number) => void
   onEditAnnot: (id: number | null) => void
   onAnnotText: (id: number, text: string) => void
-  onPlace: (kind: 'note' | 'textbox', page: number, x: number, y: number) => void
+  onPlace: (kind: 'note' | 'textbox' | 'stamp', page: number, x: number, y: number) => void
+  drawStyle: DrawStyle
+  onCreateShape: (a: Omit<Annot, 'id'>) => void
+  onReshapeAnnot: (id: number, index: number, dx: number, dy: number) => void
   onSelectionChange: (has: boolean) => void
   matches: Match[]
   currentMatch: number
@@ -78,6 +114,9 @@ export function Viewer({
   onEditAnnot,
   onAnnotText,
   onPlace,
+  drawStyle,
+  onCreateShape,
+  onReshapeAnnot,
   onSelectionChange,
   matches,
   currentMatch,
@@ -88,6 +127,9 @@ export function Viewer({
   const scroller = useRef<HTMLDivElement>(null)
   const pageEls = useRef<(HTMLDivElement | null)[]>([])
   const [sel, setSel] = useState<Selection | null>(null)
+  const [draft, setDraft] = useState<Annot | null>(null)
+  const drawStyleRef = useRef(drawStyle)
+  drawStyleRef.current = drawStyle
   const selRef = useRef<Selection | null>(null)
   selRef.current = sel
 
@@ -220,7 +262,58 @@ export function Viewer({
         onSelectAnnot(null)
         return
       }
-      if (tool === 'note' || tool === 'textbox') {
+      if (isShapeTool(tool)) {
+        e.preventDefault()
+        const pageIdx = Number(pageEl.dataset.page)
+        const size = pages[pageIdx]
+        const kind = tool
+        const style = drawStyleRef.current
+        const toPt = (cx: number, cy: number): Pt => {
+          const r = pageEl.getBoundingClientRect()
+          return {
+            x: Math.min(size.width, Math.max(0, (cx - r.left) / zoom)),
+            y: Math.min(size.height, Math.max(0, (cy - r.top) / zoom))
+          }
+        }
+        const start = toPt(e.clientX, e.clientY)
+        const trail: Pt[] = [start]
+        let end = start
+        const make = (to: Pt, path: Pt[]): Omit<Annot, 'id'> => {
+          const base = { page: pageIdx, kind, color: style.color, text: '', fontSize: 12, lineWidth: style.lineWidth }
+          if (kind === 'rectangle' || kind === 'ellipse') {
+            return {
+              ...base,
+              rects: [{ x: Math.min(start.x, to.x), y: Math.min(start.y, to.y), w: Math.abs(to.x - start.x), h: Math.abs(to.y - start.y) }]
+            }
+          }
+          return withBounds({ ...base, id: -1, rects: [], points: [kind === 'ink' ? path : [start, to]] })
+        }
+        const move = (ev: MouseEvent) => {
+          const cur = toPt(ev.clientX, ev.clientY)
+          if (kind === 'ink') {
+            const last = trail[trail.length - 1]
+            if (Math.hypot(cur.x - last.x, cur.y - last.y) >= 1) trail.push(cur)
+            end = cur
+          } else {
+            end = ev.shiftKey ? constrain(kind, start, cur) : cur
+          }
+          setDraft({ ...make(end, trail), id: -1 })
+        }
+        const up = () => {
+          window.removeEventListener('mousemove', move)
+          window.removeEventListener('mouseup', up)
+          setDraft(null)
+          const path = kind === 'ink' ? simplifyPath(trail, 0.6) : trail
+          const made = make(end, path)
+          const box = made.rects[0]
+          const big = kind === 'ink' ? path.length >= 2 && box.w + box.h > 4 : kind === 'line' || kind === 'arrow' ? Math.hypot(end.x - start.x, end.y - start.y) >= 4 : box.w >= 4 && box.h >= 4
+          if (big) onCreateShape(made)
+        }
+        window.addEventListener('mousemove', move)
+        window.addEventListener('mouseup', up)
+        return
+      }
+      if (tool === 'note' || tool === 'textbox' || tool === 'stamp') {
         e.preventDefault()
         const r = pageEl.getBoundingClientRect()
         const x = (e.clientX - r.left) / zoom
@@ -268,7 +361,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, zoom, pageAtDocY, onSelectAnnot, onPlace]
+    [posAt, tool, annots, zoom, pages, pageAtDocY, onSelectAnnot, onPlace, onCreateShape]
   )
 
   const ordered = useMemo(() => {
@@ -352,8 +445,9 @@ export function Viewer({
             size={size}
             zoom={zoom}
             annots={annotsByPage.get(i)}
+            draft={draft && draft.page === i ? draft : undefined}
             epoch={epoch}
-            annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onEditAnnot, onAnnotText }}
+            annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
             selection={selForPage(i)}
             matches={matchesByPage.get(i)}
             currentMatch={currentMatch}
@@ -373,6 +467,7 @@ interface PageViewProps {
   size: PageSize
   zoom: number
   annots?: Annot[]
+  draft?: Annot
   epoch: number
   annotProps: {
     tool: Tool
@@ -383,6 +478,7 @@ interface PageViewProps {
     onSelectAnnot: (id: number | null) => void
     onMoveAnnot: (id: number, dx: number, dy: number) => void
     onResizeAnnot: (id: number, w: number, h: number) => void
+    onReshapeAnnot: (id: number, index: number, dx: number, dy: number) => void
     onEditAnnot: (id: number | null) => void
     onAnnotText: (id: number, text: string) => void
   }
@@ -392,7 +488,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, epoch, annots, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, epoch, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -473,9 +569,11 @@ function PageView({ client, index, size, zoom, epoch, annots, annotProps, select
       style={{ width: cssW, height: cssH, marginBottom: GAP }}
     >
       <canvas ref={canvas} style={{ width: cssW, height: cssH }} />
-      {annots && (
+      {(annots || draft) && (
         <AnnotLayer
-          annots={annots}
+          annots={draft ? [...(annots ?? []), draft] : annots!}
+          pageSize={size}
+          onReshape={annotProps.onReshapeAnnot}
           zoom={zoom}
           interactive={annotProps.tool === 'select'}
           selectedId={annotProps.selectedAnnot}

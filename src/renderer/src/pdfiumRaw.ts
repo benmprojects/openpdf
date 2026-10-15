@@ -4,7 +4,7 @@
  * and `pageIdx` (FPDF_PAGE). Pin the @hyzyla/pdfium version and re-check these if it is upgraded.
  */
 import type { PDFiumDocument, PDFiumLibrary, PDFiumPage } from '@hyzyla/pdfium'
-import type { AnnotKind } from './annotations'
+import { pathBounds, type AnnotKind, type Pt } from './annotations'
 import type { Rect } from './textLogic'
 
 export interface OutlineNode {
@@ -148,11 +148,25 @@ export interface ImportedAnnot {
   color: string | null
   text: string
   fontSize: number
+  lineWidth: number
+  /** Line, arrow and ink geometry in display space. */
+  points?: Pt[][]
   /** Annotation /Rect in user space: left, bottom, right, top. Used to re-find the object when saving. */
   rect: [number, number, number, number]
 }
 
-const ANNOT_KINDS: Record<number, AnnotKind> = { 1: 'note', 3: 'textbox', 9: 'highlight', 10: 'underline', 12: 'strikeout' }
+const ANNOT_KINDS: Record<number, AnnotKind> = {
+  1: 'note',
+  3: 'textbox',
+  4: 'line',
+  5: 'rectangle',
+  6: 'ellipse',
+  9: 'highlight',
+  10: 'underline',
+  12: 'strikeout',
+  13: 'stamp',
+  15: 'ink'
+}
 const FLAG_HIDDEN = 2
 const FLAG_NO_VIEW = 32
 
@@ -178,6 +192,8 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
   const scratch = m.wasmExports.malloc(64)
   const keyContents = cString(m, 'Contents')
   const keyDA = cString(m, 'DA')
+  const keySubj = cString(m, 'Subj')
+  const keyLabel = cString(m, 'OPLabel')
   const out: ImportedAnnot[] = []
 
   const toDisplay = (x: number, y: number): [number, number] => {
@@ -201,7 +217,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
       if (!annot) continue
       try {
         const subtype = m._FPDFAnnot_GetSubtype(annot)
-        const kind = ANNOT_KINDS[subtype]
+        let kind = ANNOT_KINDS[subtype]
         if (!kind) continue
         if (m._FPDFAnnot_GetFlags(annot) & (FLAG_HIDDEN | FLAG_NO_VIEW)) continue
         if (!m._FPDFAnnot_GetRect(annot, scratch)) continue
@@ -211,6 +227,53 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
         const right = f.getFloat32(scratch + 8, true)
         const bottom = f.getFloat32(scratch + 12, true)
         const rect: ImportedAnnot['rect'] = [Math.min(left, right), Math.min(top, bottom), Math.max(left, right), Math.max(top, bottom)]
+
+        // Shapes are only taken on when re-drawing them as a plain stroke is faithful: lines and arrows that
+        // we or Acrobat-style tools labelled, unfilled rectangles and ellipses, ink, and our own stamps.
+        let points: Pt[][] | undefined
+        let label = ''
+        let lineWidth = 1
+        if (kind === 'line') {
+          const subj = readString(annot, keySubj)
+          if (subj !== 'Line' && subj !== 'Arrow') continue
+          if (!m._FPDFAnnot_GetLine(annot, scratch + 16, scratch + 24)) continue
+          const g = new DataView(m.HEAPU8.buffer)
+          points = [[toDisplay(g.getFloat32(scratch + 16, true), g.getFloat32(scratch + 20, true)), toDisplay(g.getFloat32(scratch + 24, true), g.getFloat32(scratch + 28, true))].map(([x, y]) => ({ x, y }))]
+          kind = subj === 'Arrow' ? 'arrow' : 'line'
+        } else if (kind === 'rectangle' || kind === 'ellipse') {
+          if (m._FPDFAnnot_GetColor(annot, 1, scratch + 32, scratch + 36, scratch + 40, scratch + 44)) continue // filled
+        } else if (kind === 'stamp') {
+          label = readString(annot, keyLabel)
+          if (!label) continue
+        } else if (kind === 'ink') {
+          points = []
+          const paths = m._FPDFAnnot_GetInkListCount(annot)
+          for (let k = 0; k < paths; k++) {
+            const count = m._FPDFAnnot_GetInkListPath(annot, k, 0, 0)
+            if (count < 2) continue
+            const buf = m.wasmExports.malloc(count * 8)
+            try {
+              m._FPDFAnnot_GetInkListPath(annot, k, buf, count)
+              const g = new DataView(m.HEAPU8.buffer)
+              const path: Pt[] = []
+              for (let q = 0; q < count; q++) {
+                const [x, y] = toDisplay(g.getFloat32(buf + q * 8, true), g.getFloat32(buf + q * 8 + 4, true))
+                path.push({ x, y })
+              }
+              points.push(path)
+            } finally {
+              m.wasmExports.free(buf)
+            }
+          }
+          if (!points.length) continue
+        }
+        if (kind === 'line' || kind === 'arrow' || kind === 'rectangle' || kind === 'ellipse' || kind === 'ink' || kind === 'stamp') {
+          lineWidth = 2
+          if (m._FPDFAnnot_GetBorder(annot, scratch + 48, scratch + 52, scratch + 56)) {
+            const w = new DataView(m.HEAPU8.buffer).getFloat32(scratch + 56, true)
+            if (w > 0) lineWidth = w
+          }
+        }
 
         let rects: Rect[] = []
         if (kind === 'highlight' || kind === 'underline' || kind === 'strikeout') {
@@ -224,6 +287,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
             if (r.w > 0 && r.h > 0) rects.push(r)
           }
         }
+        if (points) rects = [pathBounds(kind, lineWidth, points)]
         if (!rects.length) rects = [bboxOf([toDisplay(rect[0], rect[3]), toDisplay(rect[2], rect[1])])]
         if (kind === 'note') rects = [{ x: rects[0].x, y: rects[0].y, w: rects[0].w >= 4 ? rects[0].w : 22, h: rects[0].h >= 4 ? rects[0].h : 22 }]
         rects = rects.map((r) => (r.w > 0 && r.h > 0 ? r : { ...r, w: r.w || 22, h: r.h || 22 }))
@@ -246,7 +310,18 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
           else color = '#000000'
         }
 
-        out.push({ index: i, subtype, kind, rects, color, text: readString(annot, keyContents), fontSize, rect })
+        out.push({
+          index: i,
+          subtype,
+          kind,
+          rects,
+          color,
+          text: kind === 'stamp' ? label : readString(annot, keyContents),
+          fontSize,
+          lineWidth,
+          points,
+          rect
+        })
       } finally {
         m._FPDFPage_CloseAnnot(annot)
       }
@@ -255,6 +330,8 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
     m.wasmExports.free(scratch)
     m.wasmExports.free(keyContents)
     m.wasmExports.free(keyDA)
+    m.wasmExports.free(keySubj)
+    m.wasmExports.free(keyLabel)
   }
   return out
 }

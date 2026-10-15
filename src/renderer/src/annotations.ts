@@ -1,6 +1,22 @@
 import type { Rect } from './textLogic'
 
-export type AnnotKind = 'highlight' | 'underline' | 'strikeout' | 'note' | 'textbox'
+export type AnnotKind =
+  | 'highlight'
+  | 'underline'
+  | 'strikeout'
+  | 'note'
+  | 'textbox'
+  | 'line'
+  | 'arrow'
+  | 'rectangle'
+  | 'ellipse'
+  | 'ink'
+  | 'stamp'
+
+export interface Pt {
+  x: number
+  y: number
+}
 
 /**
  * An annotation that has been drawn but not yet written to the PDF. Geometry is in points from the top-left
@@ -15,9 +31,13 @@ export interface Annot {
   color: string
   /** Text markup: one rectangle per line of text. Note and text box: exactly one. */
   rects: Rect[]
-  /** Contents of a note or text box. */
+  /** Contents of a note or text box; the label of a stamp. */
   text: string
   fontSize: number
+  /** Stroke width in points, for lines, arrows, shapes, ink and stamp borders. */
+  lineWidth: number
+  /** Line and arrow: one path of two points. Ink: one path of many points. */
+  points?: Pt[][]
   /** Set when the annotation was already in the file: where to find it again when saving. */
   origin?: {
     /** Position in the page's /Annots array. */
@@ -31,7 +51,7 @@ export interface Annot {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points])
 }
 
 export const NOTE_SIZE = 22
@@ -48,8 +68,112 @@ export const LINE_WIDTH = 1
 export const MARKUP_COLORS = ['#ffd400', '#7ee081', '#6ec1ff', '#ff8ac2', '#ff9a3c', '#e5322d']
 export const TEXT_COLORS = ['#000000', '#e5322d', '#1f5fd1', '#1c8a3a']
 
+export const SHAPE_COLORS = ['#e5322d', '#1f5fd1', '#1c8a3a', '#000000', '#ff9a3c', '#7b3fe4']
+export const LINE_WIDTHS = [1, 2, 4, 6]
+export const DEFAULT_LINE_WIDTH = 2
+export const STAMP_LABELS = ['APPROVED', 'NOT APPROVED', 'DRAFT', 'FINAL', 'CONFIDENTIAL', 'FOR COMMENT', 'REVIEWED']
+
+export const isPathKind = (k: AnnotKind) => k === 'line' || k === 'arrow' || k === 'ink'
+export const isShapeKind = (k: AnnotKind) => isPathKind(k) || k === 'rectangle' || k === 'ellipse'
+/** Kinds whose size can be changed with the corner handle. */
+export const isResizable = (k: AnnotKind) => k === 'textbox' || k === 'rectangle' || k === 'ellipse' || k === 'stamp'
+
+export function arrowHeadLength(lineWidth: number): number {
+  return Math.max(9, lineWidth * 4.5)
+}
+
+/** Default size of a stamp for its label: the text sets the width. */
+export function stampSize(label: string): { w: number; h: number } {
+  return { w: Math.round(28 + label.length * 13), h: 36 }
+}
+
+/** The three points of an open arrow head at `to`, as [left barb, tip, right barb]. */
+export function arrowHeadPoints(from: Pt, to: Pt, lineWidth: number): [Pt, Pt, Pt] {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  const hl = Math.min(arrowHeadLength(lineWidth), len * 0.6)
+  const a = Math.PI / 7
+  const barb = (s: number): Pt => ({
+    x: to.x - hl * (ux * Math.cos(s) - uy * Math.sin(s)),
+    y: to.y - hl * (ux * Math.sin(s) + uy * Math.cos(s))
+  })
+  return [barb(a), to, barb(-a)]
+}
+
+/** Douglas-Peucker: drops points that lie within `epsilon` of the line between their neighbours. */
+export function simplifyPath(points: Pt[], epsilon: number): Pt[] {
+  if (points.length < 3) return points
+  const keep = new Array<boolean>(points.length).fill(false)
+  keep[0] = keep[points.length - 1] = true
+  const stack: [number, number][] = [[0, points.length - 1]]
+  while (stack.length) {
+    const [lo, hi] = stack.pop()!
+    const a = points[lo]
+    const b = points[hi]
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+    let far = -1
+    let farDist = epsilon
+    for (let i = lo + 1; i < hi; i++) {
+      const d = Math.abs((b.x - a.x) * (a.y - points[i].y) - (a.x - points[i].x) * (b.y - a.y)) / len
+      if (d > farDist) {
+        far = i
+        farDist = d
+      }
+    }
+    if (far >= 0) {
+      keep[far] = true
+      stack.push([lo, far], [far, hi])
+    }
+  }
+  return points.filter((_, i) => keep[i])
+}
+
+export function pointsBounds(paths: Pt[][], pad: number): Rect {
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (const path of paths)
+    for (const p of path) {
+      x0 = Math.min(x0, p.x)
+      y0 = Math.min(y0, p.y)
+      x1 = Math.max(x1, p.x)
+      y1 = Math.max(y1, p.y)
+    }
+  return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad }
+}
+
+/** Line, arrow and ink keep their geometry in `points`; `rects[0]` is the box around them. */
+export function pathBounds(kind: AnnotKind, lineWidth: number, points: Pt[][]): Rect {
+  const pad = kind === 'arrow' ? Math.max(lineWidth / 2, arrowHeadLength(lineWidth) * 0.6) : lineWidth / 2
+  return pointsBounds(points, pad)
+}
+
+export function withBounds(a: Annot): Annot {
+  if (!a.points || !isPathKind(a.kind)) return a
+  return { ...a, rects: [pathBounds(a.kind, a.lineWidth, a.points)] }
+}
+
+export function translated(a: Annot, dx: number, dy: number): Annot {
+  return {
+    ...a,
+    rects: a.rects.map((r) => ({ ...r, x: r.x + dx, y: r.y + dy })),
+    points: a.points?.map((path) => path.map((p) => ({ x: p.x + dx, y: p.y + dy })))
+  }
+}
+
 export function defaultColor(kind: AnnotKind): string {
   switch (kind) {
+    case 'line':
+    case 'arrow':
+    case 'rectangle':
+    case 'ellipse':
+    case 'ink':
+    case 'stamp':
+      return '#e5322d'
     case 'highlight':
     case 'note':
       return '#ffd400'
@@ -62,7 +186,8 @@ export function defaultColor(kind: AnnotKind): string {
 }
 
 export function colorChoices(kind: AnnotKind): string[] {
-  return kind === 'textbox' ? TEXT_COLORS : MARKUP_COLORS
+  if (kind === 'textbox') return TEXT_COLORS
+  return isShapeKind(kind) || kind === 'stamp' ? SHAPE_COLORS : MARKUP_COLORS
 }
 
 /** `#rrggbb` to [r, g, b] in 0..1. */
@@ -72,7 +197,19 @@ export function hexToRgb(hex: string): [number, number, number] {
 }
 
 export function annotLabel(kind: AnnotKind): string {
-  return { highlight: 'Highlight', underline: 'Underline', strikeout: 'Strikeout', note: 'Note', textbox: 'Text box' }[kind]
+  return {
+    highlight: 'Highlight',
+    underline: 'Underline',
+    strikeout: 'Strikeout',
+    note: 'Note',
+    textbox: 'Text box',
+    line: 'Line',
+    arrow: 'Arrow',
+    rectangle: 'Rectangle',
+    ellipse: 'Ellipse',
+    ink: 'Pencil',
+    stamp: 'Stamp'
+  }[kind]
 }
 
 export function isMarkup(kind: AnnotKind): boolean {

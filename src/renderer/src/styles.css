@@ -534,3 +534,26 @@ select:focus-visible {
 .tab-dirty {
   color: var(--accent);
 }
+
+.annot-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.point-handle {
+  position: absolute;
+  z-index: 3;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  cursor: move;
+  pointer-events: auto;
+}
+.annot-layer > .resize-handle {
+  z-index: 3;
+  pointer-events: auto;
+}

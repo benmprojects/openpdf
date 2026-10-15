@@ -22,6 +22,7 @@ import {
   type PDFPage
 } from 'pdf-lib'
 import {
+  arrowHeadPoints,
   hexToRgb,
   LINE_WIDTH,
   STRIKEOUT_AT,
@@ -85,6 +86,7 @@ function userBounds(f: Frame, rects: Rect[]): [number, number, number, number] {
 const n = (v: number) => (Math.round(v * 1000) / 1000).toString()
 const rgb = (hex: string) => hexToRgb(hex).map(n).join(' ')
 const cm = (f: Frame) => `${f.m.map(n).join(' ')} cm`
+const stroke = (a: Annot) => `${rgb(a.color)} RG ${n(a.lineWidth)} w 1 J 1 j`
 
 /** Replace characters Helvetica (WinAnsi) cannot encode, so a note with e.g. emoji does not abort the save. */
 function winAnsiSafe(font: PDFFont, s: string): string {
@@ -129,7 +131,18 @@ export interface DeletedAnnot {
   origin: Origin
 }
 
-const SUBTYPE_NAMES: Record<number, string> = { 1: 'Text', 3: 'FreeText', 9: 'Highlight', 10: 'Underline', 12: 'StrikeOut' }
+const SUBTYPE_NAMES: Record<number, string> = {
+  1: 'Text',
+  3: 'FreeText',
+  4: 'Line',
+  5: 'Square',
+  6: 'Circle',
+  9: 'Highlight',
+  10: 'Underline',
+  12: 'StrikeOut',
+  13: 'Stamp',
+  15: 'Ink'
+}
 
 function rectOf(dict: PDFDict): number[] | null {
   const arr = dict.lookupMaybe(PDFName.of('Rect'), PDFArray)
@@ -165,6 +178,8 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
   const ctx = pdf.context
   let font: PDFFont | null = null
   const getFont = async () => (font ??= await pdf.embedFont(StandardFonts.Helvetica))
+  let boldFont: PDFFont | null = null
+  const getBold = async () => (boldFont ??= await pdf.embedFont(StandardFonts.HelveticaBold))
   const now = PDFString.fromDate(new Date())
 
   // Resolve what to remove before anything is added, so remembered indices still point at the right entries.
@@ -248,6 +263,95 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
         Open: false,
         F: 4, // Print. NoZoom/NoRotate would make viewers re-anchor the icon on rotated pages
         Contents: PDFHexString.fromText(a.text),
+        AP: { N: ap }
+      }
+    } else if (a.kind === 'line' || a.kind === 'arrow') {
+      const [p0, p1] = a.points![0]
+      let body = `${stroke(a)} ${n(p0.x)} ${n(p0.y)} m ${n(p1.x)} ${n(p1.y)} l S`
+      if (a.kind === 'arrow') {
+        const [l, tip, r] = arrowHeadPoints(p0, p1, a.lineWidth)
+        body += ` ${n(l.x)} ${n(l.y)} m ${n(tip.x)} ${n(tip.y)} l ${n(r.x)} ${n(r.y)} l S`
+      }
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
+      dict = {
+        ...base,
+        Subtype: 'Line',
+        L: [...toUser(f, p0.x, p0.y), ...toUser(f, p1.x, p1.y)],
+        LE: ['None', a.kind === 'arrow' ? 'OpenArrow' : 'None'],
+        BS: { W: a.lineWidth },
+        Border: [0, 0, a.lineWidth],
+        Subj: PDFHexString.fromText(a.kind === 'arrow' ? 'Arrow' : 'Line'),
+        AP: { N: ap }
+      }
+    } else if (a.kind === 'rectangle') {
+      const r = a.rects[0]
+      const i = a.lineWidth / 2
+      const body = `${stroke(a)} ${n(r.x + i)} ${n(r.y + i)} ${n(r.w - a.lineWidth)} ${n(r.h - a.lineWidth)} re S`
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
+      dict = {
+        ...base,
+        Subtype: 'Square',
+        BS: { W: a.lineWidth },
+        Border: [0, 0, a.lineWidth],
+        Subj: PDFHexString.fromText('Rectangle'),
+        AP: { N: ap }
+      }
+    } else if (a.kind === 'ellipse') {
+      const r = a.rects[0]
+      const rx = (r.w - a.lineWidth) / 2
+      const ry = (r.h - a.lineWidth) / 2
+      const cx = r.x + r.w / 2
+      const cy = r.y + r.h / 2
+      const k = 0.5522847498
+      const body =
+        `${stroke(a)} ${n(cx + rx)} ${n(cy)} m ` +
+        `${n(cx + rx)} ${n(cy + k * ry)} ${n(cx + k * rx)} ${n(cy + ry)} ${n(cx)} ${n(cy + ry)} c ` +
+        `${n(cx - k * rx)} ${n(cy + ry)} ${n(cx - rx)} ${n(cy + k * ry)} ${n(cx - rx)} ${n(cy)} c ` +
+        `${n(cx - rx)} ${n(cy - k * ry)} ${n(cx - k * rx)} ${n(cy - ry)} ${n(cx)} ${n(cy - ry)} c ` +
+        `${n(cx + k * rx)} ${n(cy - ry)} ${n(cx + rx)} ${n(cy - k * ry)} ${n(cx + rx)} ${n(cy)} c S`
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
+      dict = {
+        ...base,
+        Subtype: 'Circle',
+        BS: { W: a.lineWidth },
+        Border: [0, 0, a.lineWidth],
+        Subj: PDFHexString.fromText('Ellipse'),
+        AP: { N: ap }
+      }
+    } else if (a.kind === 'ink') {
+      const paths = a.points!.filter((p) => p.length >= 2)
+      const body =
+        `${stroke(a)} ` +
+        paths.map((path) => path.map((p, i) => `${n(p.x)} ${n(p.y)} ${i ? 'l' : 'm'}`).join(' ') + ' S').join(' ')
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
+      dict = {
+        ...base,
+        Subtype: 'Ink',
+        InkList: paths.map((path) => path.flatMap((p) => toUser(f, p.x, p.y))),
+        BS: { W: a.lineWidth },
+        Border: [0, 0, a.lineWidth],
+        Subj: PDFHexString.fromText('Pencil'),
+        AP: { N: ap }
+      }
+    } else if (a.kind === 'stamp') {
+      const r = a.rects[0]
+      const fnt = await getBold()
+      const label = winAnsiSafe(fnt, a.text.toUpperCase())
+      const unit = fnt.widthOfTextAtSize(label, 1) || 1
+      const size = Math.max(4, Math.min(r.h * 0.52, (r.w - 14) / unit))
+      const tx = r.x + (r.w - unit * size) / 2
+      const ty = r.y + r.h / 2 + size * 0.35
+      const i = a.lineWidth / 2
+      const body =
+        `${stroke(a)} ${n(r.x + i)} ${n(r.y + i)} ${n(r.w - a.lineWidth)} ${n(r.h - a.lineWidth)} re S ` +
+        `BT /HelvB ${n(size)} Tf ${rgb(a.color)} rg 1 0 0 -1 ${n(tx)} ${n(ty)} Tm ${fnt.encodeText(label).toString()} Tj ET`
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, { Font: { HelvB: fnt.ref } })
+      dict = {
+        ...base,
+        Subtype: 'Stamp',
+        Name: 'OpenPDFStamp',
+        Contents: PDFHexString.fromText(label),
+        OPLabel: PDFHexString.fromText(label),
         AP: { N: ap }
       }
     } else {
