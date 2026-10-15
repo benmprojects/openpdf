@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RecoveryEntry, Settings } from '../../preload'
-import { CircleHelp, FileText, FolderOpen, History, Plus, Settings2, X } from 'lucide-react'
+import { CircleHelp, FileSearch, FileText, FolderOpen, History, Plus, Settings2, X } from 'lucide-react'
 import { SettingsDialog, ShortcutsDialog } from './AppDialogs'
+import type { SearchSource } from './multiSearch'
+import { SearchPanel, type SearchJump } from './SearchPanel'
 import { Logo } from './Logo'
 import { IconButton } from './Ribbon'
 import { DocView, type DocMeta } from './DocView'
@@ -14,6 +16,8 @@ interface Tab {
   /** Has annotations that are not saved yet. */
   dirty: boolean
   recovered?: boolean
+  /** A search-in-files result to show: set the find bar and go to that match. */
+  jump?: SearchJump
 }
 
 interface Incoming {
@@ -75,14 +79,17 @@ export function App() {
   const [dialog, setDialog] = useState<'settings' | 'shortcuts' | null>(null)
   const [recentOpen, setRecentOpen] = useState(false)
   const [recovery, setRecovery] = useState<RecoveryEntry[]>([])
+  const [searchPanel, setSearchPanel] = useState(false)
+  const jumpKey = useRef(1)
   const nextId = useRef(1)
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
   const activeRef = useRef(activeId)
   activeRef.current = activeId
 
-  const addFiles = useCallback((files: Incoming[]) => {
-    if (!files.length) return
+  /** Adds tabs (or focuses ones already open). Returns the id of the tab that ends up in front. */
+  const addFiles = useCallback((files: Incoming[]): number | null => {
+    if (!files.length) return null
     let focus: number | null = null
     const fresh: Tab[] = []
     for (const f of files) {
@@ -98,6 +105,7 @@ export function App() {
     }
     if (fresh.length) setTabs((t) => [...t, ...fresh])
     if (focus !== null) setActiveId(focus)
+    return focus
   }, [])
 
   const open = useCallback(async () => {
@@ -141,6 +149,24 @@ export function App() {
       window.openpdf.getSettings().then(setSettings)
     })
   }, [addFiles])
+
+  /** Opens (or focuses) the document a search result is in and asks it to show that match. */
+  const openHit = async (source: SearchSource, j: Omit<SearchJump, 'key'>) => {
+    let id = source.path ? (tabsRef.current.find((t) => t.path === source.path)?.id ?? null) : null
+    if (id === null && !source.path) id = tabsRef.current.find((t) => t.data === source.data)?.id ?? null
+    if (id === null && source.path) {
+      try {
+        id = addFiles([await window.openpdf.readFile(source.path)])
+      } catch {
+        setError(`${source.path} could not be opened.`)
+        return
+      }
+    }
+    if (id === null) return
+    const jump = { ...j, key: jumpKey.current++ }
+    setActiveId(id)
+    setTabs((list) => list.map((t) => (t.id === id ? { ...t, jump } : t)))
+  }
 
   const restoreRecovered = async () => {
     const list = recovery
@@ -207,7 +233,11 @@ export function App() {
       }
       if (!(e.ctrlKey || e.metaKey)) return
       const k = e.key.toLowerCase()
-      if (k === 'o') {
+      if (k === 'f' && e.shiftKey) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        setSearchPanel(true)
+      } else if (k === 'o') {
         e.preventDefault()
         void open()
       } else if (k === 'w' && activeRef.current !== null) {
@@ -296,6 +326,15 @@ export function App() {
             <RecentList paths={settings.recent} onOpen={openRecent} onDismiss={() => setRecentOpen(false)} floating />
           )}
         </div>
+ <button
+          className="strip-btn"
+          onClick={() => setSearchPanel((o) => !o)}
+          aria-pressed={searchPanel}
+          title="Search in files (Ctrl+Shift+F)"
+        >
+          <FileSearch size={15} strokeWidth={1.8} aria-hidden />
+          <span>Search files</span>
+        </button>
         <IconButton icon={Settings2} className="strip-btn" label="Settings" onClick={() => setDialog('settings')} disabled={!settings} />
         <IconButton icon={CircleHelp} className="strip-btn" label="Keyboard shortcuts" title="Keyboard shortcuts (F1)" onClick={() => setDialog('shortcuts')} />
       </div>
@@ -317,6 +356,7 @@ export function App() {
       )}
       {dialog === 'settings' && settings && <SettingsDialog settings={settings} onChange={changeSettings} onClose={() => setDialog(null)} />}
       {dialog === 'shortcuts' && <ShortcutsDialog onClose={() => setDialog(null)} />}
+      <div className="workspace">
       <main className="content">
         {tabs.map((t) => (
           <DocView
@@ -328,6 +368,7 @@ export function App() {
             active={t.id === activeId}
             onMeta={updateMeta}
             recovered={t.recovered}
+            jump={t.jump}
             autosaveMinutes={settings?.autosaveMinutes ?? 0}
             sidebarWidth={settings?.sidebarWidth ?? 220}
             paneSide={settings?.paneSide ?? 'left'}
@@ -365,6 +406,14 @@ export function App() {
         )}
         {dragging && <div className="drop-overlay">Drop PDFs to open</div>}
       </main>
+      {searchPanel && (
+        <SearchPanel
+          openDocs={tabs.map((t) => ({ name: t.name, path: t.path, data: t.data }))}
+          onOpenHit={(source, j) => void openHit(source, j)}
+          onClose={() => setSearchPanel(false)}
+        />
+      )}
+      </div>
     </div>
   )
 }

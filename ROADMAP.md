@@ -26,7 +26,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Thumbnails, bookmarks/outline
 - [x] Attachments (list, save a copy), layers (show or hide, view only, printing follows the view), page labels (thumbnails, page box)
 - [x] Text search (highlight all, whole word, match case, next/previous)
-- [ ] Find in multiple files
+- [x] Find in multiple files (open documents or a folder, with subfolders; results with context; click to open at the match)
 - [x] Text select and copy
 - [x] Hand and select tools
 - [ ] Snapshot tool

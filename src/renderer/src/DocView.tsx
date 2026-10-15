@@ -26,6 +26,7 @@ import { useHistory } from './useHistory'
 import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout'
 import { GAP, PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
 import { printDocument } from './print'
+import type { SearchJump } from './SearchPanel'
 import { readLayers, withHiddenLayers, type Layer } from './layers'
 import {
   ArrowLeftRight,
@@ -119,6 +120,8 @@ interface Props {
   onSidebarWidth: (w: number) => void
   onOpen: () => void
   onCloseDoc: () => void
+  /** A search-in-files result to show. */
+  jump?: SearchJump
 }
 
 type RibbonTab = 'file' | 'home' | 'comment' | 'organise' | 'view'
@@ -145,7 +148,7 @@ function compactRanges(pages: number[]): string {
   return out.join(', ')
 }
 
-export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onCloseDoc }: Props) {
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onCloseDoc, jump }: Props) {
   const [ribbon, setRibbon] = useState<RibbonTab>('home')
   // Pages selected in the thumbnail pane; the Organise tab acts on them, or on the current page if none are.
   const [pageSel, setPageSel] = useState<number[]>([])
@@ -801,6 +804,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [searching, setSearching] = useState(false)
   const searchInput = useRef<HTMLInputElement>(null)
   const runId = useRef(0)
+  // A search-in-files result: fill in the find bar and go to that match once the search reaches it.
+  const jumpTarget = useRef<{ page: number; from: number } | null>(null)
+  useEffect(() => {
+    if (!jump) return
+    jumpTarget.current = { page: jump.page, from: jump.from }
+    setQuery(jump.query)
+    setMatchCase(jump.matchCase)
+    setWholeWord(jump.wholeWord)
+    setSearchOpen(true)
+    // The query may be unchanged, in which case the search does not rerun; go straight there.
+    const hit = matchesRef.current.findIndex((m) => m.page === jump.page && m.from === jump.from)
+    if (hit >= 0) {
+      jumpTarget.current = null
+      setCurrent(hit)
+      viewer.current?.scrollToMatch(matchesRef.current[hit])
+    }
+  }, [jump?.key]) // eslint-disable-line react-hooks/exhaustive-deps
   const matchesRef = useRef(matches)
   matchesRef.current = matches
   const currentRef = useRef(current)
@@ -827,17 +847,27 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         }
         if (run !== runId.current) return
         if (all.length >= MAX_MATCHES) break
-        if (all.length && !jumped) {
+        const t = jumpTarget.current
+        const targetAt = t ? all.findIndex((m) => m.page === t.page && m.from === t.from) : -1
+        if (!jumped && (t ? targetAt >= 0 : all.length > 0)) {
           jumped = true
+          jumpTarget.current = null
+          const at = Math.max(0, targetAt)
           setMatches([...all])
-          setCurrent(0)
-          viewer.current?.scrollToMatch(all[0])
+          setCurrent(at)
+          viewer.current?.scrollToMatch(all[at])
         } else if (p % 25 === 0) {
           setMatches([...all])
         }
       }
       if (run !== runId.current) return
       setMatches(all)
+      if (!jumped && all.length) {
+        // The target was not found (the file changed since): show the first match instead.
+        jumpTarget.current = null
+        setCurrent(0)
+        viewer.current?.scrollToMatch(all[0])
+      }
       if (!all.length) setCurrent(-1)
       setSearching(false)
     }, 200)
@@ -882,7 +912,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && !inField && selectedAnnot !== null) {
         e.preventDefault()
         removeAnnot(selectedAnnot)
-      } else if (ctrl && e.key.toLowerCase() === 'f') {
+      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault()
         openSearch()
       } else if (e.key === 'F3' || (ctrl && e.key.toLowerCase() === 'g')) {

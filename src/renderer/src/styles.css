@@ -743,10 +743,140 @@ kbd {
 }
 
 /* Layout */
+.workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
 .content {
   position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
+}
+
+/* Search in files */
+.search-panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 360px;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.search-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+.search-panel-head h2 {
+  flex: 1;
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.search-panel-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.search-panel-form input[type='search'] {
+  min-height: 30px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.search-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.search-panel-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.search-panel-folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-panel-status {
+  padding: 6px 14px;
+}
+.search-results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 12px;
+}
+.search-results ul {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+.search-file,
+.search-hit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.search-file:hover,
+.search-hit:hover {
+  background: var(--panel-3);
+}
+.search-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-hit {
+  align-items: baseline;
+  padding-left: 26px;
+  font-size: 12px;
+}
+.search-hit-page {
+  flex: none;
+  min-width: 34px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.search-hit-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-hit mark {
+  color: inherit;
+  background: var(--match);
+  border-radius: 2px;
+}
+.search-error {
+  padding: 2px 6px 6px 46px;
+  color: var(--danger-text);
 }
 .docview {
   flex-direction: column;

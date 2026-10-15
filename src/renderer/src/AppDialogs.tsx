@@ -77,6 +77,7 @@ export const SHORTCUTS: [string, string][] = [
   ['Ctrl+W', 'Close tab'],
   ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous tab'],
   ['Ctrl+F', 'Find'],
+  ['Ctrl+Shift+F', 'Search in files (open documents or a folder)'],
   ['F3 / Shift+F3, Ctrl+G', 'Next / previous match'],
   ['Ctrl+C', 'Copy selected text'],
   ['Ctrl+Z / Ctrl+Y', 'Undo / redo'],

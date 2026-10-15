@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import {
@@ -162,6 +162,36 @@ ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array
   const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
   if (res.canceled || !res.filePath) return null
   return writeDocument(res.filePath, data)
+})
+
+/** Asks for a folder to search. Resolves null if cancelled. */
+ipcMain.handle('file:pick-folder', async (e) => {
+  if (e2e && process.env.OPENPDF_E2E_SEARCH_DIR) return process.env.OPENPDF_E2E_SEARCH_DIR
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { properties: ['openDirectory'] as 'openDirectory'[] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled ? null : (res.filePaths[0] ?? null)
+})
+
+/** PDF files in a folder (and its subfolders if asked), sorted by path, at most 5000. */
+ipcMain.handle('file:list-pdfs', async (_e, dir: string, recursive: boolean) => {
+  const out: string[] = []
+  const walk = async (d: string, depth: number) => {
+    let entries
+    try {
+      entries = await readdir(d, { withFileTypes: true })
+    } catch {
+      return // unreadable folder: skip it
+    }
+    for (const ent of entries) {
+      if (out.length >= 5000) return
+      const full = join(d, ent.name)
+      if (ent.isFile() && ent.name.toLowerCase().endsWith('.pdf')) out.push(full)
+      else if (recursive && ent.isDirectory() && !ent.isSymbolicLink() && depth < 32) await walk(full, depth + 1)
+    }
+  }
+  await walk(dir, 0)
+  return out.sort((a, b) => a.localeCompare(b))
 })
 
 /** Saves an embedded file under a name the user picks. Any file type; nothing is opened or run. */
