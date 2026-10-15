@@ -77,6 +77,8 @@ export type Tool =
   | 'cloud'
   | 'eraser'
   | 'link'
+  | 'fileattach'
+  | 'sound'
 
 export interface DrawStyle {
   color: string
@@ -151,7 +153,7 @@ interface Props {
   onResizeAnnot: (id: number, w: number, h: number) => void
   onEditAnnot: (id: number | null) => void
   onAnnotText: (id: number, text: string) => void
-  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter', page: number, x: number, y: number) => void
+  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound', page: number, x: number, y: number) => void
   drawStyle: DrawStyle
   onCreateShape: (a: Omit<Annot, 'id'>) => void
   onReshapeAnnot: (id: number, index: number, dx: number, dy: number) => void
@@ -843,7 +845,7 @@ export function Viewer({
         window.addEventListener('mouseup', up)
         return
       }
-      if (tool === 'note' || tool === 'textbox' || tool === 'stamp' || tool === 'caret' || tool === 'typewriter') {
+      if (tool === 'note' || tool === 'textbox' || tool === 'stamp' || tool === 'caret' || tool === 'typewriter' || tool === 'fileattach' || tool === 'sound') {
         e.preventDefault()
         const { x, y } = pointOnPage(pageEl, Number(pageEl.dataset.page), e.clientX, e.clientY)
         onPlace(tool, Number(pageEl.dataset.page), tool === 'note' ? x - NOTE_SIZE / 2 : x, tool === 'note' ? y - NOTE_SIZE / 2 : y)

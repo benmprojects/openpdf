@@ -96,13 +96,16 @@ function Attachments({ list, onSave }: { list: AttachmentInfo[]; onSave: (a: Att
   return (
     <ul className="side-list" aria-label="Attached files">
       {list.map((a) => (
-        <li key={a.index}>
+        <li key={`${a.page ?? 'doc'}-${a.index}`}>
           <FileIcon className="side-list-icon" size={18} strokeWidth={1.6} aria-hidden />
           <span className="side-list-text">
             <span className="side-list-name" title={a.name}>
               {a.name}
             </span>
-            <span className="muted small">{formatSize(a.size)}</span>
+            <span className="muted small">
+              {formatSize(a.size)}
+              {a.page !== undefined ? ` · on page ${a.page + 1}` : ''}
+            </span>
           </span>
           <button className="icon-btn" onClick={() => onSave(a)} aria-label={`Save ${a.name}`} title="Save a copy of this file…">
             <Download size={16} strokeWidth={1.8} aria-hidden />

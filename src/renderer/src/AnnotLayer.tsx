@@ -1,3 +1,4 @@
+import { Paperclip, Volume2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { ShapeLayer, type Gesture } from './ShapeLayer'
 import {
@@ -212,6 +213,25 @@ export function AnnotLayer({
                   aria-label="Move callout arrow"
                 />
               )}
+            </div>
+          )
+        }
+
+        if (a.kind === 'fileattach' || a.kind === 'sound') {
+          const Icon = a.kind === 'fileattach' ? Paperclip : Volume2
+          return (
+            <div
+              key={a.id}
+              className={`annot-icon${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}`}
+              role="button"
+              aria-label={`${a.kind === 'fileattach' ? 'Attached file' : 'Sound'}: ${a.file?.name ?? ''}`}
+              title={a.text || a.file?.name}
+              style={{ left: x * zoom, top: y * zoom, width: r.w * zoom, height: r.h * zoom, color: a.color }}
+              onMouseDown={(e) => begin(e, a, 'move')}
+              onDoubleClick={() => interactive && onEdit(a.id)}
+            >
+              <Icon size={Math.max(10, r.w * zoom * 0.9)} strokeWidth={2} aria-hidden />
+              {editing && <NoteEditor annot={a} label="Description" style={{ left: 0, top: r.h * zoom + 4 }} onText={onText} />}
             </div>
           )
         }

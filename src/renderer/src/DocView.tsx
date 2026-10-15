@@ -22,6 +22,7 @@ import {
   type Reply,
   type ReviewState,
   stampSize,
+  parseWav,
   imageStampSize,
   stampInfoLine,
   TEXTBOX_PADDING,
@@ -77,6 +78,7 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Paperclip,
   Link2,
   SlidersHorizontal,
   Eraser as EraserIcon,
@@ -322,7 +324,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([])
   const saveAttachment = async (a: AttachmentInfo) => {
     try {
-      const data = await clientRef.current!.attachmentData(a.index)
+      const data = await clientRef.current!.attachmentData(a.index, a.page)
       const saved = await window.openpdf.saveAttachment(a.name, data)
       if (saved) setNotice({ kind: 'info', text: `Saved ${saved}` })
     } catch (e) {
@@ -658,9 +660,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   )
 
   const place = useCallback(
-    async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter', page: number, x: number, y: number) => {
+    async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound', page: number, x: number, y: number) => {
       const size = pages[page]
       if (!size) return
+      if (kind === 'fileattach' || kind === 'sound') {
+        setTool('select')
+        const file = await window.openpdf.pickFile(kind === 'sound' ? { name: 'WAV sound', ext: ['wav'] } : undefined)
+        if (!file) return
+        if (kind === 'sound' && !parseWav(file.data)) {
+          setNotice({ kind: 'error', text: 'Only uncompressed (PCM) WAV recordings can be attached as sounds.' })
+          return
+        }
+        const a = newAnnot(kind, page, [{ x: Math.max(0, x - 10), y: Math.max(0, y - 12), w: 20, h: 24 }], '')
+        a.file = file
+        history.commit((list) => [...list, a])
+        setSelectedAnnot(a.id)
+        return
+      }
       if (kind === 'typewriter') {
         // The click marks where the first line's text starts.
         const r = typewriterRect(x - TEXTBOX_PADDING, y - DEFAULT_FONT_SIZE * 0.8, '', DEFAULT_FONT_SIZE)
@@ -1708,6 +1724,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Type} label="Text box" onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')} disabled={!pages.length} pressed={tool === 'textbox'} title="Add a text box: click on the page" />
                 <RStack>
                   <RB icon={Keyboard} label="Typewriter" onClick={() => setTool(tool === 'typewriter' ? 'select' : 'typewriter')} disabled={!pages.length} pressed={tool === 'typewriter'} title="Type straight onto the page: click where the text starts" />
+                  <RB icon={Paperclip} label="Attach file" onClick={() => setTool(tool === 'fileattach' ? 'select' : 'fileattach')} disabled={!pages.length} pressed={tool === 'fileattach'} title="Attach a file: click on the page, then choose the file" />
+                  <RB icon={Volume2} label="Sound" onClick={() => setTool(tool === 'sound' ? 'select' : 'sound')} disabled={!pages.length} pressed={tool === 'sound'} title="Attach a sound: click on the page, then choose a WAV recording" />
                   <RB icon={Link2} label="Link" onClick={() => setTool(tool === 'link' ? 'select' : 'link')} disabled={!pages.length} pressed={tool === 'link'} title="Add a link: drag a box, then choose a web address or a page" />
                   <RB icon={MessageSquareShare} label="Callout" onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title="Callout: drag from the point to call out to where the text box goes" />
                 </RStack>

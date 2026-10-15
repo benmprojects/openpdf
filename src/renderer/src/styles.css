@@ -1491,6 +1491,20 @@ kbd {
 .page-dialog input.wide {
   width: 260px;
 }
+.annot-icon {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.annot-icon.interactive {
+  pointer-events: auto;
+  cursor: move;
+}
+.annot-icon.selected {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: 2px;
+}
 .page-row {
   display: flex;
   align-items: center;

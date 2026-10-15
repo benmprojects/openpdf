@@ -122,8 +122,8 @@ export class PdfClient {
     throw new Error('Unexpected response')
   }
 
-  async attachmentData(index: number): Promise<Uint8Array> {
-    const res = await this.call({ type: 'attachmentData', index })
+  async attachmentData(index: number, page?: number): Promise<Uint8Array> {
+    const res = await this.call({ type: 'attachmentData', index, page })
     if (res.ok && res.type === 'attachmentData') return res.data
     throw new Error('Unexpected response')
   }

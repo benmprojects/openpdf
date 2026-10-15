@@ -555,13 +555,16 @@ export function renderRegion(
 }
 
 export interface AttachmentInfo {
+  /** Position in the document's embedded files, or in the page's /Annots for a file attached to a comment. */
   index: number
   name: string
   /** Size in bytes, or -1 if the file data cannot be read. */
   size: number
+  /** Set for a file attached to a comment (FileAttachment annotation) on this zero-based page. */
+  page?: number
 }
 
-/** Files embedded in the document (the EmbeddedFiles name tree). */
+/** Files embedded in the document (the EmbeddedFiles name tree), then files attached to comments, page by page. */
 export function readAttachments(lib: PDFiumLibrary, doc: PDFiumDocument): AttachmentInfo[] {
   const m = raw(lib)
   const d = docHandle(doc)
@@ -577,16 +580,51 @@ export function readAttachments(lib: PDFiumLibrary, doc: PDFiumDocument): Attach
       const size = ok ? new Uint32Array(m.HEAPU8.buffer, lenPtr, 1)[0] : -1
       out.push({ index: i, name, size })
     }
+    for (let pg = 0; pg < doc.getPageCount(); pg++) {
+      const page = doc.getPage(pg)
+      const p = pageHandle(page)
+      const n = Math.min(m._FPDFPage_GetAnnotCount(p), 5000)
+      for (let i = 0; i < n; i++) {
+        const annot = m._FPDFPage_GetAnnot(p, i)
+        if (!annot) continue
+        try {
+          if (m._FPDFAnnot_GetSubtype(annot) !== 17) continue
+          const att = m._FPDFAnnot_GetFileAttachment(annot)
+          if (!att) continue
+          const name = readUtf16(m, (buf, len) => m._FPDFAttachment_GetName(att, buf, len)) || `Attachment on page ${pg + 1}`
+          const ok = m._FPDFAttachment_GetFile(att, 0, 0, lenPtr)
+          out.push({ index: i, page: pg, name, size: ok ? new Uint32Array(m.HEAPU8.buffer, lenPtr, 1)[0] : -1 })
+        } finally {
+          m._FPDFPage_CloseAnnot(annot)
+        }
+      }
+      page.close()
+    }
   } finally {
     m.wasmExports.free(lenPtr)
   }
   return out
 }
 
-/** The bytes of one embedded file. */
-export function readAttachmentData(lib: PDFiumLibrary, doc: PDFiumDocument, index: number): Uint8Array {
+/** The bytes of one embedded file, or of the file attached to a comment when `page` is given. */
+export function readAttachmentData(lib: PDFiumLibrary, doc: PDFiumDocument, index: number, page?: number): Uint8Array {
   const m = raw(lib)
-  const att = m._FPDFDoc_GetAttachment(docHandle(doc), index)
+  let annot = 0
+  let pg: PDFiumPage | null = null
+  if (page !== undefined) {
+    pg = doc.getPage(page)
+    annot = m._FPDFPage_GetAnnot(pageHandle(pg), index)
+  }
+  try {
+    const att = annot ? m._FPDFAnnot_GetFileAttachment(annot) : m._FPDFDoc_GetAttachment(docHandle(doc), index)
+    return readAttachmentBytes(m, att)
+  } finally {
+    if (annot) m._FPDFPage_CloseAnnot(annot)
+    pg?.close()
+  }
+}
+
+function readAttachmentBytes(m: RawModule, att: number): Uint8Array {
   if (!att) throw new Error('No such attachment')
   const lenPtr = m.wasmExports.malloc(4)
   try {

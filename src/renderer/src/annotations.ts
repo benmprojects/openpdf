@@ -28,6 +28,10 @@ export type AnnotKind =
    * it keeps its own appearance and can be moved, resized, deleted and commented on.
    */
   | 'foreign'
+  /** A file attached to the page at a point (paperclip icon); the file travels inside the PDF. */
+  | 'fileattach'
+  /** A sound attached to the page (speaker icon), from a WAV recording. */
+  | 'sound'
   /** A link: a box on the page that goes to a page (`linkPage`) or opens a web address (`linkUri`). */
   | 'link'
 
@@ -104,6 +108,8 @@ export interface Annot {
   opacity?: number
   /** Text box, typewriter and callout font. Helvetica when unset. */
   fontFamily?: FontFamily
+  /** File attachment: the file. Sound: the WAV file it came from. */
+  file?: { name: string; data: Uint8Array }
   /** Link target: a web or mail address. */
   linkUri?: string
   /** Link target: a zero-based page. */
@@ -162,7 +168,7 @@ export function formatWhen(iso?: string): string {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.file ? a.file.name : null])
 }
 
 export const NOTE_SIZE = 22
@@ -363,6 +369,8 @@ export function defaultColor(kind: AnnotKind): string {
     case 'foreign':
       return '#e5322d'
     case 'link':
+    case 'fileattach':
+    case 'sound':
       return '#1f5fd1'
     case 'highlight':
     case 'note':
@@ -414,7 +422,9 @@ export function annotLabel(kind: AnnotKind): string {
     cloud: 'Cloud',
     stamp: 'Stamp',
     foreign: 'Annotation',
-    link: 'Link'
+    link: 'Link',
+    fileattach: 'File',
+    sound: 'Sound'
   }[kind]
 }
 
@@ -496,6 +506,27 @@ export function typewriterRect(x: number, y: number, text: string, size: number)
   const lines = (text || ' ').split(/\r\n|\r|\n/)
   const w = Math.max(...lines.map((l) => textWidth(l, size))) + 2 * TEXTBOX_PADDING + 2
   return { x, y, w: Math.max(12, w), h: lines.length * size * TEXTBOX_LINE_HEIGHT + 2 * TEXTBOX_PADDING }
+}
+
+/** The 16-bit or 8-bit PCM samples of a WAV file, with its format; null if it is not plain PCM WAV. */
+export function parseWav(b: Uint8Array): { rate: number; channels: number; bits: number; samples: Uint8Array } | null {
+  const v = new DataView(b.buffer, b.byteOffset, b.byteLength)
+  const tag = (o: number) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3])
+  if (b.length < 44 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null
+  let fmt: { rate: number; channels: number; bits: number } | null = null
+  for (let o = 12; o + 8 <= b.length; ) {
+    const id = tag(o)
+    const size = v.getUint32(o + 4, true)
+    if (id === 'fmt ') {
+      if (v.getUint16(o + 8, true) !== 1) return null // PCM only
+      fmt = { channels: v.getUint16(o + 10, true), rate: v.getUint32(o + 12, true), bits: v.getUint16(o + 22, true) }
+    } else if (id === 'data' && fmt) {
+      if (fmt.bits !== 8 && fmt.bits !== 16) return null
+      return { ...fmt, samples: b.subarray(o + 8, Math.min(b.length, o + 8 + size)) }
+    }
+    o += 8 + size + (size % 2)
+  }
+  return null
 }
 
 /** Where a replace or insert caret sits for a text line: just past its end, in the lower part of the line. */

@@ -24,6 +24,7 @@ import {
 import {
   arrowHeadPoints,
   calloutAttach,
+  parseWav,
   cloudCurves,
   dashArray,
   caretRectAfter,
@@ -336,7 +337,43 @@ export async function writeAnnotations(
     }
     let groupWith: PDFRef | null = null
 
-    if (a.kind === 'link') {
+    if ((a.kind === 'fileattach' || a.kind === 'sound') && a.file) {
+      const r = a.rects[0]
+      // Icons: a paperclip, or a speaker, drawn in the annotation's colour.
+      const icon =
+        a.kind === 'fileattach'
+          ? `${rgb(a.color)} RG 1.6 w 1 J 1 j ${n(r.x + r.w * 0.62)} ${n(r.y + r.h * 0.3)} m ${n(r.x + r.w * 0.62)} ${n(r.y + r.h * 0.78)} l ` +
+            `${n(r.x + r.w * 0.62)} ${n(r.y + r.h * 0.95)} ${n(r.x + r.w * 0.3)} ${n(r.y + r.h * 0.95)} ${n(r.x + r.w * 0.3)} ${n(r.y + r.h * 0.78)} c ` +
+            `${n(r.x + r.w * 0.3)} ${n(r.y + r.h * 0.18)} l ${n(r.x + r.w * 0.3)} ${n(r.y + r.h * 0.05)} ${n(r.x + r.w * 0.78)} ${n(r.y + r.h * 0.05)} ${n(r.x + r.w * 0.78)} ${n(r.y + r.h * 0.18)} c ` +
+            `${n(r.x + r.w * 0.78)} ${n(r.y + r.h * 0.7)} l S`
+          : `${rgb(a.color)} rg ${n(r.x + r.w * 0.12)} ${n(r.y + r.h * 0.36)} ${n(r.w * 0.22)} ${n(r.h * 0.28)} re f ` +
+            `${n(r.x + r.w * 0.34)} ${n(r.y + r.h * 0.36)} m ${n(r.x + r.w * 0.62)} ${n(r.y + r.h * 0.12)} l ${n(r.x + r.w * 0.62)} ${n(r.y + r.h * 0.88)} l ${n(r.x + r.w * 0.34)} ${n(r.y + r.h * 0.64)} l h f ` +
+            `${rgb(a.color)} RG 1.2 w ${n(r.x + r.w * 0.74)} ${n(r.y + r.h * 0.32)} m ${n(r.x + r.w * 0.86)} ${n(r.y + r.h * 0.5)} ${n(r.x + r.w * 0.74)} ${n(r.y + r.h * 0.68)} v S`
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${icon} Q`)
+      if (a.kind === 'fileattach') {
+        const ef = ctx.register(
+          ctx.flateStream(a.file.data, { Type: 'EmbeddedFile', Params: { Size: a.file.data.length, ModDate: now } } as never)
+        )
+        dict = {
+          ...base,
+          Subtype: 'FileAttachment',
+          Name: 'Paperclip',
+          Contents: PDFHexString.fromText(a.text || a.file.name),
+          FS: { Type: 'Filespec', F: PDFString.of(a.file.name.replace(/[^\x20-\x7e]/g, '_')), UF: PDFHexString.fromText(a.file.name), EF: { F: ef } },
+          AP: { N: ap }
+        }
+      } else {
+        const wav = parseWav(a.file.data)
+        if (!wav) continue
+        // PDF sound samples are big-endian; WAV's 16-bit samples are little-endian.
+        const samples = new Uint8Array(wav.samples)
+        if (wav.bits === 16) for (let k = 0; k + 1 < samples.length; k += 2) [samples[k], samples[k + 1]] = [samples[k + 1], samples[k]]
+        const snd = ctx.register(
+          ctx.flateStream(samples, { Type: 'Sound', R: wav.rate, C: wav.channels, B: wav.bits, E: wav.bits === 8 ? 'Raw' : 'Signed' } as never)
+        )
+        dict = { ...base, Subtype: 'Sound', Name: 'Speaker', Contents: PDFHexString.fromText(a.text || a.file.name), Sound: snd, AP: { N: ap } }
+      }
+    } else if (a.kind === 'link') {
       // No appearance: viewers show links as the page content under them.
       dict = { Type: 'Annot', Subtype: 'Link', Rect: bounds, Border: [0, 0, 0], F: 4, M: now }
       if (a.linkPage !== undefined && a.linkPage >= 0 && a.linkPage < pdf.getPageCount()) dict.Dest = [pdf.getPage(a.linkPage).ref, 'XYZ', null, null, null]

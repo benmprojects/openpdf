@@ -207,6 +207,22 @@ ipcMain.handle('stamps:add', async (e) => {
   return addStamps(paths)
 })
 
+/** Picks one file to attach (any type, or as filtered); up to 100 MB. Resolves null if cancelled. */
+ipcMain.handle('file:pick-one', async (e, filter?: { name: string; ext: string[] }) => {
+  let path: string | undefined
+  if (e2e && process.env.OPENPDF_E2E_PICK) path = process.env.OPENPDF_E2E_PICK
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { properties: ['openFile'] as 'openFile'[], filters: filter ? [{ name: filter.name, extensions: filter.ext }] : [] }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    path = res.filePaths[0]
+  }
+  const data = await readFile(path)
+  if (data.length > 100 * 1024 * 1024) throw new Error('Files over 100 MB cannot be attached.')
+  return { name: basename(path), data: new Uint8Array(data) }
+})
+
 /** Opens a link from a document in the browser, after asking. Only web and mail links. */
 ipcMain.handle('link:open', async (e, url: string) => {
   let parsed: URL

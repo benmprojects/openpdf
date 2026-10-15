@@ -30,7 +30,7 @@ export type WorkerRequest =
   | { id: number; type: 'hideAnnot'; page: number; index: number; subtype: number }
   | { id: number; type: 'setAnnotRect'; page: number; index: number; subtype: number; rect: { x: number; y: number; w: number; h: number } }
   | { id: number; type: 'attachments' }
-  | { id: number; type: 'attachmentData'; index: number }
+  | { id: number; type: 'attachmentData'; index: number; page?: number }
   | { id: number; type: 'labels' }
   | { id: number; type: 'links'; page: number }
   | { id: number; type: 'close' }
@@ -108,7 +108,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       reply({ id: msg.id, ok: true, type: 'attachments', attachments: readAttachments(library, doc) })
     } else if (msg.type === 'attachmentData') {
       if (!doc || !library) throw new Error('No document loaded')
-      const data = readAttachmentData(library, doc, msg.index)
+      const data = readAttachmentData(library, doc, msg.index, msg.page)
       reply({ id: msg.id, ok: true, type: 'attachmentData', data }, [data.buffer as ArrayBuffer])
     } else if (msg.type === 'links') {
       if (!doc || !library) throw new Error('No document loaded')
