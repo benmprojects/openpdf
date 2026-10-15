@@ -1,7 +1,7 @@
 import type { WorkerRequest, WorkerResponse } from './pdf.worker'
-import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText } from './pdfiumRaw'
+import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject } from './pdfiumRaw'
 
-export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText }
+export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject }
 
 export interface PageSize {
   width: number
@@ -158,6 +158,13 @@ export class PdfClient {
   async setAnnotRect(page: number, index: number, subtype: number, rect: { x: number; y: number; w: number; h: number }): Promise<boolean> {
     const res = await this.call({ type: 'setAnnotRect', page, index, subtype, rect })
     return res.ok && res.type === 'setAnnotRect' && res.done
+  }
+
+  /** The text objects a page draws itself, in content-stream order, and how many there are in all. */
+  async textObjects(page: number): Promise<{ objects: TextObject[]; total: number }> {
+    const res = await this.call({ type: 'textObjects', page })
+    if (res.ok && res.type === 'textObjects') return { objects: res.objects, total: res.total }
+    throw new Error('Unexpected response')
   }
 
   /** Links on a page (cached for the life of the client). */

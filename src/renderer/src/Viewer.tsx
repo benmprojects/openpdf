@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { AnnotLayer } from './AnnotLayer'
 import { CALLOUT_DEFAULT, isMarkup, pointInRect, simplifyPath, withBounds, NOTE_SIZE, type Annot, type Pt } from './annotations'
-import type { PageLink, PageSize, PdfClient } from './pdfClient'
+import type { PageLink, PageSize, PdfClient, TextObject } from './pdfClient'
+import { TextEditLayer } from './TextEditLayer'
 import type { PageText } from './pdfiumRaw'
 import {
   comparePos,
@@ -80,6 +81,7 @@ export type Tool =
   | 'fileattach'
   | 'sound'
   | 'crop'
+  | 'edittext'
 
 export interface DrawStyle {
   color: string
@@ -134,6 +136,10 @@ interface Props {
   onLinkRect: (page: number, rect: Rect) => void
   /** A link was clicked: go to a page, or (after asking) open a web address. */
   onFollowLink: (link: PageLink) => void
+  /** Edit Text tool: a text run on a page was given new text. */
+  onEditText: (page: number, obj: TextObject, total: number, text: string) => void
+  /** False while the viewer's copy of the file is out of date; text cannot be picked then. */
+  textEditReady: boolean
   /** The eraser was dragged over a page: rub out ink within `radius` of the trail (page points). */
   onErase: (page: number, trail: Pt[], radius: number) => void
   /** Rulers, grid and snapping. */
@@ -190,6 +196,8 @@ export function Viewer({
   onGuides,
   onErase,
   onFollowLink,
+  onEditText,
+  textEditReady,
   onLinkRect,
   onCropRect,
   tool,
@@ -1053,6 +1061,8 @@ export function Viewer({
                 grid={aids.grid}
                 guides={shownGuides}
                 links={tool === 'select' ? links.get(i) : undefined}
+                onEditText={onEditText}
+                textEditReady={textEditReady}
                 onVisible={loadLinks}
                 eraseTrail={eraseTrail && eraseTrail.page === i ? eraseTrail : undefined}
                 guidesInteractive={tool === 'select'}
@@ -1119,6 +1129,8 @@ interface PageViewProps {
   grid: number | null
   guides: Guide[]
   links?: PageLink[]
+  onEditText: (page: number, obj: TextObject, total: number, text: string) => void
+  textEditReady: boolean
   /** Called when the page comes near the view. */
   onVisible: (page: number) => void
   eraseTrail?: { points: Pt[]; radius: number }
@@ -1148,7 +1160,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onEditText, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -1331,6 +1343,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
           onText={annotProps.onAnnotText}
         />
       )}
+      {annotProps.tool === 'edittext' && textEditReady && <TextEditLayer client={client} page={index} zoom={zoom} onCommit={onEditText} />}
       {links && links.length > 0 && (
         <div className="link-layer" aria-hidden>
           {links.flatMap((l, k) =>

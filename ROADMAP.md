@@ -64,7 +64,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Document properties and metadata editing, XMP
 
 ## Phase 4: Content editing (P0/P1)
-- [ ] Edit existing text (font match, reflow within a text box)
+- [ ] Edit existing text (font match, reflow within a text box). Done so far: edit one text run in place (Edit tab > Edit text), redrawn in a matching standard font. Still to do: match installed fonts, reflow a paragraph
 - [ ] Edit, move, resize and replace images
 - [ ] Add and edit shapes and paths; object selection, align, distribute, z-order
 - [ ] Add and edit links; add text and images

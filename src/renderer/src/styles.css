@@ -1615,6 +1615,37 @@ button.compare-item:hover {
   flex-direction: column;
   gap: 8px;
 }
+.textedit-layer {
+  position: absolute;
+  inset: 0;
+  cursor: text;
+}
+.textedit-box {
+  position: absolute;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: text;
+}
+.textedit-box:hover,
+.textedit-box:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.textedit-input {
+  position: absolute;
+  z-index: 2;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.1;
+  white-space: pre;
+  padding: 1px 3px;
+  background: var(--panel);
+  border: 1.5px solid var(--focus);
+  border-radius: 3px;
+  box-shadow: var(--shadow-2, 0 2px 8px rgba(0, 0, 0, 0.25));
+}
 .props-form {
   min-width: 440px;
 }

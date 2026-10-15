@@ -705,6 +705,108 @@ export interface PageLink {
   uri?: string
 }
 
+export interface TextObject {
+  /** Position among the page's text objects: the k-th one is the k-th text-showing operator of the content stream. */
+  ordinal: number
+  /** Display-space box (points from the top-left of the page as shown). */
+  rect: Rect
+  text: string
+  /** Base font name without a subset prefix, and the font descriptor's flags, weight, italic angle and embedding. */
+  font: string
+  flags: number
+  weight: number
+  italic: boolean
+  embedded: boolean
+  size: number
+  /** Fill colour, #rrggbb. */
+  color: string
+  /** Text rendering mode (0 fill, 3 invisible, ...). */
+  mode: number
+  /** The object's matrix in page space: a, b, c, d, e, f. */
+  matrix: [number, number, number, number, number, number]
+}
+
+/** Text objects drawn directly by the page (not inside form XObjects), in content-stream order. */
+export function readTextObjects(lib: PDFiumLibrary, page: PDFiumPage): { objects: TextObject[]; total: number } {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
+  const GRID = 8
+  const sx = Math.round(w * GRID)
+  const sy = Math.round(h * GRID)
+  const scratch = m.wasmExports.malloc(96)
+  const tp = m._FPDFText_LoadPage(p)
+  const objects: TextObject[] = []
+  try {
+    const n = m._FPDFPage_CountObjects(p)
+    let ordinal = 0
+    for (let i = 0; i < n; i++) {
+      const obj = m._FPDFPage_GetObject(p, i)
+      if (m._FPDFPageObj_GetType(obj) !== 1) continue
+      const k = ordinal++
+      if (!m._FPDFPageObj_GetBounds(obj, scratch, scratch + 4, scratch + 8, scratch + 12)) continue
+      const f = new DataView(m.HEAPU8.buffer)
+      const l = f.getFloat32(scratch, true)
+      const b = f.getFloat32(scratch + 4, true)
+      const r = f.getFloat32(scratch + 8, true)
+      const t = f.getFloat32(scratch + 12, true)
+      m._FPDF_PageToDevice(p, 0, 0, sx, sy, 0, l, t, scratch + 32, scratch + 36)
+      m._FPDF_PageToDevice(p, 0, 0, sx, sy, 0, r, b, scratch + 40, scratch + 44)
+      const v = new DataView(m.HEAPU8.buffer)
+      const x1 = v.getInt32(scratch + 32, true) / GRID
+      const y1 = v.getInt32(scratch + 36, true) / GRID
+      const x2 = v.getInt32(scratch + 40, true) / GRID
+      const y2 = v.getInt32(scratch + 44, true) / GRID
+      const text = readUtf16(m, (buf, len) => m._FPDFTextObj_GetText(obj, tp, buf, len))
+      const font = m._FPDFTextObj_GetFont(obj)
+      let name = ''
+      const need = m._FPDFFont_GetBaseFontName(font, 0, 0)
+      if (need > 1) {
+        const buf = m.wasmExports.malloc(need)
+        try {
+          m._FPDFFont_GetBaseFontName(font, buf, need)
+          name = new TextDecoder().decode(m.HEAPU8.slice(buf, buf + need - 1))
+        } finally {
+          m.wasmExports.free(buf)
+        }
+      }
+      let size = 12
+      if (m._FPDFTextObj_GetFontSize(obj, scratch + 48)) size = new DataView(m.HEAPU8.buffer).getFloat32(scratch + 48, true)
+      let color = '#000000'
+      if (m._FPDFPageObj_GetFillColor(obj, scratch + 52, scratch + 56, scratch + 60, scratch + 64)) {
+        const c = new DataView(m.HEAPU8.buffer)
+        const hex = (o: number) => Math.min(255, c.getUint32(scratch + o, true)).toString(16).padStart(2, '0')
+        color = `#${hex(52)}${hex(56)}${hex(60)}`
+      }
+      const matrix: TextObject['matrix'] = [1, 0, 0, 1, 0, 0]
+      if (m._FPDFPageObj_GetMatrix(obj, scratch + 68)) {
+        const mm = new DataView(m.HEAPU8.buffer)
+        for (let q = 0; q < 6; q++) matrix[q] = mm.getFloat32(scratch + 68 + q * 4, true)
+      }
+      const flags = m._FPDFFont_GetFlags(font)
+      const angle = m._FPDFFont_GetItalicAngle(font, scratch + 92) ? new DataView(m.HEAPU8.buffer).getInt32(scratch + 92, true) : 0
+      objects.push({
+        ordinal: k,
+        rect: { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) },
+        text,
+        font: name.replace(/^[A-Z]{6}\+/, ''),
+        flags,
+        weight: m._FPDFFont_GetWeight(font),
+        italic: angle !== 0 || (flags & 64) !== 0,
+        embedded: m._FPDFFont_GetIsEmbedded(font) === 1,
+        size,
+        color,
+        mode: m._FPDFTextObj_GetTextRenderMode(obj),
+        matrix
+      })
+    }
+    return { objects, total: ordinal }
+  } finally {
+    m.wasmExports.free(scratch)
+    m._FPDFText_ClosePage(tp)
+  }
+}
+
 /**
  * Links on a page: link annotations (go to a page, or open a web address) and web addresses written in the text,
  * which PDFium finds itself.

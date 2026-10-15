@@ -66,6 +66,7 @@ import { readLabelRanges, writeLabelRanges, writeOutline, type BookmarkNode, typ
 import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
+import { replaceText } from './textEdit'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
@@ -225,10 +226,11 @@ interface Props {
   jump?: SearchJump
 }
 
-type RibbonTab = 'file' | 'home' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
+type RibbonTab = 'file' | 'home' | 'edit' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
   ['home', 'Home'],
+  ['edit', 'Edit'],
   ['comment', 'Comment'],
   ['draw', 'Draw'],
   ['measure', 'Measure'],
@@ -284,6 +286,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [dialogText, setDialogText] = useState('')
   const [busy, setBusy] = useState(false)
   const [client, setClient] = useState<PdfClient | null>(null)
+  /** The bytes the current client loaded: editing text needs the client to match the file, or its object numbers are stale. */
+  const [clientBytes, setClientBytes] = useState<Uint8Array | null>(null)
   const [pages, setPages] = useState<PageSize[]>([])
   const [error, setError] = useState<string | null>(null)
   const [outline, setOutline] = useState<OutlineNode[] | null>(null)
@@ -419,6 +423,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setPasswordIssue(null)
         setPages(p)
         setClient(c)
+        setClientBytes(viewBytes)
         c.outline()
           .then((o) => !cancelled && setOutline(o))
           .catch(() => !cancelled && setOutline([]))
@@ -927,7 +932,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -2078,6 +2083,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
             </>
           )}
+          {ribbon === 'edit' && (
+            <>
+              <RGroup label="Text">
+                <RB big icon={TextCursorInput} label="Edit text" onClick={() => setTool(tool === 'edittext' ? 'select' : 'edittext')} pressed={tool === 'edittext'} disabled={!pages.length || busy || !!password} title="Click a line of text to change it (the text is redrawn in a matching standard font)" />
+              </RGroup>
+              <RGroup label="Edit">
+                <RStack>{undoButtons}</RStack>
+              </RGroup>
+            </>
+          )}
           {ribbon === 'layout' && (
             <>
               <RGroup label="Header and footer">
@@ -2632,6 +2647,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onErase={eraseInk}
               onCropRect={cropToRect}
               onLinkRect={(page, rect) => setLinkDraft({ page, rect, to: 'uri', uri: 'https://', page1: String(Math.min(pages.length, page + 2)) })}
+              textEditReady={clientBytes === viewBytes && (hiddenLayers !== null || viewBytes === bytes) && !busy}
+              onEditText={(page, obj, total, text) => {
+                let hidden = false
+                void applyPageEdit(async (b) => {
+                  const r = await replaceText(b, { page, ordinal: obj.ordinal, total }, text, { font: obj.font, flags: obj.flags, weight: obj.weight, italic: obj.italic, size: obj.size, color: obj.color, matrix: obj.matrix })
+                  hidden = r.hiddenOriginal
+                  return r.bytes
+                }, text ? 'Text updated' : 'Text deleted').then(() => {
+                  if (hidden) setNotice({ kind: 'info', text: 'Text updated. The old text stays in the file, hidden, because the text after it depends on its width.' })
+                })
+              }}
               onFollowLink={(l) => (l.page !== undefined ? goTo(l.page) : l.uri ? void window.openpdf.openLink(l.uri) : undefined)}
               tool={tool}
               annots={annots}
