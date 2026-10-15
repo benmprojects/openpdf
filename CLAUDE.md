@@ -19,7 +19,7 @@ Electron + Vite + React + TypeScript. `npm run dev | build | typecheck`.
 
 ## Testing
 - `npm test`: Vitest unit tests (`src/**/*.test.ts`, node environment) for textLogic, viewRotation, pageOps and annotWrite. Modules that need PDFium or the DOM are not covered here.
-- `npm run e2e`: Playwright Electron smoke test in `e2e/`. It does not build: run `npm run build` first. Needs `python` on PATH (generates the test PDF).
+- `npm run e2e`: Playwright Electron specs in `e2e/` (smoke, shell, ribbon, look, tiles). Tests that leave a document unsaved need `OPENPDF_E2E_DISCARD=1`; always set `OPENPDF_E2E_USERDATA` to a temp folder. It does not build: run `npm run build` first. Needs `python` on PATH (generates the test PDF).
 - `npm run lint`: ESLint (flat config). typescript-eslint does not support TypeScript 7 yet, so `eslint.config.mjs` shims `typescript` to `@typescript/typescript6`; some react-hooks rules are warnings only. Installing needs `npm i --legacy-peer-deps`.
 - `npx tsx scripts/annot-check.mts in.pdf out.pdf prefix`: writes every annotation kind, renders through PDFium, re-imports, compares geometry.
 - `npx tsx scripts/hide-check.mts file.pdf`: hiding an annotation leaves the page intact.

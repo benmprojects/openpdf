@@ -8,12 +8,14 @@ An open-source (MIT) PDF workbench for Windows, with feature parity with PDF-XCh
 Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 
 ## Phase 0: Foundation
-- [ ] Repo, TypeScript, Vite, Electron, lint, test runner (Vitest + Playwright)
-- [ ] PDFium WASM worker and render pipeline (tiles, DPI-aware, off main thread)
-- [ ] Document model, undo/redo command stack, autosave and crash recovery
-- [ ] Ribbon/toolbar shell, dockable panes, tabbed documents, dark and light themes
-- [ ] Settings, keyboard shortcut map, file associations, recent files
-- [ ] CI builds (Windows installer), MIT licence, CONTRIBUTING, third-party licence notices
+- [x] Repo, TypeScript, Vite, Electron, lint, test runner (Vitest + Playwright)
+- [x] PDFium WASM worker and render pipeline (tiles above 16 Mpx, DPI-aware, off main thread)
+- [x] Document model, undo/redo, crash-recovery snapshots of unsaved work (no silent autosave to the file itself, on purpose)
+- [x] Ribbon (File, Home, Comment, Organise, View) with icons, status bar, title-bar tab strip, tabbed documents, dark and light themes
+- [ ] Dockable panes (only a resizable side pane so far)
+- [x] Settings, keyboard shortcut list (F1), recent files, single instance; .pdf file association in the installer config (installer not yet built on this machine)
+- [x] MIT licence, CONTRIBUTING, third-party licence notices (`npm run licences`), CI workflow written
+- [ ] CI run on a remote and a built NSIS installer (local build blocked: Windows refused to run the unsigned NSIS stub, EPERM)
 
 ## Phase 1: Viewer (P0)
 - [x] Open, tabs, drag and drop

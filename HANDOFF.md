@@ -1,46 +1,77 @@
 # Handoff
 
-Everything below is committed (see `git log`). Phase 3 was built in a second session; the first session did Phases 0 to 2.
+Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing, gotchas) and `ROADMAP.md` (scope and ticks) too.
 
-## Done
-- Phase 0: Electron + Vite + React app, PDFium WASM worker, open via dialog, drag and drop, command line.
-- Phase 1 (most): tabs, continuous scroll with lazy render, fit-width/fit-page/preset zoom, thumbnails, bookmarks, find (case, whole word, highlight all), text selection and copy, password-protected files, hand tool.
-- Phase 2 (most): highlight, underline, strikeout, sticky notes, text boxes, line, arrow, rectangle, ellipse, pencil, text stamps. Undo/redo, colour, width, move, resize, endpoint reshape, delete. Save and Save as write real PDF annotations. Existing highlight, underline, strikeout, note, text box, line/arrow (Subj Line/Arrow), unfilled rectangle/ellipse, ink and our own stamps can be edited and deleted.
-- Phase 1 additions (third session): rotate view and print.
-  - Rotate view: toolbar ⟲ ⟳ and Ctrl+Shift++ / Ctrl+Shift+-. Per tab, view only, never marks the tab unsaved. The `.page` box takes the rotated size; inside it `.page-stack` keeps the unrotated page frame (canvas, annotation overlay, highlights) and gets a CSS transform. All screen-to-page conversions go through `viewRotation.ts` (`toPage`, `deltaToPage`, `toDisplay`), so the annotation model, text boxes and PDFium rendering are unchanged. Fit width/page uses the rotated sizes. Thumbnails stay unrotated.
-  - Print: Print… button and Ctrl+P open a strip with pages (all, current, custom range), copies, fit to paper or actual size, and auto-rotate (landscape pages turned to fill portrait paper). Pending annotation edits are written into a copy first (same writer as Save), so the printout matches what Save would write; the file and the unsaved state are not touched. A separate PDFium worker renders one page at a time at 300 dpi (capped at 40 Mpx), encodes PNG and sends it to the main process, which spools to a temp folder; a hidden window lays out one image per sheet and calls `webContents.print` (system dialog). Temp folder is removed afterwards. Code: `print.ts`, `src/main/index.ts` (`print:*` handlers). Output is raster, so printed text is not selectable in a print-to-PDF.
-- Phase 3 (first part): in the thumbnail pane, select pages (click, Ctrl, Shift, Ctrl+A), right-click menu (rotate, delete, extract, insert from file, split), Delete key, drag to reorder, a Merge button in the toolbar. Each operation applies and reloads at once; Ctrl+Z / Ctrl+Y undo and redo; the tab is marked unsaved and Save writes it. Code: `pageOps.ts`, `Sidebar.tsx`, `DocView.tsx`.
+## How the user wants this built (decided 15/10/2026)
+- Build the whole roadmap without stopping; ask questions only when genuinely blocked.
+- **Strict phase order**: Phase 0 leftovers, then all of Phase 1, then Phase 2, and so on.
+- Native or heavy dependencies are fine if the licence is permissive (MIT, BSD, Apache, ISC). Check with `npm view <pkg> license`; never GPL/AGPL/LGPL.
+- Local commits on `main` only; the user pushes.
+- Features that need a human (real printer, native dialogs, scanners, certificates): build them, verify everything a test hook can reach, and add them to the hand-test checklist below.
+- The user asked for a professional look with icons, like a ribbon editor. Keep new UI consistent with the design system below.
 
-## Not done (see ROADMAP.md)
-- Phase 1: booklet and N-up print, single and two-page modes, marquee zoom, snapshot tool, multi-file find, attachments, layers, page labels, rulers, measurement, read-aloud.
-- Phase 2: squiggly, callout, typewriter, comment list and replies, properties panel, tool presets, FDF/XFDF, custom image stamps, polygon/polyline/cloud, eraser, fill colour, dashes, editing foreign annotation types.
-- Phase 3: copy and replace pages, split by bookmark or size, crop, resize, headers and footers, Bates numbering, page numbers, watermarks, backgrounds, bookmark and page label editing, link editing, optimise and compress, metadata.
-- Phases 4 to 9: content editing, forms, security/signatures/redaction, OCR/conversion, automation, polish.
+## Current state
+- Phases 0 to 2 (most), Phase 3 first part, plus print and rotate view, all done earlier.
+- Phase 0 is now complete except dockable panes and a real installer/CI run (see ROADMAP).
+- New this session:
+  - Print and rotate view (`print.ts`, `viewRotation.ts`).
+  - Vitest, Playwright, ESLint and the e2e specs in `e2e/`.
+  - Settings, recent files, crash recovery, themes, single instance (`src/main/settings.ts`).
+  - Ribbon UI with Lucide icons (`Ribbon.tsx`), the redesign, tiled rendering at high zoom, and packaging/CI/notices (`electron-builder.yml`, `.github/workflows/ci.yml`, `scripts/licences.mjs`).
 
-## Verified and not verified
-- Verified in the running app (CDP, on a copy of a test PDF): page selection, rotate with undo/redo, delete with undo and the Delete key, drag reorder with undo, the Extract and Split dialogs opening with the right prefilled values, no console errors, and the right-click menu staying inside the 798 px window (last thumb near the bottom, first thumb at the top-left, a click near the right edge; all eight items reachable; edges are within half a pixel of the window edge).
-- Verified by script: `npx tsx scripts/pageops-check.mts` passes 10 of 10 (the pdf-lib operations and the page-range parser).
-- Verified end to end with the dialog test hook (`OPENPDF_E2E=1`, see `src/main/index.ts`): insert (page order and undo), merge, extract (including a typed range) and split (two files, second run did not overwrite). Saved files were checked with PyMuPDF; no console errors.
-- Rotate view, verified by CDP on a copy of the test PDF (6 pages, mixed portrait/landscape): page boxes swap size at 90/270 and return after four turns; both shortcuts; Save stays clean; note placement lands within 0.3 px of the click at 0/90/180/270; text selection at 90/180/270 lies on the drag path; search highlights sit on the text and the current match scrolls into view at every rotation; dragging a rectangle by (+60, +40) screen px moves it exactly that much on screen at 90/180/270, and a resize handle at 90 follows the mouse; no console errors.
-- Print, verified with the print test hook (`OPENPDF_E2E=1` and `OPENPDF_E2E_PRINT=out.pdf` make the hidden window `printToPDF` to that path, A4, instead of opening the system dialog): all pages (6 non-blank A4 pages, landscape pages auto-rotated), custom range "1-2" at actual size (2 pages), current page (1 page), and an unsaved rectangle appears in the output while the tab stays unsaved.
-- **Print not verified:** the system print dialog, real printers, copies (only passed through to Electron), and the exact margins a real printer applies with "Fit to paper" (`printableArea`).
-- **Still not verified:** the real native dialog windows themselves (open, save, folder pick). The hook replaces them, so what is untested is Electron's dialog calls, not our page logic.
-- The Save As dialog, the close-with-unsaved-changes prompts and window close with unsaved changes are also still untested by hand.
+## Design system (keep to it)
+- Tokens at the top of `styles.css`: `--bg --panel --panel-2 --panel-3 --border --border-strong --text --muted --accent (OpenPDF red) --focus --pressed --sel --shadow-* --radius`. Light is the base; dark comes from `prefers-color-scheme`, which Electron's `nativeTheme.themeSource` drives from Settings. Never hard-code chrome colours.
+- Ribbon: `RGroup` (labelled group), `RB` (button: `big` = icon above label, otherwise icon beside label), `RStack` (column of small buttons), `IconButton` (bars). Icons are from `lucide-react` (ISC). Each ribbon tab lives in `DocView.tsx` under `ribbon === '...'`.
+- The tab strip is the window's title bar (`titleBarStyle: 'hidden'` with a `titleBarOverlay` tinted per theme). Buttons in it need `-webkit-app-region: no-drag` (already set for `.tabstrip button`, `.tab` and `.menu-anchor`).
+- Logo: `Logo.tsx`, our own artwork.
+- `e2e/look.spec.ts` screenshots the welcome screen and a document in both themes into `test-results/`. Look at them after UI changes. Playwright pins light mode, so the spec calls `emulateMedia({ colorScheme: null })`.
+
+## Key code added this session
+- `src/main/settings.ts`: settings.json (theme, recent, autosaveMinutes, author, sidebarWidth), recent list, recovery snapshots in userData/recovery.
+- `src/main/index.ts`: IPC for print (`print:*`), settings, recent, recovery; single-instance lock; title bar overlay.
+  - Test hooks:
+    - `OPENPDF_E2E=1` turns them on and skips the single-instance lock.
+    - `OPENPDF_E2E_OPEN`, `_SAVE` and `_DIR` answer the file dialogs.
+    - `_PRINT=out.pdf` makes printing write that PDF instead of showing the dialog.
+    - `_USERDATA` points settings and recovery at a scratch folder.
+    - `_DISCARD=1` answers the close-with-unsaved prompt.
+- `print.ts`: pending annotations are written into a copy, then PDFium renders one page at a time at 300 dpi (capped at 40 Mpx). The PNGs are spooled to a temp folder, and a hidden window prints them.
+- `viewRotation.ts`: view rotation keeps the page stack (canvas, overlay, highlights) in the unrotated page frame under one CSS transform. Every screen-to-page conversion goes through `toPage` / `deltaToPage` / `toDisplay`.
+- Tiling (`Viewer.tsx` PageView, `pdfiumRaw.renderRegion`): above 16 Mpx a page draws a ~3 Mpx base plus a full-resolution tile of the part in view, re-rendered on scroll.
+- Ribbon Organise tab acts on the thumbnails selected in the side pane (`Sidebar` reports them through `onSelectionChange`), or on the current page.
+
+## Tests
+- `npm test` (54 unit tests), `npm run e2e` (6 specs; run `npm run build` first), `npm run lint` (0 errors, 27 warnings), `npx tsc --noEmit`.
+- An e2e test that leaves a document unsaved must set `OPENPDF_E2E_DISCARD=1`, or `app.close()` hangs on the native prompt.
+- If an Electron test window is left open after a failed run, kill only processes whose command line contains `openpdf-e2e` or the scratchpad path.
+
+## Hand-test checklist (needs a person)
+- Printing to a real printer: the system dialog, copies, the margins with "Fit to paper".
+- Native Open, Save As and folder dialogs; the close-with-unsaved prompt; Save As cancel.
+- Installer: `npm run dist` from a normal terminal (here Windows refused to run the unsigned NSIS stub, EPERM). Then install, check the .pdf association, and check that opening a PDF from Explorer while the app runs adds a tab.
+- Window buttons in the title-bar overlay in both themes. They are drawn by Windows, so Playwright screenshots do not show them.
 
 ## Known issues and limits
-- Saving password-protected PDFs is refused, and so are page edits on them (message shown).
-- Applying a page edit first writes pending annotation edits into the file. Undoing the page edit brings them back as ordinary saved annotations, so the earlier annotation undo history is lost.
+- Saving password-protected PDFs is refused, and so are page edits on them.
+- Applying a page edit writes pending annotation edits into the file first. Undoing the page edit brings them back as ordinary saved annotations.
 - Deleting a page can leave a bookmark pointing at nothing.
-- Underline and strikeout on pages whose text runs sideways are drawn horizontally.
-- Thumbnails that have not rendered yet show a 300x150 placeholder.
-- One blank-canvas screenshot during an early edit session did not reproduce in three reruns. Watch for it.
-- No automated test runner yet (only the scripts in CLAUDE.md). Adding Vitest for `textLogic.ts`, `annotWrite.ts` and `pageOps.ts` is a cheap win.
-- Git: no remote yet.
+- Underline and strikeout on sideways text are drawn horizontally.
+- Thumbnails that have not rendered yet show a placeholder.
+- Printed output is raster: text is not selectable in a print-to-PDF.
+- Lint: some react-hooks rules are relaxed to warnings (see CLAUDE.md).
 
-## Suggested next steps
-1. Test printing once by hand on a real printer (system dialog, copies, fit margins). Then single and two-page modes.
-2. Add Vitest and move the CDP checks into a repeatable e2e script.
-3. Remaining Phase 3: watermarks, headers and footers, page numbers, then metadata.
+## Next steps (strict phase order)
+1. Phase 0 leftover: dockable panes (at least: side pane left or right, plus a bottom comments pane later). Decide a small layout model rather than a docking library unless a permissive one fits.
+2. Phase 1, in ROADMAP order:
+   - Marquee zoom; single and two-page modes.
+   - Attachments, layers (optional content), page labels.
+   - Find in multiple files.
+   - Snapshot tool.
+   - Booklet and N-up printing; presentation/full-screen mode.
+   - Read-aloud (Web Speech API), reading mode, accessibility (screen reader, high contrast).
+   - Rulers, grid, guides, measurement (distance, perimeter, area).
+   - PDFium exposes attachments (FPDFDoc_GetAttachment*), page labels (FPDF_GetPageLabel) and optional content via raw calls in `pdfiumRaw.ts`. Check the exports exist in the wasm first.
+3. Then Phase 2 gaps, Phase 3 remainder, and on through Phase 9.
 
 ## Decisions already made
-Electron + React + PDFium; MIT licence; do not write our own engine; no reverse engineering of proprietary software; KillerPDF (GPLv3) and Stirling-PDF are references only.
+Electron + React + PDFium; MIT licence; do not write our own engine; no reverse engineering of proprietary software; KillerPDF (GPLv3) and Stirling-PDF are references only; Lucide icons (ISC).
