@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, na
 import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
+import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
 import {
   addRecent,
   clearAllRecovery,
@@ -270,24 +271,32 @@ async function endJob(id: string) {
 ipcMain.handle('print:cancel', (_e, id: string) => endJob(id))
 
 /** One sheet per page. Fit: scale to the printable area keeping proportions. Actual size: the page's own size in points. */
-function printHtml(sizes: { w: number; h: number }[], fit: boolean): string {
-  const sheets = sizes
-    .map((s, n) =>
-      fit
-        ? `<div class="sheet"><img src="${n}.png"></div>`
-        : `<div class="sheet"><img src="${n}.png" style="width:${s.w}pt;height:${s.h}pt;max-width:none;max-height:none"></div>`
-    )
+function printHtml(sizes: { w: number; h: number }[], fit: boolean, layout: PrintLayout): string {
+  const { cols, rows } = sheetGrid(layout)
+  // Several pages per side are always fitted to their cell; actual size only applies to one page per sheet.
+  const actual = !fit && layout.kind === 'single'
+  const cell = (n: number | null) => {
+    if (n === null) return '<div class="cell"></div>'
+    const s = sizes[n]
+    const style = actual ? ` style="width:${s.w}pt;height:${s.h}pt;max-width:none;max-height:none"` : ''
+    return `<div class="cell"><img src="${n}.png"${style}></div>`
+  }
+  const sheets = sheetSlots(sizes.length, layout)
+    .map((slots) => `<div class="sheet">${slots.map(cell).join('')}</div>`)
     .join('')
   return `<!doctype html><html><head><meta charset="utf-8"><style>
-${fit ? '' : '@page { margin: 0 }'}
+${actual ? '@page { margin: 0 }' : ''}
 html, body { margin: 0; padding: 0; background: #fff }
-.sheet { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; break-after: page }
+.sheet { width: 100vw; height: 100vh; display: grid; grid-template-columns: repeat(${cols}, 1fr); grid-template-rows: repeat(${rows}, 1fr); gap: ${cols > 1 ? '2vw' : '0'}; overflow: hidden; break-after: page }
 .sheet:last-child { break-after: auto }
+.cell { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; overflow: hidden }
 img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain }
 </style></head><body>${sheets}</body></html>`
 }
 
-ipcMain.handle('print:run', async (e, id: string, opts: { copies: number; fit: boolean; count: number }) => {
+ipcMain.handle('print:run', async (e, id: string, opts: { copies: number; fit: boolean; count: number; layout?: PrintLayout }) => {
+  const layout: PrintLayout = opts.layout ?? { kind: 'single' }
+  const { landscape } = sheetGrid(layout)
   const job = printJobs.get(id)
   if (!job) throw new Error('Unknown print job')
   const parent = BrowserWindow.fromWebContents(e.sender) ?? undefined
@@ -298,13 +307,14 @@ ipcMain.handle('print:run', async (e, id: string, opts: { copies: number; fit: b
   })
   try {
     const html = join(job.dir, 'print.html')
-    await writeFile(html, printHtml(job.sizes.slice(0, opts.count), opts.fit))
+    await writeFile(html, printHtml(job.sizes.slice(0, opts.count), opts.fit, layout))
     await win.loadFile(html) // resolves once the page and its images have loaded
     const margins = { marginType: opts.fit ? ('printableArea' as const) : ('none' as const) }
     // Test hook: write what would be printed to a PDF instead of showing the system print dialog.
     if (e2e && process.env.OPENPDF_E2E_PRINT) {
       const pdf = await win.webContents.printToPDF({
         pageSize: 'A4',
+        landscape,
         // Inches. A quarter inch stands in for a printer's unprintable edge when fitting.
         margins: opts.fit ? { top: 0.25, bottom: 0.25, left: 0.25, right: 0.25 } : { top: 0, bottom: 0, left: 0, right: 0 },
         printBackground: true
@@ -314,7 +324,15 @@ ipcMain.handle('print:run', async (e, id: string, opts: { copies: number; fit: b
     }
     return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
       win.webContents.print(
-        { silent: false, printBackground: true, copies: Math.max(1, Math.min(999, Math.round(opts.copies))), margins },
+        {
+          silent: false,
+          printBackground: true,
+          copies: Math.max(1, Math.min(999, Math.round(opts.copies))),
+          margins,
+          landscape,
+          // Booklets are printed on both sides and folded along the short edge.
+          ...(layout.kind === 'booklet' ? { duplexMode: 'shortEdge' as const } : {})
+        },
         (ok, reason) => resolve(ok ? { ok } : { ok, error: reason === 'cancelled' ? undefined : reason })
       )
     })

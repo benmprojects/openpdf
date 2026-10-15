@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { RecoveryEntry, Settings } from '../main/settings'
+import type { PrintLayout } from '../shared/printLayout'
 
 export type { RecoveryEntry, Settings }
 
@@ -31,7 +32,10 @@ const api = {
   printBegin: (): Promise<string> => ipcRenderer.invoke('print:begin'),
   printPage: (job: string, n: number, png: Uint8Array, w: number, h: number): Promise<void> =>
     ipcRenderer.invoke('print:page', job, n, png, w, h),
-  printRun: (job: string, opts: { copies: number; fit: boolean; count: number }): Promise<{ ok: boolean; error?: string; pdfPath?: string }> =>
+  printRun: (
+    job: string,
+    opts: { copies: number; fit: boolean; count: number; layout?: PrintLayout }
+  ): Promise<{ ok: boolean; error?: string; pdfPath?: string }> =>
     ipcRenderer.invoke('print:run', job, opts),
   printCancel: (job: string): Promise<void> => ipcRenderer.invoke('print:cancel', job),
   /** Resolves null if the file is gone (it is then dropped from the recent list). */

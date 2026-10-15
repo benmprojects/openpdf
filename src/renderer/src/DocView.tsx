@@ -84,6 +84,8 @@ import { displayDims, turn, type Rotation } from './viewRotation'
 type ZoomMode = 'fit-width' | 'fit-page' | number
 
 interface PrintChoice {
+  /** 1 = one page per sheet; 'booklet' = folded booklet. */
+  perSheet: 1 | 2 | 4 | 6 | 9 | 16 | 'booklet'
   range: 'all' | 'current' | 'custom'
   custom: string
   copies: number
@@ -772,7 +774,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [printing, setPrinting] = useState<{ done: number; total: number; ctrl: AbortController } | null>(null)
   const openPrint = useCallback(() => {
     if (!pages.length || printing) return
-    setPrintDialog((d) => d ?? { range: 'all', custom: `1-${pages.length}`, copies: 1, fit: true, autoRotate: true })
+    setPrintDialog((d) => d ?? { range: 'all', custom: `1-${pages.length}`, copies: 1, fit: true, autoRotate: true, perSheet: 1 })
   }, [pages.length, printing])
 
   const runPrint = async (c: PrintChoice) => {
@@ -798,7 +800,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       const res = await printDocument(
         src,
         password,
-        { pages: list, copies: c.copies, fit: c.fit, autoRotate: c.autoRotate },
+        {
+          pages: list,
+          copies: c.copies,
+          fit: c.fit,
+          autoRotate: c.autoRotate,
+          layout: c.perSheet === 'booklet' ? { kind: 'booklet' } : c.perSheet === 1 ? { kind: 'single' } : { kind: 'nup', perSheet: c.perSheet }
+        },
         (done, total) => setPrinting((p) => (p ? { ...p, done, total } : p)),
         ctrl.signal
       )
@@ -1271,7 +1279,24 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             />
           </label>
           <select
+            aria-label="Pages per sheet"
+            value={String(printDialog.perSheet)}
+            onChange={(e) => {
+              const v = e.target.value
+              setPrintDialog({ ...printDialog, perSheet: v === 'booklet' ? 'booklet' : (Number(v) as PrintChoice['perSheet']) })
+            }}
+          >
+            <option value="1">1 page per sheet</option>
+            {[2, 4, 6, 9, 16].map((n) => (
+              <option key={n} value={n}>
+                {n} pages per sheet
+              </option>
+            ))}
+            <option value="booklet">Booklet (double-sided, fold)</option>
+          </select>
+          <select
             aria-label="Page scaling"
+            disabled={printDialog.perSheet !== 1}
             value={printDialog.fit ? 'fit' : 'actual'}
             onChange={(e) => setPrintDialog({ ...printDialog, fit: e.target.value === 'fit' })}
           >
@@ -1279,7 +1304,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             <option value="actual">Actual size</option>
           </select>
           <label title="Turn landscape pages so they fill portrait paper">
-            <input type="checkbox" checked={printDialog.autoRotate} onChange={(e) => setPrintDialog({ ...printDialog, autoRotate: e.target.checked })} />
+            <input type="checkbox" disabled={printDialog.perSheet !== 1} checked={printDialog.autoRotate} onChange={(e) => setPrintDialog({ ...printDialog, autoRotate: e.target.checked })} />
             Auto-rotate
           </label>
           <button className="primary" type="submit">

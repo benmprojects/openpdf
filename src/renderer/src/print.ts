@@ -1,3 +1,4 @@
+import { sheetGrid, type PrintLayout } from '../../shared/printLayout'
 import { PdfClient } from './pdfClient'
 
 export interface PrintOptions {
@@ -6,8 +7,9 @@ export interface PrintOptions {
   copies: number
   /** Fit each page to the printable area, or print at actual size (100%). */
   fit: boolean
-  /** Turn landscape pages a quarter turn so they fill portrait paper. */
+  /** Turn landscape pages a quarter turn so they fill portrait paper (one page per sheet only). */
   autoRotate: boolean
+  layout: PrintLayout
 }
 
 /** Print resolution. Capped by pixel count so very large pages stay within memory. */
@@ -34,14 +36,16 @@ export async function printDocument(
     for (let n = 0; n < opts.pages.length; n++) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
       const size = sizes[opts.pages[n]]
-      const scale = Math.min(DPI / 72, Math.sqrt(MAX_PIXELS / (size.width * size.height)))
+      // Pages printed several to a sheet come out smaller, so they need fewer pixels.
+      const { cols } = sheetGrid(opts.layout)
+      const scale = Math.min(DPI / 72 / cols, Math.sqrt(MAX_PIXELS / (size.width * size.height)))
       const out = await client.render(opts.pages[n], scale)
-      const turn = opts.autoRotate && size.width > size.height
+      const turn = opts.autoRotate && opts.layout.kind === 'single' && size.width > size.height
       const png = await encodePng(out.width, out.height, out.data, turn)
       await window.openpdf.printPage(job, n, png, turn ? size.height : size.width, turn ? size.width : size.height)
       onProgress(n + 1, opts.pages.length)
     }
-    return await window.openpdf.printRun(job, { copies: opts.copies, fit: opts.fit, count: opts.pages.length })
+    return await window.openpdf.printRun(job, { copies: opts.copies, fit: opts.fit, count: opts.pages.length, layout: opts.layout })
   } catch (e) {
     await window.openpdf.printCancel(job)
     if (e instanceof DOMException && e.name === 'AbortError') return { ok: false }
