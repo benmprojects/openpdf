@@ -174,7 +174,16 @@ function Thumbnails({
         />
       ))}
       {menu && (
-        <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} role="menu" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="ctx-menu"
+          ref={(el) => {
+            // Keep the menu inside the window: measure it, then pull it back if it would overflow.
+            if (!el) return
+            const r = el.getBoundingClientRect()
+            el.style.left = `${Math.max(0, Math.min(menu.x, window.innerWidth - r.width))}px`
+            el.style.top = `${Math.max(0, Math.min(menu.y, window.innerHeight - r.height))}px`
+          }}
+          style={{ left: menu.x, top: menu.y }} role="menu" onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" onClick={() => run({ kind: 'rotate', delta: -90 })}>Rotate left</button>
           <button role="menuitem" onClick={() => run({ kind: 'rotate', delta: 90 })}>Rotate right</button>
           <button role="menuitem" onClick={() => run({ kind: 'rotate', delta: 180 })}>Rotate 180°</button>
