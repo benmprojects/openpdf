@@ -118,6 +118,7 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - Spell check: type a misspelling in a comment or Edit text box, check it is underlined, right-click gives suggestions, Add to dictionary stops the underline.
 - Printing to a real printer: the system dialog, copies, the margins with "Fit to paper".
 - Native Open, Save As and folder dialogs; the close-with-unsaved prompt; Save As cancel.
+- Packaged program: `npx electron-builder --win --dir` builds `dist/win-unpacked/OpenPDF.exe` without the installer step; `e2e/packaged.spec.ts` (skipped when it has not been built) runs that exe through OCR (worker threads and language data), Word export (the docx chunk), a plugin (the QuickJS WebAssembly), signing (PowerShell and pkijs) and a command-line batch, and passes. `electron-builder.yml` now has `asarUnpack` for tesseract.js, tesseract.js-core and the language data (workers cannot start from inside the archive).
 - Installer: `npm run dist` from a normal terminal (here Windows refused to run the unsigned NSIS stub, EPERM). Then install, check the .pdf association, and check that opening a PDF from Explorer while the app runs adds a tab.
 - Window buttons in the title-bar overlay in both themes. They are drawn by Windows, so Playwright screenshots do not show them.
 

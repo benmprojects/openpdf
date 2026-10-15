@@ -6,6 +6,12 @@ directories:
 files:
   - out/**
   - package.json
+# tesseract.js starts worker threads from files inside its own package, and the OCR language data is read from disk:
+# neither works from inside the app archive.
+asarUnpack:
+  - node_modules/tesseract.js/**
+  - node_modules/tesseract.js-core/**
+  - node_modules/@tesseract.js-data/**
 extraResources:
   - from: LICENSE
     to: LICENSE
