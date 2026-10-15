@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react'
+import { AnnotLayer } from './AnnotLayer'
+import { isMarkup, pointInRect, NOTE_SIZE, type Annot } from './annotations'
 import type { PageSize, PdfClient } from './pdfClient'
 import type { PageText } from './pdfiumRaw'
 import {
@@ -22,13 +24,27 @@ export interface ViewerHandle {
   copySelection(): Promise<boolean>
   hasSelection(): boolean
   clearSelection(): void
+  /** One entry per page touched by the current text selection, with a rectangle per line. */
+  selectionRects(): Promise<{ page: number; rects: Rect[] }[]>
 }
+
+export type Tool = 'select' | 'hand' | 'note' | 'textbox'
 
 interface Props {
   client: PdfClient
   pages: PageSize[]
   zoom: number
-  tool: 'select' | 'hand'
+  tool: Tool
+  annots: Annot[]
+  selectedAnnot: number | null
+  editingAnnot: number | null
+  onSelectAnnot: (id: number | null) => void
+  onMoveAnnot: (id: number, dx: number, dy: number) => void
+  onResizeAnnot: (id: number, w: number, h: number) => void
+  onEditAnnot: (id: number | null) => void
+  onAnnotText: (id: number, text: string) => void
+  onPlace: (kind: 'note' | 'textbox', page: number, x: number, y: number) => void
+  onSelectionChange: (has: boolean) => void
   matches: Match[]
   currentMatch: number
   onPageChange: (index: number) => void
@@ -41,12 +57,44 @@ interface Selection {
   focus: CharPos
 }
 
-export function Viewer({ client, pages, zoom, tool, matches, currentMatch, onPageChange, onSize, ref }: Props) {
+export function Viewer({
+  client,
+  pages,
+  zoom,
+  tool,
+  annots,
+  selectedAnnot,
+  editingAnnot,
+  onSelectAnnot,
+  onMoveAnnot,
+  onResizeAnnot,
+  onEditAnnot,
+  onAnnotText,
+  onPlace,
+  onSelectionChange,
+  matches,
+  currentMatch,
+  onPageChange,
+  onSize,
+  ref
+}: Props) {
   const scroller = useRef<HTMLDivElement>(null)
   const pageEls = useRef<(HTMLDivElement | null)[]>([])
   const [sel, setSel] = useState<Selection | null>(null)
   const selRef = useRef<Selection | null>(null)
   selRef.current = sel
+
+  useEffect(() => onSelectionChange(sel !== null), [sel, onSelectionChange])
+
+  const annotsByPage = useMemo(() => {
+    const map = new Map<number, Annot[]>()
+    for (const a of annots) {
+      const list = map.get(a.page)
+      if (list) list.push(a)
+      else map.set(a.page, [a])
+    }
+    return map
+  }, [annots])
 
   const offsets = useMemo(() => {
     const tops: number[] = []
@@ -160,7 +208,19 @@ export function Viewer({ client, pages, zoom, tool, matches, currentMatch, onPag
         window.addEventListener('mouseup', stop)
         return
       }
-      if (!(e.target as HTMLElement).closest('[data-page]')) return
+      const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
+      if (!pageEl) {
+        onSelectAnnot(null)
+        return
+      }
+      if (tool === 'note' || tool === 'textbox') {
+        e.preventDefault()
+        const r = pageEl.getBoundingClientRect()
+        const x = (e.clientX - r.left) / zoom
+        const y = (e.clientY - r.top) / zoom
+        onPlace(tool, Number(pageEl.dataset.page), tool === 'note' ? x - NOTE_SIZE / 2 : x, tool === 'note' ? y - NOTE_SIZE / 2 : y)
+        return
+      }
       e.preventDefault()
       const startX = e.clientX
       const startY = e.clientY
@@ -183,14 +243,25 @@ export function Viewer({ client, pages, zoom, tool, matches, currentMatch, onPag
         if (myMove !== seq.current || mySeq > seq.current || !a || !f) return
         setSel({ anchor: a, focus: f })
       }
-      const onUp = () => {
+      const onUp = (ev: MouseEvent) => {
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
+        if (moved) return
+        // A plain click: pick the text markup under the pointer, or clear the annotation selection.
+        const sc = scroller.current
+        if (!sc) return
+        const i = pageAtDocY(ev.clientY - sc.getBoundingClientRect().top + sc.scrollTop)
+        const r = pageEls.current[i]?.getBoundingClientRect()
+        if (!r) return
+        const x = (ev.clientX - r.left) / zoom
+        const y = (ev.clientY - r.top) / zoom
+        const hit = [...annots].reverse().find((a) => a.page === i && isMarkup(a.kind) && a.rects.some((q) => pointInRect(q, x, y, 2)))
+        onSelectAnnot(hit ? hit.id : null)
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool]
+    [posAt, tool, annots, zoom, pageAtDocY, onSelectAnnot, onPlace]
   )
 
   const ordered = useMemo(() => {
@@ -246,6 +317,17 @@ export function Viewer({ client, pages, zoom, tool, matches, currentMatch, onPag
         await navigator.clipboard.writeText(normaliseNewlines(parts.join('\n')))
         return true
       },
+      async selectionRects() {
+        const o = ordered
+        if (!o) return []
+        const out: { page: number; rects: Rect[] }[] = []
+        for (let p = o.s.page; p <= o.e.page; p++) {
+          const pt = await client.pageText(p)
+          const rects = rangeRects(pt.boxes, p === o.s.page ? o.s.char : 0, p === o.e.page ? o.e.char : Infinity)
+          if (rects.length) out.push({ page: p, rects })
+        }
+        return out
+      },
       hasSelection: () => selRef.current !== null,
       clearSelection: () => setSel(null)
     }),
@@ -253,7 +335,7 @@ export function Viewer({ client, pages, zoom, tool, matches, currentMatch, onPag
   )
 
   return (
-    <div ref={scroller} className={tool === 'hand' ? 'scroller hand' : 'scroller'} onMouseDown={onMouseDown}>
+    <div ref={scroller} className={tool === 'hand' ? 'scroller hand' : tool === 'select' ? 'scroller' : 'scroller place'} onMouseDown={onMouseDown}>
       <div className="viewer" style={{ padding: PAD }}>
         {pages.map((size, i) => (
           <PageView
@@ -262,6 +344,8 @@ export function Viewer({ client, pages, zoom, tool, matches, currentMatch, onPag
             index={i}
             size={size}
             zoom={zoom}
+            annots={annotsByPage.get(i)}
+            annotProps={{ tool, selectedAnnot, editingAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onEditAnnot, onAnnotText }}
             selection={selForPage(i)}
             matches={matchesByPage.get(i)}
             currentMatch={currentMatch}
@@ -280,13 +364,24 @@ interface PageViewProps {
   index: number
   size: PageSize
   zoom: number
+  annots?: Annot[]
+  annotProps: {
+    tool: Tool
+    selectedAnnot: number | null
+    editingAnnot: number | null
+    onSelectAnnot: (id: number | null) => void
+    onMoveAnnot: (id: number, dx: number, dy: number) => void
+    onResizeAnnot: (id: number, w: number, h: number) => void
+    onEditAnnot: (id: number | null) => void
+    onAnnotText: (id: number, text: string) => void
+  }
   selection: { from: number; to: number } | null
   matches?: { m: Match; idx: number }[]
   currentMatch: number
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, annots, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -367,6 +462,20 @@ function PageView({ client, index, size, zoom, selection, matches, currentMatch,
       style={{ width: cssW, height: cssH, marginBottom: GAP }}
     >
       <canvas ref={canvas} style={{ width: cssW, height: cssH }} />
+      {annots && (
+        <AnnotLayer
+          annots={annots}
+          zoom={zoom}
+          interactive={annotProps.tool === 'select'}
+          selectedId={annotProps.selectedAnnot}
+          editingId={annotProps.editingAnnot}
+          onSelect={annotProps.onSelectAnnot}
+          onMove={annotProps.onMoveAnnot}
+          onResize={annotProps.onResizeAnnot}
+          onEdit={annotProps.onEditAnnot}
+          onText={annotProps.onAnnotText}
+        />
+      )}
       <div className="hl-layer">
         {matchRects.flatMap(({ idx, rects }) =>
           rects.map((r, k) => box(r, idx === currentMatch ? 'hl match current' : 'hl match', `m${idx}-${k}`))

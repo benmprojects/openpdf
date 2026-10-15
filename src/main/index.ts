@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { readFile } from 'node:fs/promises'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 function createWindow(): void {
@@ -13,6 +13,18 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true
     }
+  })
+  // The renderer blocks unload while a tab has unsaved annotations; ask before discarding them.
+  win.webContents.on('will-prevent-unload', (e) => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'question',
+      buttons: ['Close and discard', 'Keep open'],
+      defaultId: 1,
+      cancelId: 1,
+      message: 'Some documents have unsaved annotations.',
+      detail: 'Closing now discards them.'
+    })
+    if (choice === 0) e.preventDefault()
   })
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else win.loadFile(join(__dirname, '../renderer/index.html'))
@@ -33,6 +45,25 @@ ipcMain.handle('file:open-dialog', async () => {
 })
 
 ipcMain.handle('file:read', (_e, path: string) => readPdf(path))
+
+/** Writes to a temporary file first so a failed write cannot leave a half-written PDF behind. */
+async function writePdf(path: string, data: Uint8Array) {
+  if (!path.toLowerCase().endsWith('.pdf')) throw new Error('Only .pdf files can be saved.')
+  const tmp = `${path}.openpdf-tmp`
+  await writeFile(tmp, data)
+  await rename(tmp, path)
+  return { name: basename(path), path }
+}
+
+ipcMain.handle('file:save', (_e, path: string, data: Uint8Array) => writePdf(path, data))
+
+ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { defaultPath: suggestedName, filters: [{ name: 'PDF documents', extensions: ['pdf'] }] }
+  const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+  if (res.canceled || !res.filePath) return null
+  return writePdf(res.filePath, data)
+})
 
 // PDF paths passed on the command line (e.g. file association or `openpdf a.pdf b.pdf`).
 ipcMain.handle('file:initial', async () => {

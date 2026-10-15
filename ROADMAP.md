@@ -32,12 +32,16 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [ ] Rulers, grid, guides, measurement tools (distance, perimeter, area)
 
 ## Phase 2: Annotation and markup (P0)
-- [ ] Highlight, underline, strikeout, squiggly, replace text, insert caret
-- [ ] Sticky note, text box, callout, typewriter, free text
+- [x] Highlight, underline, strikeout (from selected text)
+- [ ] Squiggly, replace text, insert caret
+- [x] Sticky note, text box (free text)
+- [ ] Callout, typewriter
 - [ ] Line, arrow, rectangle, ellipse, polygon, polyline, cloud, pencil/ink, eraser
 - [ ] Stamps (built-in, custom image, dynamic with date, time and user)
 - [ ] Comment list: sort, filter, reply threads, status, summarise, export
-- [ ] Properties panel, saved tool presets, custom tool sets
+- [x] Colour choice, move, resize, delete, undo/redo, Save and Save As
+- [ ] Properties panel (font, opacity, border), saved tool presets, custom tool sets
+- [ ] Edit annotations already in a file (only newly drawn ones are editable)
 - [ ] Attach file, sound and links; import and export FDF/XFDF
 - [ ] Review: compare annotation sets across files
 

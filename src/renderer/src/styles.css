@@ -395,3 +395,142 @@ select:focus-visible {
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+
+/* Annotations */
+.annot-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.annot-layer > div,
+.annot-layer > div > div {
+  position: absolute;
+}
+.annot-highlight,
+.annot-line,
+.annot-selected {
+  position: absolute;
+}
+.annot-highlight {
+  mix-blend-mode: multiply;
+}
+.annot-selected {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: 1px;
+}
+.annot-box {
+  position: absolute;
+  overflow: hidden;
+  font-family: Helvetica, Arial, sans-serif;
+  white-space: pre-wrap;
+  user-select: none;
+}
+.annot-box.interactive {
+  pointer-events: auto;
+  cursor: move;
+}
+.annot-box.selected {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: 1px;
+  overflow: visible;
+}
+.annot-box.note {
+  display: grid;
+  place-items: center;
+  border: 1px solid #5a4800;
+  border-radius: 2px;
+}
+.annot-box.note span {
+  width: 60%;
+  height: 40%;
+  border-top: 1px solid #5a4800;
+  border-bottom: 1px solid #5a4800;
+  background: linear-gradient(#5a4800, #5a4800) center / 100% 1px no-repeat;
+}
+.annot-editor,
+.note-popup textarea {
+  font: inherit;
+  color: inherit;
+  background: #fffbe0;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+  resize: none;
+}
+.annot-editor {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  cursor: text;
+}
+.note-popup {
+  position: absolute;
+  z-index: 5;
+  width: 230px;
+  pointer-events: auto;
+}
+.note-popup textarea {
+  width: 100%;
+  height: 90px;
+  padding: 6px;
+  color: #1f2328;
+  font: 13px/1.4 'Segoe UI', system-ui, sans-serif;
+}
+.resize-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 1px solid #fff;
+  cursor: nwse-resize;
+}
+.scroller.place .page {
+  cursor: crosshair;
+}
+.annot-bar {
+  flex-wrap: wrap;
+}
+.swatches {
+  display: flex;
+  gap: 4px;
+}
+.toolbar .swatch {
+  min-width: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+}
+.toolbar .swatch.on {
+  border-color: var(--text);
+}
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  border-radius: 0;
+}
+.banner button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+.info.banner {
+  padding: 6px 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.tab-dirty {
+  color: var(--accent);
+}

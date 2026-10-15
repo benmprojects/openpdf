@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  DEFAULT_FONT_SIZE,
+  NOTE_SIZE,
+  TEXTBOX_DEFAULT,
+  annotLabel,
+  colorChoices,
+  defaultColor,
+  type Annot,
+  type AnnotKind
+} from './annotations'
+import { writeAnnotations } from './annotWrite'
 import { PdfClient, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type SidebarTab } from './Sidebar'
-import { PAD, Viewer, type ViewerHandle } from './Viewer'
 import { findInPage, type Match } from './textLogic'
+import { useHistory } from './useHistory'
+import { PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
 
 type ZoomMode = 'fit-width' | 'fit-page' | number
 
@@ -11,12 +23,26 @@ const MIN_ZOOM = 0.1
 const MAX_ZOOM = 8
 const MAX_MATCHES = 5000
 
-interface Props {
-  data: Uint8Array
-  active: boolean
+export interface DocMeta {
+  dirty?: boolean
+  name?: string
+  path?: string
 }
 
-export function DocView({ data, active }: Props) {
+interface Props {
+  id: number
+  data: Uint8Array
+  name: string
+  path?: string
+  active: boolean
+  /** Must be a stable function; it is called from effects. */
+  onMeta: (id: number, meta: DocMeta) => void
+}
+
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta }: Props) {
+  const onMeta = useCallback((meta: DocMeta) => reportMeta(docId, meta), [docId, reportMeta])
+  // The bytes currently shown. They change after a save, which reloads the document with the annotations baked in.
+  const [bytes, setBytes] = useState(data)
   const [client, setClient] = useState<PdfClient | null>(null)
   const [pages, setPages] = useState<PageSize[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -24,7 +50,7 @@ export function DocView({ data, active }: Props) {
   const [password, setPassword] = useState<string | undefined>()
   const [passwordIssue, setPasswordIssue] = useState<'required' | 'wrong' | null>(null)
   const [passwordDraft, setPasswordDraft] = useState('')
-  const [tool, setTool] = useState<'select' | 'hand'>('select')
+  const [tool, setTool] = useState<Tool>('select')
 
   const [mode, setMode] = useState<ZoomMode>('fit-width')
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -35,7 +61,7 @@ export function DocView({ data, active }: Props) {
   useEffect(() => {
     const c = new PdfClient()
     let cancelled = false
-    c.load(data, password)
+    c.load(bytes, password)
       .then((p) => {
         if (cancelled) return
         setPasswordIssue(null)
@@ -54,7 +80,7 @@ export function DocView({ data, active }: Props) {
       cancelled = true
       c.dispose()
     }
-  }, [data, password])
+  }, [bytes, password])
 
   const onSize = useCallback((w: number, h: number) => setSize((s) => (s.w === w && s.h === h ? s : { w, h })), [])
 
@@ -80,6 +106,165 @@ export function DocView({ data, active }: Props) {
   )
 
   const goTo = useCallback((i: number) => viewer.current?.scrollToPage(i), [])
+
+  // ---- Annotations ----------------------------------------------------------------------------------
+  const history = useHistory<Annot[]>([])
+  const annots = history.present
+  const [selectedAnnot, setSelectedAnnot] = useState<number | null>(null)
+  const [editingAnnot, setEditingAnnot] = useState<number | null>(null)
+  const [hasTextSelection, setHasTextSelection] = useState(false)
+  const [colors, setColors] = useState<Record<AnnotKind, string>>(() => ({
+    highlight: defaultColor('highlight'),
+    underline: defaultColor('underline'),
+    strikeout: defaultColor('strikeout'),
+    note: defaultColor('note'),
+    textbox: defaultColor('textbox')
+  }))
+  const [lastMarkup, setLastMarkup] = useState<AnnotKind>('highlight')
+  const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const nextAnnotId = useRef(1)
+  const annotsRef = useRef(annots)
+  annotsRef.current = annots
+
+  const dirty = annots.length > 0
+  useEffect(() => onMeta({ dirty }), [dirty, onMeta])
+
+  useEffect(() => {
+    if (!notice || notice.kind === 'error') return
+    const t = setTimeout(() => setNotice(null), 3500)
+    return () => clearTimeout(t)
+  }, [notice])
+
+  const newAnnot = (kind: AnnotKind, page: number, rects: Annot['rects'], text = ''): Annot => ({
+    id: nextAnnotId.current++,
+    page,
+    kind,
+    color: colors[kind],
+    rects,
+    text,
+    fontSize: DEFAULT_FONT_SIZE
+  })
+
+  const markSelection = useCallback(
+    async (kind: AnnotKind) => {
+      const parts = (await viewer.current?.selectionRects()) ?? []
+      if (!parts.length) return
+      const made = parts.map((p) => newAnnot(kind, p.page, p.rects))
+      history.commit((list) => [...list, ...made])
+      setLastMarkup(kind)
+      setSelectedAnnot(made[made.length - 1].id)
+      viewer.current?.clearSelection()
+    },
+    [colors, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  const place = useCallback(
+    (kind: 'note' | 'textbox', page: number, x: number, y: number) => {
+      const size = pages[page]
+      if (!size) return
+      const w = kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.w
+      const h = kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.h
+      const rect = { x: Math.max(0, Math.min(size.width - w, x)), y: Math.max(0, Math.min(size.height - h, y)), w, h }
+      const a = newAnnot(kind, page, [rect])
+      history.commit((list) => [...list, a])
+      setSelectedAnnot(a.id)
+      setEditingAnnot(a.id)
+      setTool('select')
+    },
+    [pages, colors, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  const moveAnnot = useCallback(
+    (id: number, dx: number, dy: number) =>
+      history.commit((list) =>
+        list.map((a) => {
+          if (a.id !== id) return a
+          const size = pages[a.page]
+          const r = a.rects[0]
+          const x = Math.max(0, Math.min(size.width - r.w, r.x + dx))
+          const y = Math.max(0, Math.min(size.height - r.h, r.y + dy))
+          return { ...a, rects: [{ ...r, x, y }] }
+        })
+      ),
+    [pages, history.commit]
+  )
+
+  const resizeAnnot = useCallback(
+    (id: number, w: number, h: number) =>
+      history.commit((list) =>
+        list.map((a) => {
+          if (a.id !== id) return a
+          const size = pages[a.page]
+          const r = a.rects[0]
+          return {
+            ...a,
+            rects: [{ ...r, w: Math.max(40, Math.min(size.width - r.x, w)), h: Math.max(20, Math.min(size.height - r.y, h)) }]
+          }
+        })
+      ),
+    [pages, history.commit]
+  )
+
+  const removeAnnot = useCallback(
+    (id: number) => {
+      history.commit((list) => list.filter((a) => a.id !== id))
+      setSelectedAnnot((s) => (s === id ? null : s))
+      setEditingAnnot((e) => (e === id ? null : e))
+    },
+    [history.commit]
+  )
+
+  const finishText = useCallback(
+    (id: number, text: string) => {
+      setEditingAnnot(null)
+      const existing = annotsRef.current.find((a) => a.id === id)
+      if (!existing) return
+      // A note or text box left empty is dropped rather than saved as an invisible object.
+      if (!text.trim()) return removeAnnot(id)
+      if (text !== existing.text) history.commit((list) => list.map((a) => (a.id === id ? { ...a, text } : a)))
+    },
+    [history.commit, removeAnnot]
+  )
+
+  const selected = annots.find((a) => a.id === selectedAnnot) ?? null
+  const swatchKind: AnnotKind = selected?.kind ?? (tool === 'note' ? 'note' : tool === 'textbox' ? 'textbox' : lastMarkup)
+  const activeColor = selected ? selected.color : colors[swatchKind]
+
+  const pickColor = (c: string) => {
+    setColors((m) => ({ ...m, [swatchKind]: c }))
+    if (selected) history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, color: c } : a)))
+  }
+
+  const save = useCallback(
+    async (asNew: boolean) => {
+      if (saving) return
+      if (password) {
+        setNotice({ kind: 'error', text: 'Saving password-protected PDFs is not supported yet, so nothing was written.' })
+        return
+      }
+      setSaving(true)
+      try {
+        const out = annots.length ? await writeAnnotations(bytes, annots) : bytes
+        const saved =
+          !asNew && path
+            ? await window.openpdf.saveFile(path, out)
+            : await window.openpdf.saveFileAs(name.replace(/(\.pdf)?$/i, '.pdf'), out)
+        if (!saved) return // the Save As dialog was cancelled
+        onMeta({ name: saved.name, path: saved.path })
+        history.reset([])
+        setSelectedAnnot(null)
+        setEditingAnnot(null)
+        setBytes(out)
+        setNotice({ kind: 'info', text: `Saved ${saved.name}` })
+      } catch (e) {
+        setNotice({ kind: 'error', text: `Could not save: ${e instanceof Error ? e.message : String(e)}` })
+      } finally {
+        setSaving(false)
+      }
+    },
+    [saving, password, annots, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   // ---- Search ---------------------------------------------------------------------------------------
   const [searchOpen, setSearchOpen] = useState(false)
@@ -157,9 +342,21 @@ export function DocView({ data, active }: Props) {
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
-      const inField = e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement
+      const inField =
+        e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement
       const ctrl = e.ctrlKey || e.metaKey
-      if (ctrl && e.key.toLowerCase() === 'f') {
+      const k = e.key.toLowerCase()
+      if (ctrl && k === 's') {
+        e.preventDefault()
+        void save(e.shiftKey)
+      } else if (ctrl && !inField && (k === 'z' || k === 'y')) {
+        e.preventDefault()
+        if (k === 'y' || e.shiftKey) history.redo()
+        else history.undo()
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && !inField && selectedAnnot !== null) {
+        e.preventDefault()
+        removeAnnot(selectedAnnot)
+      } else if (ctrl && e.key.toLowerCase() === 'f') {
         e.preventDefault()
         openSearch()
       } else if (e.key === 'F3' || (ctrl && e.key.toLowerCase() === 'g')) {
@@ -167,6 +364,8 @@ export function DocView({ data, active }: Props) {
         stepMatch(e.shiftKey ? -1 : 1)
       } else if (e.key === 'Escape') {
         if (searchOpen) setSearchOpen(false)
+        else if (tool !== 'select') setTool('select')
+        else if (selectedAnnot !== null) setSelectedAnnot(null)
         else viewer.current?.clearSelection()
       } else if (ctrl && e.key.toLowerCase() === 'c' && !inField && viewer.current?.hasSelection()) {
         e.preventDefault()
@@ -187,7 +386,7 @@ export function DocView({ data, active }: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, searchOpen, openSearch, stepMatch, stepZoom])
+  }, [active, searchOpen, tool, selectedAnnot, openSearch, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo])
 
   // ---- Page box -------------------------------------------------------------------------------------
   const [pageText, setPageText] = useState('1')
@@ -277,17 +476,83 @@ export function DocView({ data, active }: Props) {
           +
         </button>
         <span className="sep" />
-        <button onClick={() => setTool('select')} disabled={!pages.length} aria-pressed={tool === 'select'} title="Select text">
+        <button onClick={openSearch} disabled={!pages.length} aria-pressed={searchOpen} title="Find (Ctrl+F)">
+          Find
+        </button>
+      </div>
+
+      <div className="toolbar annot-bar" role="toolbar" aria-label="Annotations">
+        <button onClick={() => setTool('select')} disabled={!pages.length} aria-pressed={tool === 'select'} title="Select text and annotations">
           Select
         </button>
         <button onClick={() => setTool('hand')} disabled={!pages.length} aria-pressed={tool === 'hand'} title="Hand tool: drag to pan">
           Hand
         </button>
         <span className="sep" />
-        <button onClick={openSearch} disabled={!pages.length} aria-pressed={searchOpen} title="Find (Ctrl+F)">
-          Find
+        {(['highlight', 'underline', 'strikeout'] as const).map((k) => (
+          <button key={k} onClick={() => void markSelection(k)} disabled={!hasTextSelection} title={`${annotLabel(k)} the selected text`}>
+            {annotLabel(k)}
+          </button>
+        ))}
+        <span className="sep" />
+        <button
+          onClick={() => setTool(tool === 'note' ? 'select' : 'note')}
+          disabled={!pages.length}
+          aria-pressed={tool === 'note'}
+          title="Add a sticky note: click on the page"
+        >
+          Note
+        </button>
+        <button
+          onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')}
+          disabled={!pages.length}
+          aria-pressed={tool === 'textbox'}
+          title="Add a text box: click on the page"
+        >
+          Text box
+        </button>
+        <span className="sep" />
+        <span className="swatches" role="group" aria-label={`${annotLabel(swatchKind)} colour`}>
+          {colorChoices(swatchKind).map((c) => (
+            <button
+              key={c}
+              className={c === activeColor ? 'swatch on' : 'swatch'}
+              style={{ background: c }}
+              onClick={() => pickColor(c)}
+              aria-label={`Colour ${c}`}
+              aria-pressed={c === activeColor}
+            />
+          ))}
+        </span>
+        <button onClick={() => selected && removeAnnot(selected.id)} disabled={!selected} title="Delete the selected annotation (Delete)">
+          Delete
+        </button>
+        <span className="sep" />
+        <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)">
+          Undo
+        </button>
+        <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Y)">
+          Redo
+        </button>
+        <span className="sep" />
+        <button onClick={() => void save(false)} disabled={saving || !pages.length} title="Save (Ctrl+S)">
+          {saving ? 'Saving…' : dirty ? 'Save •' : 'Save'}
+        </button>
+        <button onClick={() => void save(true)} disabled={saving || !pages.length} title="Save a copy (Ctrl+Shift+S)">
+          Save as…
         </button>
       </div>
+
+      {notice && (
+        <div className={notice.kind === 'error' ? 'error banner' : 'info banner'} role={notice.kind === 'error' ? 'alert' : 'status'}>
+          {notice.text}
+          {notice.kind === 'error' && (
+            <button onClick={() => setNotice(null)} aria-label="Dismiss">
+              ✕
+            </button>
+          )}
+        </div>
+      )}
 
       {searchOpen && (
         <div className="searchbar" role="search">
@@ -373,6 +638,16 @@ export function DocView({ data, active }: Props) {
               pages={pages}
               zoom={zoom}
               tool={tool}
+              annots={annots}
+              selectedAnnot={selectedAnnot}
+              editingAnnot={editingAnnot}
+              onSelectAnnot={setSelectedAnnot}
+              onMoveAnnot={moveAnnot}
+              onResizeAnnot={resizeAnnot}
+              onEditAnnot={setEditingAnnot}
+              onAnnotText={finishText}
+              onPlace={place}
+              onSelectionChange={setHasTextSelection}
               matches={matches}
               currentMatch={current}
               onPageChange={setCurrentPage}

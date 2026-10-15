@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { DocView } from './DocView'
+import { DocView, type DocMeta } from './DocView'
 
 interface Tab {
   id: number
   name: string
   path?: string
   data: Uint8Array
+  /** Has annotations that are not saved yet. */
+  dirty: boolean
 }
 
 interface Incoming {
@@ -36,7 +38,7 @@ export function App() {
         focus = existing.id
         continue
       }
-      const tab = { id: nextId.current++, name: f.name, path: f.path, data: f.data }
+      const tab: Tab = { id: nextId.current++, name: f.name, path: f.path, data: f.data, dirty: false }
       fresh.push(tab)
       focus = tab.id
     }
@@ -49,14 +51,34 @@ export function App() {
     addFiles(await window.openpdf.openFileDialog())
   }, [addFiles])
 
+  const updateMeta = useCallback((id: number, meta: DocMeta) => {
+    setTabs((list) => {
+      const t = list.find((x) => x.id === id)
+      if (!t || (meta.dirty ?? t.dirty) === t.dirty && (meta.name ?? t.name) === t.name && (meta.path ?? t.path) === t.path) return list
+      return list.map((x) => (x.id === id ? { ...x, ...meta } : x))
+    })
+  }, [])
+
   const close = useCallback((id: number) => {
     const list = tabsRef.current
     const idx = list.findIndex((t) => t.id === id)
     if (idx < 0) return
+    if (list[idx].dirty && !window.confirm(`${list[idx].name} has unsaved annotations. Close it and discard them?`)) return
     const rest = list.filter((t) => t.id !== id)
     setTabs(rest)
     if (activeRef.current === id) setActiveId(rest.length ? rest[Math.min(idx, rest.length - 1)].id : null)
   }, [])
+
+  const anyDirty = tabs.some((t) => t.dirty)
+  useEffect(() => {
+    if (!anyDirty) return
+    const block = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', block)
+    return () => window.removeEventListener('beforeunload', block)
+  }, [anyDirty])
 
   const initDone = useRef(false)
   useEffect(() => {
@@ -121,7 +143,14 @@ export function App() {
             onClick={() => setActiveId(t.id)}
             onAuxClick={(e) => e.button === 1 && close(t.id)}
           >
-            <span className="tab-name">{t.name}</span>
+            <span className="tab-name">
+              {t.dirty && (
+                <span className="tab-dirty" title="Unsaved annotations" aria-label="Unsaved changes">
+                  •{' '}
+                </span>
+              )}
+              {t.name}
+            </span>
             <button
               className="tab-close"
               aria-label={`Close ${t.name}`}
@@ -145,7 +174,7 @@ export function App() {
       )}
       <main className="content">
         {tabs.map((t) => (
-          <DocView key={t.id} data={t.data} active={t.id === activeId} />
+          <DocView key={t.id} id={t.id} data={t.data} name={t.name} path={t.path} active={t.id === activeId} onMeta={updateMeta} />
         ))}
         {!tabs.length && (
           <div className="empty">
