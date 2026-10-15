@@ -29,7 +29,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Find in multiple files (open documents or a folder, with subfolders; results with context; click to open at the match)
 - [x] Text select and copy
 - [x] Hand and select tools
-- [ ] Snapshot tool
+- [x] Snapshot tool (drag a box; copies a 200 dpi PNG, turned with the view)
 - [x] Print: page ranges, copies, fit or actual size, auto-rotate (output checked through the test hook; the system print dialog itself is not yet tested)
 - [ ] Booklet and N-up printing, presentation/full-screen mode
 - [ ] Read-aloud (system TTS), reading mode, accessibility (screen-reader, high contrast)

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -162,6 +162,13 @@ ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array
   const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
   if (res.canceled || !res.filePath) return null
   return writeDocument(res.filePath, data)
+})
+
+/** Puts a PNG on the clipboard (snapshot tool). */
+ipcMain.handle('clipboard:write-image', async (_e, png: Uint8Array) => {
+  const sig = [0x89, 0x50, 0x4e, 0x47]
+  if (!sig.every((b, i) => png[i] === b)) throw new Error('Not a PNG image')
+  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })])
 })
 
 /** Asks for a folder to search. Resolves null if cancelled. */

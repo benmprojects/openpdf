@@ -25,12 +25,13 @@ import { findInPage, type Match } from './textLogic'
 import { useHistory } from './useHistory'
 import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout'
 import { GAP, PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
-import { printDocument } from './print'
+import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { readLayers, withHiddenLayers, type Layer } from './layers'
 import {
   ArrowLeftRight,
   BookOpen,
+  Camera,
   Columns2,
   FileText,
   GalleryVertical,
@@ -181,6 +182,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const rotateView = useCallback((dir: 1 | -1) => setRotation((r) => turn(r, dir)), [])
   const [pageMode, setPageMode] = useState<PageMode>(DEFAULT_MODE)
   const zoomTo = useCallback((z: number) => setMode(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))), [])
+
+  /** Snapshot tool: render the box at 200 dpi (as it is displayed, rotation included) and copy it as an image. */
+  const takeSnapshot = async (page: number, rect: { x: number; y: number; w: number; h: number }) => {
+    const c = clientRef.current
+    if (!c) return
+    try {
+      const scale = Math.min(200 / 72, Math.sqrt(30_000_000 / (rect.w * rect.h)))
+      const region = { x: Math.floor(rect.x * scale), y: Math.floor(rect.y * scale), w: Math.max(1, Math.round(rect.w * scale)), h: Math.max(1, Math.round(rect.h * scale)) }
+      const out = await c.render(page, scale, { region })
+      const png = await encodeRotatedPng(out.width, out.height, out.data, rotation)
+      await window.openpdf.copyImage(png)
+      const turned = rotation === 90 || rotation === 270
+      setNotice({ kind: 'info', text: `Snapshot copied to the clipboard (${turned ? out.height : out.width} × ${turned ? out.width : out.height} pixels)` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not take the snapshot: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [currentPage, setCurrentPage] = useState(0)
   const [sidebar, setSidebar] = useState<SidebarTab | null>('pages')
@@ -569,7 +587,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' ? null : tool // every other tool is named after the kind it creates
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' ? null : tool // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
   const showWidth = isShapeKind(swatchKind) || swatchKind === 'stamp'
   const activeWidth = selected && (isShapeKind(selected.kind) || selected.kind === 'stamp') ? selected.lineWidth : drawWidth
@@ -1023,6 +1041,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Tools">
                 <RB big icon={MousePointer2} label="Select" onClick={() => setTool('select')} disabled={!pages.length} pressed={tool === 'select'} title="Select text and annotations" />
                 <RB big icon={Hand} label="Hand" onClick={() => setTool('hand')} disabled={!pages.length} pressed={tool === 'hand'} title="Hand tool: drag to pan" />
+                <RB big icon={Camera} label="Snapshot" onClick={() => setTool(tool === 'snapshot' ? 'select' : 'snapshot')} disabled={!pages.length} pressed={tool === 'snapshot'} title="Snapshot: drag a box to copy that area as an image" />
                 <RB big icon={ScanSearch} label="Zoom" onClick={() => setTool(tool === 'zoom' ? 'select' : 'zoom')} disabled={!pages.length} pressed={tool === 'zoom'} title="Zoom tool: drag a box to fit it, click to zoom in, Shift+click to zoom out" />
               </RGroup>
               <RGroup label="Edit">
@@ -1386,6 +1405,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               rotation={rotation}
               mode={pageMode}
               onZoomTo={zoomTo}
+              onSnapshot={(page, rect) => void takeSnapshot(page, rect)}
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}

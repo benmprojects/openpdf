@@ -57,6 +57,7 @@ export type Tool =
   | 'ink'
   | 'stamp'
   | 'zoom'
+  | 'snapshot'
 
 export interface DrawStyle {
   color: string
@@ -91,6 +92,8 @@ interface Props {
   mode: PageMode
   /** The marquee zoom tool asks for a new zoom level. */
   onZoomTo: (zoom: number) => void
+  /** The snapshot tool: a box dragged on one page, in page points (unrotated frame). */
+  onSnapshot: (page: number, rect: Rect) => void
   tool: Tool
   annots: Annot[]
   selectedAnnot: number | null
@@ -128,6 +131,7 @@ export function Viewer({
   rotation,
   mode,
   onZoomTo,
+  onSnapshot,
   tool,
   annots,
   selectedAnnot,
@@ -339,6 +343,32 @@ export function Viewer({
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0) return
+      if (tool === 'snapshot') {
+        const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
+        if (!pageEl) return
+        e.preventDefault()
+        const page = Number(pageEl.dataset.page)
+        const sx = e.clientX
+        const sy = e.clientY
+        const move = (ev: MouseEvent) => setBand({ x: Math.min(sx, ev.clientX), y: Math.min(sy, ev.clientY), w: Math.abs(ev.clientX - sx), h: Math.abs(ev.clientY - sy) })
+        const up = (ev: MouseEvent) => {
+          window.removeEventListener('mousemove', move)
+          window.removeEventListener('mouseup', up)
+          setBand(null)
+          if (Math.abs(ev.clientX - sx) < 4 || Math.abs(ev.clientY - sy) < 4) return
+          const size = pages[page]
+          const a = pointOnPage(pageEl, page, sx, sy)
+          const b = pointOnPage(pageEl, page, ev.clientX, ev.clientY)
+          const x0 = Math.max(0, Math.min(a.x, b.x))
+          const y0 = Math.max(0, Math.min(a.y, b.y))
+          const x1 = Math.min(size.width, Math.max(a.x, b.x))
+          const y1 = Math.min(size.height, Math.max(a.y, b.y))
+          if (x1 - x0 > 1 && y1 - y0 > 1) onSnapshot(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+        }
+        window.addEventListener('mousemove', move)
+        window.addEventListener('mouseup', up)
+        return
+      }
       if (tool === 'zoom') {
         const sc = scroller.current
         if (!sc) return
@@ -488,7 +518,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot]
   )
 
   const ordered = useMemo(() => {

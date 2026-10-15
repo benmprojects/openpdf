@@ -51,6 +51,22 @@ export async function printDocument(
   }
 }
 
+/** PNG of an RGBA bitmap turned by a multiple of 90 degrees clockwise. */
+export async function encodeRotatedPng(w: number, h: number, rgba: Uint8Array, degrees: 0 | 90 | 180 | 270): Promise<Uint8Array> {
+  const src = new OffscreenCanvas(w, h)
+  src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, rgba.byteLength), w, h), 0, 0)
+  const turned = degrees === 90 || degrees === 270
+  const out = degrees ? new OffscreenCanvas(turned ? h : w, turned ? w : h) : src
+  if (degrees) {
+    const ctx = out.getContext('2d')!
+    ctx.translate(out.width / 2, out.height / 2)
+    ctx.rotate((degrees * Math.PI) / 180)
+    ctx.drawImage(src, -w / 2, -h / 2)
+  }
+  const blob = await out.convertToBlob({ type: 'image/png' })
+  return new Uint8Array(await blob.arrayBuffer())
+}
+
 async function encodePng(w: number, h: number, rgba: Uint8Array, turn: boolean): Promise<Uint8Array> {
   const src = new OffscreenCanvas(w, h)
   src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, rgba.byteLength), w, h), 0, 0)
