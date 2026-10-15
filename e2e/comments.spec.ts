@@ -48,7 +48,7 @@ test('comment list: filter, reply, status, save, read back, summarise and export
 
     // The Comments pane lists both, with the author from settings.
     await win.getByRole('tab', { name: 'Comments', exact: true }).click()
-    const list = win.getByRole('list', { name: 'Comments' })
+    const list = win.getByRole('list', { name: 'Comments', exact: true })
     await expect(list.locator('li.comment')).toHaveCount(2)
     await win.getByRole('combobox', { name: 'Filter by type' }).selectOption('note')
     await expect(list.locator('li.comment')).toHaveCount(1)
@@ -100,7 +100,7 @@ print(json.dumps([[a.type[1], a.info.get("title", ""), d.xref_get_key(a.xref, "I
     win = await app.firstWindow()
     await expect(win.locator('.page')).toHaveCount(6)
     await win.getByRole('tab', { name: 'Comments', exact: true }).click()
-    const list2 = win.getByRole('list', { name: 'Comments' })
+    const list2 = win.getByRole('list', { name: 'Comments', exact: true })
     await expect(list2.locator('li.comment')).toHaveCount(2)
     const note2 = list2.locator('li.comment', { hasText: 'Check the kerb height here' })
     await expect(note2.locator('.comment-state')).toHaveText('Accepted')

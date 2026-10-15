@@ -33,8 +33,8 @@ test("another tool's annotations: arrows, dashes and callouts are editable, the 
     await expect(page.locator('.annot-foreign')).toHaveCount(2)
     // The comment list shows all five.
     await win.getByRole('tab', { name: 'Comments', exact: true }).click()
-    await expect(win.getByRole('list', { name: 'Comments' }).locator('li.comment')).toHaveCount(5)
-    await expect(win.getByRole('list', { name: 'Comments' }).getByText('Arrow', { exact: true })).toHaveCount(1)
+    await expect(win.getByRole('list', { name: 'Comments', exact: true }).locator('li.comment')).toHaveCount(5)
+    await expect(win.getByRole('list', { name: 'Comments', exact: true }).getByText('Arrow', { exact: true })).toHaveCount(1)
 
     // Move the stamp (foreign) by dragging it.
     const stamp = page.locator('.annot-foreign').first()

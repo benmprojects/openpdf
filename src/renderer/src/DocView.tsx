@@ -17,8 +17,6 @@ import {
   canDash,
   canFill,
   signature,
-  pdfDateToIso,
-  REVIEW_STATES,
   type Reply,
   type ReviewState,
   stampSize,
@@ -45,6 +43,9 @@ import type { Guide } from './GuideLayer'
 import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
+import { annotsFromImported } from './importMap'
+import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
+import { ComparePanel } from './ComparePanel'
 import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
 import { CommentsPane } from './CommentsPane'
 import { commentsCsv, commentSummaryPdf } from './commentReport'
@@ -79,6 +80,7 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  GitCompare,
   FileInput,
   Paperclip,
   Link2,
@@ -477,45 +479,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         baselineReplies.current = new Map()
         foreignRects.current = new Map()
         for (const { page, annots: list, replies } of pages) {
-          for (const r of list) {
-            const a: Annot = {
-              id: nextAnnotId.current++,
-              page,
-              kind: r.kind,
-              color: r.color ?? defaultColor(r.kind),
-              rects: r.rects,
-              text: r.text,
-              fontSize: r.fontSize,
-              lineWidth: r.lineWidth,
-              points: r.points,
-              fill: r.fill,
-              dash: r.dash,
-              measure: r.measure,
-              stampInfo: r.stampInfo,
-              opacity: r.opacity,
-              fontFamily: r.fontFamily,
-              author: r.author,
-              created: r.created ? pdfDateToIso(r.created) : undefined,
-              modified: r.modified ? pdfDateToIso(r.modified) : undefined,
-              replies: replies
-                .filter((x) => x.parent === r.index)
-                .map((x) => {
-                  const reply: Reply = {
-                    id: nextAnnotId.current++,
-                    author: x.author,
-                    text: x.text,
-                    date: pdfDateToIso(x.date) ?? new Date(0).toISOString(),
-                    state: REVIEW_STATES.includes(x.state as ReviewState) ? (x.state as ReviewState) : undefined,
-                    origin: { index: x.index, subtype: 1, rect: x.rect }
-                  }
-                  baselineReplies.current.set(reply.id, { page, origin: reply.origin! })
-                  return reply
-                })
-                .sort((p, q) => p.date.localeCompare(q.date)),
-              origin: { index: r.index, subtype: r.subtype, rect: r.rect }
-            }
+          for (const a of annotsFromImported(page, list, replies, () => nextAnnotId.current++)) {
             imported.push(a)
             baseline.current.set(a.id, { page, origin: a.origin!, sig: signature(a) })
+            for (const r of a.replies ?? []) baselineReplies.current.set(r.id, { page, origin: r.origin! })
           }
         }
         touchedRef.current = new Set()
@@ -1279,6 +1246,45 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setNotice({ kind: 'error', text: `Could not import the comments: ${e instanceof Error ? e.message : String(e)}` })
     }
   }
+  // ---- Compare comments with another copy ------------------------------------------------------------
+  const [comparison, setComparison] = useState<{ otherName: string; result: Comparison } | null>(null)
+  const compareWith = async () => {
+    const file = await window.openpdf.pickFile({ name: 'PDF documents', ext: ['pdf'] })
+    if (!file) return
+    const other = new PdfClient()
+    try {
+      await other.load(file.data)
+      let n = 1
+      const theirs = (await other.annots())
+        .flatMap(({ page, annots: list, replies }) => annotsFromImported(page, list, replies, () => n++))
+        .filter((a) => a.kind !== 'foreign' && a.kind !== 'link')
+      setComparison({ otherName: file.name, result: compareAnnots(commentAnnots.filter((a) => a.kind !== 'foreign'), theirs) })
+      setPropsOpen(false)
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not compare: ${e instanceof Error ? e.message : String(e)}` })
+    } finally {
+      other.dispose()
+    }
+  }
+  /** A comment from the other copy, added here as a new annotation. */
+  const adoptTheirs = (list: Annot[]) => {
+    const made = list.map((a) => ({
+      ...a,
+      id: nextAnnotId.current++,
+      origin: undefined,
+      replies: a.replies?.map((r) => ({ ...r, id: nextAnnotId.current++, origin: undefined }))
+    }))
+    history.commit((all) => [...all, ...made])
+    setComparison((c) => (c ? { ...c, result: { ...c.result, onlyTheirs: c.result.onlyTheirs.filter((x) => !list.includes(x)) } } : c))
+  }
+  const takeTheirsAt = (i: number) => {
+    const c = comparison?.result.changed[i]
+    if (!c) return
+    touch(c.mine.id)
+    history.commit((all) => all.map((a) => (a.id === c.mine.id ? takeTheirs(a, c.theirs, () => nextAnnotId.current++) : a)))
+    setComparison((cur) => (cur ? { ...cur, result: { ...cur.result, changed: cur.result.changed.filter((_, k) => k !== i), same: cur.result.same + 1 } } : cur))
+  }
+
   const exportCommentsCsv = async () => {
     const saved = await window.openpdf.saveText(`${baseName} (comments).csv`, commentsCsv(annots, pageLabels), { name: 'CSV (comma separated)', ext: 'csv' })
     if (saved) setNotice({ kind: 'info', text: `Comments exported to ${saved}` })
@@ -1708,6 +1714,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={FileInput} label="Import" onClick={() => void importComments()} disabled={!pages.length} title="Import comments from an XFDF or FDF file" />
                 <RStack>
                   <RB icon={FileOutput} label="Export XFDF" onClick={() => void exportComments('xfdf')} disabled={!commentAnnots.length} title="Export the comments as XFDF (XML)" />
+                  <RB icon={GitCompare} label="Compare…" onClick={() => void compareWith()} disabled={!pages.length} title="Compare the comments with another copy of this document" />
                   <RB icon={FileOutput} label="Export FDF" onClick={() => void exportComments('fdf')} disabled={!commentAnnots.length} title="Export the comments as FDF" />
                 </RStack>
               </RGroup>
@@ -2330,6 +2337,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onPageChange={setCurrentPage}
               onSize={onSize}
             />
+            {comparison && (
+              <ComparePanel
+                otherName={comparison.otherName}
+                result={comparison.result}
+                onFocus={(a) => {
+                  void viewer.current?.scrollToRect(a.page, a.rects[0])
+                  if (annots.some((x) => x.id === a.id)) setSelectedAnnot(a.id)
+                }}
+                onAdd={(a) => adoptTheirs([a])}
+                onAddAll={() => adoptTheirs(comparison.result.onlyTheirs)}
+                onTakeTheirs={takeTheirsAt}
+                onClose={() => setComparison(null)}
+              />
+            )}
             {propsOpen && (
               <PropertiesPanel
                 annot={selected}

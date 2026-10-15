@@ -51,7 +51,7 @@ test('export comments as XFDF and FDF, and import them into another copy', async
       await win.getByRole('button', { name: 'Import', exact: true }).click()
       await expect(win.getByText(/Imported 3 comments/)).toBeVisible()
       await win.getByRole('tab', { name: 'Comments', exact: true }).click()
-      const list = win.getByRole('list', { name: 'Comments' })
+      const list = win.getByRole('list', { name: 'Comments', exact: true })
       await expect(list.locator('li.comment')).toHaveCount(3)
       await expect(list.getByText('Arrow', { exact: true })).toHaveCount(1)
       await expect(list.getByText('Callout', { exact: true })).toHaveCount(1)
