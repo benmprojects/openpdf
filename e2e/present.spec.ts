@@ -23,9 +23,14 @@ test('presentation mode: full screen, keys move between pages, Esc returns to th
     await expect(show.locator('.presentation-counter')).toHaveText('1 / 6')
     await expect.poll(() => show.locator('canvas').evaluate((c: HTMLCanvasElement) => c.width)).toBeGreaterThan(100)
     // The page fills the screen height or width.
-    const box = (await show.locator('canvas').boundingBox())!
-    const vp = await win.evaluate(() => ({ w: innerWidth, h: innerHeight }))
-    expect(Math.max(box.width / vp.w, box.height / vp.h)).toBeGreaterThan(0.97)
+    // Once full screen has settled, the page is drawn again to fill it.
+    await expect
+      .poll(async () => {
+        const box = (await show.locator('canvas').boundingBox())!
+        const vp = await win.evaluate(() => ({ w: innerWidth, h: innerHeight }))
+        return Math.max(box.width / vp.w, box.height / vp.h)
+      })
+      .toBeGreaterThan(0.97)
 
     await win.keyboard.press('ArrowRight')
     await win.keyboard.press('Space')
