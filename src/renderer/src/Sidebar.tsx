@@ -24,6 +24,7 @@ import {
 import { indentAt, insertAfter, moveAt, nodeAt, outdentAt, removeAt, updateAt, type BookmarkNode, type Path } from './outlineEdit'
 import type { Layer } from './layers'
 import type { MediaItem } from './media'
+import { msg, t } from './i18n'
 import { getPageClip, onPageClip } from './pageClipboard'
 import { useEffect, useRef, useState } from 'react'
 import type { AttachmentInfo, OutlineNode, PageSize, PdfClient } from './pdfClient'
@@ -80,11 +81,11 @@ interface Props {
 }
 
 const TABS: [SidebarTab, string, LucideIcon][] = [
-  ['pages', 'Pages', LayoutGrid],
-  ['bookmarks', 'Bookmarks', Bookmark],
-  ['comments', 'Comments', MessageSquare],
-  ['attachments', 'Attachments', Paperclip],
-  ['layers', 'Layers', Layers],
+  ['pages', msg('Pages'), LayoutGrid],
+  ['bookmarks', msg('Bookmarks'), Bookmark],
+  ['comments', msg('Comments'), MessageSquare],
+  ['attachments', msg('Attachments'), Paperclip],
+  ['layers', msg('Layers'), Layers],
   ['media', 'Media', Clapperboard]
 ]
 
@@ -94,9 +95,9 @@ export function Sidebar(props: Props) {
     <aside className="sidebar" style={{ width }}>
       <div className="sidebar-tabs" role="tablist" aria-label="Side pane">
         {TABS.map(([k, label, Icon]) => (
-          <button key={k} role="tab" aria-selected={tab === k} aria-label={label} title={label} onClick={() => onTab(k)}>
+          <button key={k} role="tab" aria-selected={tab === k} aria-label={t(label)} title={t(label)} onClick={() => onTab(k)}>
             <Icon size={15} strokeWidth={1.8} aria-hidden />
-            {tab === k && <span>{label}</span>}
+            {tab === k && <span>{t(label)}</span>}
           </button>
         ))}
       </div>

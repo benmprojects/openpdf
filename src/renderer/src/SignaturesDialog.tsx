@@ -1,5 +1,6 @@
 import { Modal } from './AppDialogs'
 import { describeSignature, type ChainInfo, type SignatureCheck, type SignatureInfo } from './sign'
+import { t } from './i18n'
 
 export interface SignatureRow {
   info: SignatureInfo
@@ -26,7 +27,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 /** What each signature in the document says, and whether it can be trusted. */
 export function SignaturesDialog({ rows, onClose }: { rows: SignatureRow[]; onClose: () => void }) {
   return (
-    <Modal title="Signatures" onClose={onClose}>
+    <Modal title={t('Signatures')} onClose={onClose}>
       <div className="marks-form">
         {rows.length === 0 && <p>This document has no signatures.</p>}
         {rows.map((r) => {

@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Modal } from './AppDialogs'
+import { t } from './i18n'
 
 /** Title and cover text for a portfolio made from the chosen files. */
 export function PortfolioDialog({ files, onCreate, onClose }: { files: string[]; onCreate: (title: string, cover: string) => void; onClose: () => void }) {
   const [title, setTitle] = useState('Portfolio')
   const [cover, setCover] = useState('')
   return (
-    <Modal title="Create a portfolio" onClose={onClose}>
+    <Modal title={t('Create a portfolio')} onClose={onClose}>
       <form
         className="marks-form props-form"
         onSubmit={(e) => {

@@ -23,6 +23,8 @@ export interface Settings {
   toolPresets: ToolPreset[]
   /** Update checks: off unless turned on, and only to the address given. */
   updates: { check: boolean; feed: string }
+  /** `system`, or a language code such as en-AU or fr. */
+  language: string
 }
 
 /** Mirrors ToolStyle in the renderer's annotations.ts. */
@@ -69,7 +71,9 @@ const defaults = (): Settings => ({
   spellcheck: true,
   toolDefaults: {},
   toolPresets: [],
-  updates: { check: false, feed: '' }
+  updates: { check: false, feed: '' },
+  // Tests always start in Australian English, whatever the machine's language.
+  language: process.env.OPENPDF_E2E === '1' ? 'en-AU' : 'system'
 })
 
 let current: Settings | null = null
@@ -111,7 +115,8 @@ function sanitise(raw: Partial<Settings>): Settings {
     updates: {
       check: typeof raw.updates?.check === 'boolean' ? raw.updates.check : false,
       feed: typeof raw.updates?.feed === 'string' ? raw.updates.feed.trim().slice(0, 300) : ''
-    }
+    },
+    language: typeof raw.language === 'string' && (raw.language === 'system' || /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(raw.language)) ? raw.language : 'system'
   }
 }
 

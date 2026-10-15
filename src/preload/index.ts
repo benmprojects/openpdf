@@ -66,6 +66,8 @@ const api = {
   decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
   /** The file encrypted with new passwords and permissions. */
   encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** Translations the user added in their data folder (code -> catalogue). */
+  userLocales: (): Promise<Record<string, { name: string; messages: Record<string, string> }>> => ipcRenderer.invoke('locales:user'),
   /** Updates, opt in: look at the feed, download, restart to install. */
   checkForUpdates: (feed: string): Promise<UpdateStatus> => ipcRenderer.invoke('updates:check', feed),
   downloadUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('updates:download'),

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { ImageFormat } from './exportDoc'
+import { t } from './i18n'
 
 export interface ExportImagesRequest {
   format: ImageFormat
@@ -14,7 +15,7 @@ export function ExportImagesDialog({ pageCount, currentPage, onExport, onClose }
   const [dpi, setDpi] = useState(150)
   const [scope, setScope] = useState<'all' | 'current'>('all')
   return (
-    <Modal title="Export pages as pictures" onClose={onClose}>
+    <Modal title={t('Export pages as pictures')} onClose={onClose}>
       <form
         className="marks-form props-form"
         onSubmit={(e) => {

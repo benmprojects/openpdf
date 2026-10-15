@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { CatalogueEntry, InstalledPlugin } from '../../main/plugins'
 import type { PluginAction } from '../../shared/plugins'
+import { t } from './i18n'
 
 const CATALOGUE_KEY = 'openpdf.pluginCatalogue'
 const saved = (): string => {
@@ -56,7 +57,7 @@ export function PluginsDialog({ onRun, onClose }: { onRun: (plugin: InstalledPlu
   const can = (p: InstalledPlugin) => p.manifest.permits.map((k) => PERMIT_WORDS[k] ?? k).join(', ')
 
   return (
-    <Modal title="Plugins" onClose={onClose} wide>
+    <Modal title={t('Plugins')} onClose={onClose} wide>
       <div className="marks-form plugins">
         <p className="muted">
           A plugin is a small script that looks at the document and asks for changes from a fixed list. It runs in a sandbox: it cannot read files, use the network or change anything beyond what its permissions below allow.

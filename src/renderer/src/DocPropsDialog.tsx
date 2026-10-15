@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import { formatSize } from './OptimiseDialog'
 import type { DocProps } from './metadata'
+import { t } from './i18n'
 
 /** The ISO string as the value of a datetime-local input (local time), and back. */
 const toLocal = (iso: string) => {
@@ -40,7 +41,7 @@ export function DocPropsDialog({
     </label>
   )
   return (
-    <Modal title="Document properties" onClose={onClose}>
+    <Modal title={t('Document properties')} onClose={onClose}>
       <form
         className="marks-form props-form"
         onSubmit={(e) => {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { CertInfo, SignSource } from '../../main/signing'
 import type { CertifyLevel } from './sign'
+import { t } from './i18n'
 
 export interface SignRequest {
   source: SignSource
@@ -99,7 +100,7 @@ export function SignDialog({ canCertify, onSign, onClose }: { canCertify: boolea
   }
 
   return (
-    <Modal title="Sign document" onClose={onClose}>
+    <Modal title={t('Sign document')} onClose={onClose}>
       <form
         className="marks-form props-form"
         onSubmit={(e) => {

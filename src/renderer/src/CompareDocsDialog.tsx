@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from './AppDialogs'
 import { diffTokens, groupChanges, padTo, tokenise, visualDiff, type Change } from './compareDocs'
 import { PdfClient, type PageSize } from './pdfClient'
+import { t } from './i18n'
 
 interface Side {
   name: string
@@ -106,7 +107,7 @@ export function CompareDocsDialog({ current, onClose }: { current: { name: strin
   const differing = useMemo(() => Object.entries(pageChange).filter(([, v]) => v > 0.0005).map(([k]) => Number(k) + 1), [pageChange])
 
   return (
-    <Modal title="Compare documents" onClose={onClose} wide>
+    <Modal title={t('Compare documents')} onClose={onClose} wide>
       <div className="marks-form compare-docs">
         <p>
           <strong>{current.name}</strong> ({current.pages.length} page{current.pages.length === 1 ? '' : 's'}) compared with{' '}

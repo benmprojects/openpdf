@@ -251,6 +251,7 @@ import {
 } from 'lucide-react'
 import { IconButton, RB, RGroup, RStack } from './Ribbon'
 import { displayDims, turn, type Rotation } from './viewRotation'
+import { msg, t } from './i18n'
 
 type ZoomMode = 'fit-width' | 'fit-page' | number
 
@@ -313,18 +314,18 @@ function mightBeEncrypted(data: Uint8Array): boolean {
 
 type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'redact' | 'sign' | 'convert' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
-  ['file', 'File'],
-  ['home', 'Home'],
-  ['edit', 'Edit'],
-  ['forms', 'Forms'],
-  ['redact', 'Redact'],
-  ['sign', 'Sign'],
-  ['convert', 'Convert'],
-  ['comment', 'Comment'],
-  ['draw', 'Draw'],
-  ['measure', 'Measure'],
-  ['organise', 'Organise'],
-  ['layout', 'Layout'],
+  ['file', msg('File')],
+  ['home', msg('Home')],
+  ['edit', msg('Edit')],
+  ['forms', msg('Forms')],
+  ['redact', msg('Redact')],
+  ['sign', msg('Sign')],
+  ['convert', msg('Convert')],
+  ['comment', msg('Comment')],
+  ['draw', msg('Draw')],
+  ['measure', msg('Measure')],
+  ['organise', msg('Organise')],
+  ['layout', msg('Layout')],
   ['view', 'View']
 ]
 
@@ -2725,8 +2726,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           </div>
         </div>
       </RGroup>
-      <RGroup label="Properties">
-        <RB big icon={SlidersHorizontal} label="Properties" onClick={() => setPropsOpen((o) => !o)} pressed={propsOpen} title="Properties of the selection, or of the current tool (Ctrl+E)" />
+      <RGroup label={t('Properties')}>
+        <RB big icon={SlidersHorizontal} label={t('Properties')} onClick={() => setPropsOpen((o) => !o)} pressed={propsOpen} title={t('Properties of the selection, or of the current tool (Ctrl+E)')} />
         {toolPresets.length > 0 && (
           <select className="rselect" aria-label="Presets" value="" onChange={(e) => { const p = toolPresets.find((x) => x.id === e.target.value); if (p) applyPreset(p) }} title="Use a saved preset">
             <option value="">Presets…</option>
@@ -2738,8 +2739,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           </select>
         )}
       </RGroup>
-      <RGroup label="Edit">
-        <RB big icon={Trash2} label="Delete" onClick={() => selected && removeAnnot(selected.id)} disabled={!selected} title="Delete the selected annotation (Delete)" />
+      <RGroup label={t('Edit')}>
+        <RB big icon={Trash2} label={t('Delete')} onClick={() => selected && removeAnnot(selected.id)} disabled={!selected} title={t('Delete the selected annotation (Delete)')} />
         <RStack>{undoButtons}</RStack>
       </RGroup>
     </>
@@ -2757,98 +2758,98 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         <div className="ribbon-tabs" role="tablist" aria-label="Ribbon">
           {RIBBON_TABS.map(([k, label]) => (
             <button key={k} role="tab" aria-selected={ribbon === k} className={ribbon === k ? 'rtab on' : 'rtab'} onClick={() => setRibbon(k)}>
-              {label}
+              {t(label)}
             </button>
           ))}
         </div>
-        <fieldset className="ribbon-body" role="tabpanel" disabled={locked && ribbon !== 'file' && ribbon !== 'home' && ribbon !== 'view'} aria-label={RIBBON_TABS.find(([k]) => k === ribbon)?.[1]}>
+        <fieldset className="ribbon-body" role="tabpanel" disabled={locked && ribbon !== 'file' && ribbon !== 'home' && ribbon !== 'view'} aria-label={t(RIBBON_TABS.find(([k]) => k === ribbon)?.[1] ?? '')}>
           {ribbon === 'file' && (
             <>
-              <RGroup label="Document">
-                <RB big icon={FolderOpen} label="Open" onClick={onOpen} title="Open a PDF (Ctrl+O)" />
-                <RB big icon={Save} label="Save" badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
-                <RB big icon={SaveAll} label="Save as" onClick={() => void save(true)} disabled={saving || !pages.length} title="Save a copy (Ctrl+Shift+S)" />
-                <RB big icon={X} label="Close" onClick={onCloseDoc} title="Close this document (Ctrl+W)" />
+              <RGroup label={t('Document')}>
+                <RB big icon={FolderOpen} label={t('Open')} onClick={onOpen} title={t('Open a PDF (Ctrl+O)')} />
+                <RB big icon={Save} label={t('Save')} badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
+                <RB big icon={SaveAll} label={t('Save as')} onClick={() => void save(true)} disabled={saving || !pages.length} title={t('Save a copy (Ctrl+Shift+S)')} />
+                <RB big icon={X} label={t('Close')} onClick={onCloseDoc} title={t('Close this document (Ctrl+W)')} />
               </RGroup>
-              <RGroup label="Comments">
-                <RB big icon={FileInput} label="Import" onClick={() => void importComments()} disabled={!pages.length} title="Import comments from an XFDF or FDF file" />
+              <RGroup label={t('Comments')}>
+                <RB big icon={FileInput} label={t('Import')} onClick={() => void importComments()} disabled={!pages.length} title={t('Import comments from an XFDF or FDF file')} />
                 <RStack>
-                  <RB icon={FileOutput} label="Export XFDF" onClick={() => void exportComments('xfdf')} disabled={!commentAnnots.length} title="Export the comments as XFDF (XML)" />
-                  <RB icon={GitCompare} label="Compare…" onClick={() => void compareWith()} disabled={!pages.length} title="Compare the comments with another copy of this document" />
-                  <RB icon={FileOutput} label="Export FDF" onClick={() => void exportComments('fdf')} disabled={!commentAnnots.length} title="Export the comments as FDF" />
+                  <RB icon={FileOutput} label={t('Export XFDF')} onClick={() => void exportComments('xfdf')} disabled={!commentAnnots.length} title={t('Export the comments as XFDF (XML)')} />
+                  <RB icon={GitCompare} label={t('Compare…')} onClick={() => void compareWith()} disabled={!pages.length} title={t('Compare the comments with another copy of this document')} />
+                  <RB icon={FileOutput} label={t('Export FDF')} onClick={() => void exportComments('fdf')} disabled={!commentAnnots.length} title={t('Export the comments as FDF')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Automate">
-                <RB big icon={Puzzle} label="Plugins" onClick={() => setPluginsOpen(true)} title="Install and run plugins: small sandboxed scripts that make changes you choose" />
-                <RB big icon={ListChecks} label="Batch" onClick={() => setBatchOpen(true)} title="Run a list of steps (watermark, page numbers, optimise, OCR, clean-up) over many PDFs" />
+              <RGroup label={t('Automate')}>
+                <RB big icon={Puzzle} label={t('Plugins')} onClick={() => setPluginsOpen(true)} title={t('Install and run plugins: small sandboxed scripts that make changes you choose')} />
+                <RB big icon={ListChecks} label={t('Batch')} onClick={() => setBatchOpen(true)} title={t('Run a list of steps (watermark, page numbers, optimise, OCR, clean-up) over many PDFs')} />
               </RGroup>
-              <RGroup label="Security">
-                <RB big icon={ShieldCheck} label="Security" onClick={() => setSecurityOpen(true)} disabled={!pages.length || busy || locked} title="Set or remove passwords and permissions (applied when you save)" />
+              <RGroup label={t('Security')}>
+                <RB big icon={ShieldCheck} label={t('Security')} onClick={() => setSecurityOpen(true)} disabled={!pages.length || busy || locked} title={t('Set or remove passwords and permissions (applied when you save)')} />
               </RGroup>
-              <RGroup label="Info">
-                <RB big icon={FileText} label="Properties" onClick={() => void openDocProps()} disabled={!pages.length || busy || locked} title="Title, author, keywords and other document properties" />
-                <RB big icon={BadgeCheck} label="Standards" onClick={() => void openStandards()} disabled={!pages.length || busy} title="What the file declares about PDF/A and PDF/UA, with basic checks" />
-                <RB big icon={Archive} label="Convert to PDF/A" onClick={() => void makePdfA()} disabled={!pages.length || busy || locked} title="Make the file PDF/A-2b as far as this program can (best effort: check the result with a validator)" />
+              <RGroup label={t('Info')}>
+                <RB big icon={FileText} label={t('Properties')} onClick={() => void openDocProps()} disabled={!pages.length || busy || locked} title={t('Title, author, keywords and other document properties')} />
+                <RB big icon={BadgeCheck} label={t('Standards')} onClick={() => void openStandards()} disabled={!pages.length || busy} title={t('What the file declares about PDF/A and PDF/UA, with basic checks')} />
+                <RB big icon={Archive} label={t('Convert to PDF/A')} onClick={() => void makePdfA()} disabled={!pages.length || busy || locked} title={t('Make the file PDF/A-2b as far as this program can (best effort: check the result with a validator)')} />
               </RGroup>
-              <RGroup label="Output">
-                <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
+              <RGroup label={t('Output')}>
+                <RB big icon={Printer} label={t('Print')} onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
               </RGroup>
             </>
           )}
           {ribbon === 'home' && (
             <>
-              <RGroup label="Tools">
-                <RB big icon={MousePointer2} label="Select" onClick={() => setTool('select')} disabled={!pages.length} pressed={tool === 'select'} title="Select text and annotations" />
-                <RB big icon={Hand} label="Hand" onClick={() => setTool('hand')} disabled={!pages.length} pressed={tool === 'hand'} title="Hand tool: drag to pan" />
-                <RB big icon={Camera} label="Snapshot" onClick={() => setTool(tool === 'snapshot' ? 'select' : 'snapshot')} disabled={!pages.length} pressed={tool === 'snapshot'} title="Snapshot: drag a box to copy that area as an image" />
-                <RB big icon={ScanSearch} label="Zoom" onClick={() => setTool(tool === 'zoom' ? 'select' : 'zoom')} disabled={!pages.length} pressed={tool === 'zoom'} title="Zoom tool: drag a box to fit it, click to zoom in, Shift+click to zoom out" />
+              <RGroup label={t('Tools')}>
+                <RB big icon={MousePointer2} label={t('Select')} onClick={() => setTool('select')} disabled={!pages.length} pressed={tool === 'select'} title={t('Select text and annotations')} />
+                <RB big icon={Hand} label={t('Hand')} onClick={() => setTool('hand')} disabled={!pages.length} pressed={tool === 'hand'} title={t('Hand tool: drag to pan')} />
+                <RB big icon={Camera} label={t('Snapshot')} onClick={() => setTool(tool === 'snapshot' ? 'select' : 'snapshot')} disabled={!pages.length} pressed={tool === 'snapshot'} title={t('Snapshot: drag a box to copy that area as an image')} />
+                <RB big icon={ScanSearch} label={t('Zoom')} onClick={() => setTool(tool === 'zoom' ? 'select' : 'zoom')} disabled={!pages.length} pressed={tool === 'zoom'} title={t('Zoom tool: drag a box to fit it, click to zoom in, Shift+click to zoom out')} />
               </RGroup>
-              <RGroup label="Edit">
+              <RGroup label={t('Edit')}>
                 <RStack>
-                  <RB icon={Copy} label="Copy" onClick={() => void viewer.current?.copySelection()} disabled={!hasTextSelection || permissions?.extract === false} title="Copy the selected text (Ctrl+C)" />
+                  <RB icon={Copy} label={t('Copy')} onClick={() => void viewer.current?.copySelection()} disabled={!hasTextSelection || permissions?.extract === false} title={t('Copy the selected text (Ctrl+C)')} />
                   {undoButtons}
                 </RStack>
               </RGroup>
-              <RGroup label="Comment">
-                <RB big icon={Highlighter} label="Highlight" onClick={() => void markSelection('highlight')} disabled={!hasTextSelection || locked} title="Highlight the selected text" />
-                <RB big icon={StickyNote} label="Note" onClick={() => setTool(tool === 'note' ? 'select' : 'note')} disabled={!pages.length || locked} pressed={tool === 'note'} title="Add a sticky note: click on the page" />
+              <RGroup label={t('Comment')}>
+                <RB big icon={Highlighter} label={t('Highlight')} onClick={() => void markSelection('highlight')} disabled={!hasTextSelection || locked} title={t('Highlight the selected text')} />
+                <RB big icon={StickyNote} label={t('Note')} onClick={() => setTool(tool === 'note' ? 'select' : 'note')} disabled={!pages.length || locked} pressed={tool === 'note'} title={t('Add a sticky note: click on the page')} />
               </RGroup>
-              <RGroup label="Find">
-                <RB big icon={Search} label="Find" onClick={openSearch} disabled={!pages.length} pressed={searchOpen} title="Find (Ctrl+F)" />
+              <RGroup label={t('Find')}>
+                <RB big icon={Search} label={t('Find')} onClick={openSearch} disabled={!pages.length} pressed={searchOpen} title={t('Find (Ctrl+F)')} />
               </RGroup>
-              <RGroup label="Document">
-                <RB big icon={Save} label="Save" badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
-                <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
+              <RGroup label={t('Document')}>
+                <RB big icon={Save} label={t('Save')} badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
+                <RB big icon={Printer} label={t('Print')} onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
               </RGroup>
             </>
           )}
           {ribbon === 'comment' && (
             <>
-              <RGroup label="Text markup">
-                <RB big icon={Highlighter} label="Highlight" onClick={() => void markSelection('highlight')} disabled={!hasTextSelection} title="Highlight the selected text" />
+              <RGroup label={t('Text markup')}>
+                <RB big icon={Highlighter} label={t('Highlight')} onClick={() => void markSelection('highlight')} disabled={!hasTextSelection} title={t('Highlight the selected text')} />
                 <RStack>
-                  <RB icon={Underline} label="Underline" onClick={() => void markSelection('underline')} disabled={!hasTextSelection} title="Underline the selected text" />
-                  <RB icon={Strikethrough} label="Strikeout" onClick={() => void markSelection('strikeout')} disabled={!hasTextSelection} title="Strike out the selected text" />
-                  <RB icon={Waves} label="Squiggly" onClick={() => void markSelection('squiggly')} disabled={!hasTextSelection} title="Squiggly underline under the selected text" />
+                  <RB icon={Underline} label={t('Underline')} onClick={() => void markSelection('underline')} disabled={!hasTextSelection} title={t('Underline the selected text')} />
+                  <RB icon={Strikethrough} label={t('Strikeout')} onClick={() => void markSelection('strikeout')} disabled={!hasTextSelection} title={t('Strike out the selected text')} />
+                  <RB icon={Waves} label={t('Squiggly')} onClick={() => void markSelection('squiggly')} disabled={!hasTextSelection} title={t('Squiggly underline under the selected text')} />
                 </RStack>
                 <RStack>
-                  <RB icon={Replace} label="Replace text" onClick={() => void markSelection('strikeout', true)} disabled={!hasTextSelection} title="Strike out the selected text and type its replacement" />
-                  <RB icon={TextCursorInput} label="Insert text" onClick={() => setTool(tool === 'caret' ? 'select' : 'caret')} disabled={!pages.length} pressed={tool === 'caret'} title="Mark where text should be inserted: click in the text, then type it" />
-                </RStack>
-              </RGroup>
-              <RGroup label="Notes">
-                <RB big icon={StickyNote} label="Note" onClick={() => setTool(tool === 'note' ? 'select' : 'note')} disabled={!pages.length} pressed={tool === 'note'} title="Add a sticky note: click on the page" />
-                <RB big icon={Type} label="Text box" onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')} disabled={!pages.length} pressed={tool === 'textbox'} title="Add a text box: click on the page" />
-                <RStack>
-                  <RB icon={Keyboard} label="Typewriter" onClick={() => setTool(tool === 'typewriter' ? 'select' : 'typewriter')} disabled={!pages.length} pressed={tool === 'typewriter'} title="Type straight onto the page: click where the text starts" />
-                  <RB icon={Paperclip} label="Attach file" onClick={() => setTool(tool === 'fileattach' ? 'select' : 'fileattach')} disabled={!pages.length} pressed={tool === 'fileattach'} title="Attach a file: click on the page, then choose the file" />
-                  <RB icon={Volume2} label="Sound" onClick={() => setTool(tool === 'sound' ? 'select' : 'sound')} disabled={!pages.length} pressed={tool === 'sound'} title="Attach a sound: click on the page, then choose a WAV recording" />
-                  <RB icon={Link2} label="Link" onClick={() => setTool(tool === 'link' ? 'select' : 'link')} disabled={!pages.length} pressed={tool === 'link'} title="Add a link: drag a box, then choose a web address or a page" />
-                  <RB icon={MessageSquareShare} label="Callout" onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title="Callout: drag from the point to call out to where the text box goes" />
+                  <RB icon={Replace} label={t('Replace text')} onClick={() => void markSelection('strikeout', true)} disabled={!hasTextSelection} title={t('Strike out the selected text and type its replacement')} />
+                  <RB icon={TextCursorInput} label={t('Insert text')} onClick={() => setTool(tool === 'caret' ? 'select' : 'caret')} disabled={!pages.length} pressed={tool === 'caret'} title={t('Mark where text should be inserted: click in the text, then type it')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Stamp">
-                <RB big icon={StampIcon} label="Stamp" onClick={() => setTool(tool === 'stamp' ? 'select' : 'stamp')} disabled={!pages.length} pressed={tool === 'stamp'} title="Place a stamp: click on the page" />
+              <RGroup label={t('Notes')}>
+                <RB big icon={StickyNote} label={t('Note')} onClick={() => setTool(tool === 'note' ? 'select' : 'note')} disabled={!pages.length} pressed={tool === 'note'} title={t('Add a sticky note: click on the page')} />
+                <RB big icon={Type} label={t('Text box')} onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')} disabled={!pages.length} pressed={tool === 'textbox'} title={t('Add a text box: click on the page')} />
+                <RStack>
+                  <RB icon={Keyboard} label={t('Typewriter')} onClick={() => setTool(tool === 'typewriter' ? 'select' : 'typewriter')} disabled={!pages.length} pressed={tool === 'typewriter'} title={t('Type straight onto the page: click where the text starts')} />
+                  <RB icon={Paperclip} label={t('Attach file')} onClick={() => setTool(tool === 'fileattach' ? 'select' : 'fileattach')} disabled={!pages.length} pressed={tool === 'fileattach'} title={t('Attach a file: click on the page, then choose the file')} />
+                  <RB icon={Volume2} label={t('Sound')} onClick={() => setTool(tool === 'sound' ? 'select' : 'sound')} disabled={!pages.length} pressed={tool === 'sound'} title={t('Attach a sound: click on the page, then choose a WAV recording')} />
+                  <RB icon={Link2} label={t('Link')} onClick={() => setTool(tool === 'link' ? 'select' : 'link')} disabled={!pages.length} pressed={tool === 'link'} title={t('Add a link: drag a box, then choose a web address or a page')} />
+                  <RB icon={MessageSquareShare} label={t('Callout')} onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title={t('Callout: drag from the point to call out to where the text box goes')} />
+                </RStack>
+              </RGroup>
+              <RGroup label={t('Stamp')}>
+                <RB big icon={StampIcon} label={t('Stamp')} onClick={() => setTool(tool === 'stamp' ? 'select' : 'stamp')} disabled={!pages.length} pressed={tool === 'stamp'} title={t('Place a stamp: click on the page')} />
                 <div className="menu-anchor stamp-anchor">
                   <button className="stamp-current" onClick={() => setStampPickerOpen((o) => !o)} aria-expanded={stampPickerOpen} aria-label="Choose stamp" title="Choose a stamp">
                     {stampChoice.kind === 'image' ? <img src={stampChoice.stamp.dataUrl} alt="" /> : <span>{stampChoice.label}</span>}
@@ -2873,46 +2874,46 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           )}
           {ribbon === 'draw' && (
             <>
-              <RGroup label="Drawing">
+              <RGroup label={t('Drawing')}>
                 <RStack>
-                  <RB icon={Slash} label="Line" onClick={() => setTool(tool === 'line' ? 'select' : 'line')} disabled={!pages.length} pressed={tool === 'line'} title="Draw a line: drag. Hold Shift for 45 degree steps" />
-                  <RB icon={MoveUpRight} label="Arrow" onClick={() => setTool(tool === 'arrow' ? 'select' : 'arrow')} disabled={!pages.length} pressed={tool === 'arrow'} title="Draw an arrow: drag. Hold Shift for 45 degree steps" />
+                  <RB icon={Slash} label={t('Line')} onClick={() => setTool(tool === 'line' ? 'select' : 'line')} disabled={!pages.length} pressed={tool === 'line'} title={t('Draw a line: drag. Hold Shift for 45 degree steps')} />
+                  <RB icon={MoveUpRight} label={t('Arrow')} onClick={() => setTool(tool === 'arrow' ? 'select' : 'arrow')} disabled={!pages.length} pressed={tool === 'arrow'} title={t('Draw an arrow: drag. Hold Shift for 45 degree steps')} />
                 </RStack>
                 <RStack>
-                  <RB icon={Hexagon} label="Polygon" onClick={() => setTool(tool === 'polygon' ? 'select' : 'polygon')} disabled={!pages.length} pressed={tool === 'polygon'} title="Polygon: click the corners, double-click or Enter to finish" />
+                  <RB icon={Hexagon} label={t('Polygon')} onClick={() => setTool(tool === 'polygon' ? 'select' : 'polygon')} disabled={!pages.length} pressed={tool === 'polygon'} title={t('Polygon: click the corners, double-click or Enter to finish')} />
                 </RStack>
                 <RStack>
-                  <RB icon={Square} label="Rectangle" onClick={() => setTool(tool === 'rectangle' ? 'select' : 'rectangle')} disabled={!pages.length} pressed={tool === 'rectangle'} title="Draw a rectangle: drag. Hold Shift for a square" />
-                  <RB icon={Circle} label="Ellipse" onClick={() => setTool(tool === 'ellipse' ? 'select' : 'ellipse')} disabled={!pages.length} pressed={tool === 'ellipse'} title="Draw an ellipse: drag. Hold Shift for a circle" />
-                  <RB icon={Spline} label="Polyline" onClick={() => setTool(tool === 'polyline' ? 'select' : 'polyline')} disabled={!pages.length} pressed={tool === 'polyline'} title="Polyline: click the points, double-click or Enter to finish" />
+                  <RB icon={Square} label={t('Rectangle')} onClick={() => setTool(tool === 'rectangle' ? 'select' : 'rectangle')} disabled={!pages.length} pressed={tool === 'rectangle'} title={t('Draw a rectangle: drag. Hold Shift for a square')} />
+                  <RB icon={Circle} label={t('Ellipse')} onClick={() => setTool(tool === 'ellipse' ? 'select' : 'ellipse')} disabled={!pages.length} pressed={tool === 'ellipse'} title={t('Draw an ellipse: drag. Hold Shift for a circle')} />
+                  <RB icon={Spline} label={t('Polyline')} onClick={() => setTool(tool === 'polyline' ? 'select' : 'polyline')} disabled={!pages.length} pressed={tool === 'polyline'} title={t('Polyline: click the points, double-click or Enter to finish')} />
                 </RStack>
-                <RB big icon={Cloud} label="Cloud" onClick={() => setTool(tool === 'cloud' ? 'select' : 'cloud')} disabled={!pages.length} pressed={tool === 'cloud'} title="Revision cloud: click the corners, double-click or Enter to finish" />
-                <RB big icon={EraserIcon} label="Eraser" onClick={() => setTool(tool === 'eraser' ? 'select' : 'eraser')} disabled={!pages.length} pressed={tool === 'eraser'} title="Eraser: drag over pencil strokes to rub them out" />
-                <RB big icon={Pencil} label="Pencil" onClick={() => setTool(tool === 'ink' ? 'select' : 'ink')} disabled={!pages.length} pressed={tool === 'ink'} title="Draw freehand: drag" />
+                <RB big icon={Cloud} label={t('Cloud')} onClick={() => setTool(tool === 'cloud' ? 'select' : 'cloud')} disabled={!pages.length} pressed={tool === 'cloud'} title={t('Revision cloud: click the corners, double-click or Enter to finish')} />
+                <RB big icon={EraserIcon} label={t('Eraser')} onClick={() => setTool(tool === 'eraser' ? 'select' : 'eraser')} disabled={!pages.length} pressed={tool === 'eraser'} title={t('Eraser: drag over pencil strokes to rub them out')} />
+                <RB big icon={Pencil} label={t('Pencil')} onClick={() => setTool(tool === 'ink' ? 'select' : 'ink')} disabled={!pages.length} pressed={tool === 'ink'} title={t('Draw freehand: drag')} />
               </RGroup>
               {styleAndEdit}
             </>
           )}
           {ribbon === 'measure' && (
             <>
-              <RGroup label="Measure">
-                <RB big icon={Ruler} label="Distance" onClick={() => setTool(tool === 'measure-distance' ? 'select' : 'measure-distance')} disabled={!pages.length} pressed={tool === 'measure-distance'} title="Measure a distance: click two points. Shift keeps 45 degree steps" />
-                <RB big icon={Spline} label="Perimeter" onClick={() => setTool(tool === 'measure-perimeter' ? 'select' : 'measure-perimeter')} disabled={!pages.length} pressed={tool === 'measure-perimeter'} title="Measure a path: click points, double-click or Enter to finish, Backspace to undo a point" />
-                <RB big icon={Pentagon} label="Area" onClick={() => setTool(tool === 'measure-area' ? 'select' : 'measure-area')} disabled={!pages.length} pressed={tool === 'measure-area'} title="Measure an area: click the corners, double-click or Enter to finish" />
+              <RGroup label={t('Measure')}>
+                <RB big icon={Ruler} label={t('Distance')} onClick={() => setTool(tool === 'measure-distance' ? 'select' : 'measure-distance')} disabled={!pages.length} pressed={tool === 'measure-distance'} title={t('Measure a distance: click two points. Shift keeps 45 degree steps')} />
+                <RB big icon={Spline} label={t('Perimeter')} onClick={() => setTool(tool === 'measure-perimeter' ? 'select' : 'measure-perimeter')} disabled={!pages.length} pressed={tool === 'measure-perimeter'} title={t('Measure a path: click points, double-click or Enter to finish, Backspace to undo a point')} />
+                <RB big icon={Pentagon} label={t('Area')} onClick={() => setTool(tool === 'measure-area' ? 'select' : 'measure-area')} disabled={!pages.length} pressed={tool === 'measure-area'} title={t('Measure an area: click the corners, double-click or Enter to finish')} />
               </RGroup>
-              <RGroup label="Scale">
-                <RB big icon={Scaling} label="Calibrate" onClick={() => setTool(tool === 'calibrate' ? 'select' : 'calibrate')} disabled={!pages.length} pressed={tool === 'calibrate'} title="Set the scale: click both ends of a line of known length, then enter its real length" />
+              <RGroup label={t('Scale')}>
+                <RB big icon={Scaling} label={t('Calibrate')} onClick={() => setTool(tool === 'calibrate' ? 'select' : 'calibrate')} disabled={!pages.length} pressed={tool === 'calibrate'} title={t('Set the scale: click both ends of a line of known length, then enter its real length')} />
                 <RStack>
                   <span className="rnote" title={scaleText}>
                     {scaleText}
                   </span>
-                  <RB icon={RotateCcw} label="Use document scale" onClick={() => setCalibrated(null)} disabled={!calibrated} title="Forget the calibration and use the document's scale (or paper size)" />
+                  <RB icon={RotateCcw} label={t('Use document scale')} onClick={() => setCalibrated(null)} disabled={!calibrated} title={t('Forget the calibration and use the document\'s scale (or paper size)')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Results">
+              <RGroup label={t('Results')}>
                 <RStack>
-                  <RB icon={Copy} label="Copy all" onClick={() => void copyMeasurements()} disabled={!measurements.length} title="Copy every measurement as text" />
-                  <RB icon={Trash2} label="Clear all" onClick={() => history.commit((list) => list.filter((a) => !a.measure))} disabled={!measurements.length} title="Delete every measurement made in this session" />
+                  <RB icon={Copy} label={t('Copy all')} onClick={() => void copyMeasurements()} disabled={!measurements.length} title={t('Copy every measurement as text')} />
+                  <RB icon={Trash2} label={t('Clear all')} onClick={() => history.commit((list) => list.filter((a) => !a.measure))} disabled={!measurements.length} title={t('Delete every measurement made in this session')} />
                 </RStack>
               </RGroup>
             </>
@@ -2921,80 +2922,80 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             <>
               <RGroup label={pageSel.length > 1 ? `Pages (${pageSel.length} selected)` : `Page ${opPages[0] + 1}`}>
                 <RStack>
-                  <RB icon={RotateCcwSquare} label="Rotate left" onClick={() => void runPageOp({ kind: 'rotate', delta: -90 }, opPages)} disabled={!pages.length || busy} title="Rotate the selected pages anticlockwise (changes the file)" />
-                  <RB icon={RotateCwSquare} label="Rotate right" onClick={() => void runPageOp({ kind: 'rotate', delta: 90 }, opPages)} disabled={!pages.length || busy} title="Rotate the selected pages clockwise (changes the file)" />
+                  <RB icon={RotateCcwSquare} label={t('Rotate left')} onClick={() => void runPageOp({ kind: 'rotate', delta: -90 }, opPages)} disabled={!pages.length || busy} title={t('Rotate the selected pages anticlockwise (changes the file)')} />
+                  <RB icon={RotateCwSquare} label={t('Rotate right')} onClick={() => void runPageOp({ kind: 'rotate', delta: 90 }, opPages)} disabled={!pages.length || busy} title={t('Rotate the selected pages clockwise (changes the file)')} />
                 </RStack>
-                <RB big icon={Trash2} label="Delete" onClick={() => void runPageOp({ kind: 'delete' }, opPages)} disabled={!pages.length || busy || opPages.length >= pages.length} title="Delete the selected pages" />
+                <RB big icon={Trash2} label={t('Delete')} onClick={() => void runPageOp({ kind: 'delete' }, opPages)} disabled={!pages.length || busy || opPages.length >= pages.length} title={t('Delete the selected pages')} />
               </RGroup>
-              <RGroup label="Copy">
+              <RGroup label={t('Copy')}>
                 <RStack>
-                  <RB icon={Copy} label="Copy pages" onClick={() => void runPageOp({ kind: 'copy' }, opPages)} disabled={!pages.length || busy} title="Copy the selected pages (Ctrl+C in the thumbnails)" />
-                  <RB icon={ClipboardPaste} label="Paste pages" onClick={() => void runPageOp({ kind: 'paste', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy || !hasPageClip} title="Paste copied pages after the selected pages (Ctrl+V in the thumbnails)" />
-                  <RB icon={CopyPlus} label="Duplicate" onClick={() => void runPageOp({ kind: 'duplicate' }, opPages)} disabled={!pages.length || busy} title="Insert copies of the selected pages after them" />
+                  <RB icon={Copy} label={t('Copy pages')} onClick={() => void runPageOp({ kind: 'copy' }, opPages)} disabled={!pages.length || busy} title={t('Copy the selected pages (Ctrl+C in the thumbnails)')} />
+                  <RB icon={ClipboardPaste} label={t('Paste pages')} onClick={() => void runPageOp({ kind: 'paste', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy || !hasPageClip} title={t('Paste copied pages after the selected pages (Ctrl+V in the thumbnails)')} />
+                  <RB icon={CopyPlus} label={t('Duplicate')} onClick={() => void runPageOp({ kind: 'duplicate' }, opPages)} disabled={!pages.length || busy} title={t('Insert copies of the selected pages after them')} />
                 </RStack>
-                <RB big icon={Replace} label="Replace" onClick={() => void runPageOp({ kind: 'replace' }, opPages)} disabled={!pages.length || busy} title="Replace the selected pages with pages from another PDF" />
+                <RB big icon={Replace} label={t('Replace')} onClick={() => void runPageOp({ kind: 'replace' }, opPages)} disabled={!pages.length || busy} title={t('Replace the selected pages with pages from another PDF')} />
               </RGroup>
-              <RGroup label="Insert and extract">
-                <RB big icon={FilePlus2} label="Insert" onClick={() => void runPageOp({ kind: 'insert', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy} title="Insert pages from another PDF after the selected pages" />
-                <RB big icon={FileOutput} label="Extract" onClick={() => void runPageOp({ kind: 'extract' }, opPages)} disabled={!pages.length || busy} title="Save the selected pages as a new PDF" />
+              <RGroup label={t('Insert and extract')}>
+                <RB big icon={FilePlus2} label={t('Insert')} onClick={() => void runPageOp({ kind: 'insert', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy} title={t('Insert pages from another PDF after the selected pages')} />
+                <RB big icon={FileOutput} label={t('Extract')} onClick={() => void runPageOp({ kind: 'extract' }, opPages)} disabled={!pages.length || busy} title={t('Save the selected pages as a new PDF')} />
               </RGroup>
-              <RGroup label="Documents">
-                <RB big icon={Files} label="Merge" onClick={mergeFiles} disabled={!pages.length || busy} title="Merge: add the pages of other PDFs to the end" />
-                <RB big icon={Scissors} label="Split" onClick={() => void runPageOp({ kind: 'split' }, opPages)} disabled={!pages.length || busy} title="Split into files of a set number of pages" />
-                <RB big icon={GitCompare} label="Compare" onClick={() => setCompareOpen(true)} disabled={!pages.length || busy} title="Compare this document with another PDF: the words, and how the pages look" />
+              <RGroup label={t('Documents')}>
+                <RB big icon={Files} label={t('Merge')} onClick={mergeFiles} disabled={!pages.length || busy} title={t('Merge: add the pages of other PDFs to the end')} />
+                <RB big icon={Scissors} label={t('Split')} onClick={() => void runPageOp({ kind: 'split' }, opPages)} disabled={!pages.length || busy} title={t('Split into files of a set number of pages')} />
+                <RB big icon={GitCompare} label={t('Compare')} onClick={() => setCompareOpen(true)} disabled={!pages.length || busy} title={t('Compare this document with another PDF: the words, and how the pages look')} />
               </RGroup>
-              <RGroup label="Optimise">
-                <RB big icon={Gauge} label="Optimise" onClick={() => setOptimising(true)} disabled={!pages.length || busy || locked} title="Make the file smaller: reduce pictures, compress, remove unused objects, linearise" />
+              <RGroup label={t('Optimise')}>
+                <RB big icon={Gauge} label={t('Optimise')} onClick={() => setOptimising(true)} disabled={!pages.length || busy || locked} title={t('Make the file smaller: reduce pictures, compress, remove unused objects, linearise')} />
               </RGroup>
-              <RGroup label="Numbering">
-                <RB big icon={Tags} label="Page labels" onClick={() => void openPageLabels()} disabled={!pages.length || busy || locked} title="Set the page numbers readers show (i, ii, 1, 2 …)" />
+              <RGroup label={t('Numbering')}>
+                <RB big icon={Tags} label={t('Page labels')} onClick={() => void openPageLabels()} disabled={!pages.length || busy || locked} title={t('Set the page numbers readers show (i, ii, 1, 2 …)')} />
               </RGroup>
-              <RGroup label="Edit">
+              <RGroup label={t('Edit')}>
                 <RStack>{undoButtons}</RStack>
               </RGroup>
             </>
           )}
           {ribbon === 'edit' && (
             <>
-              <RGroup label="Text">
-                <RB big icon={TextCursorInput} label="Edit text" onClick={() => setTool(tool === 'edittext' ? 'select' : 'edittext')} pressed={tool === 'edittext'} disabled={!pages.length || busy || locked} title="Click a line of text to change it (the text is redrawn in a matching standard font)" />
+              <RGroup label={t('Text')}>
+                <RB big icon={TextCursorInput} label={t('Edit text')} onClick={() => setTool(tool === 'edittext' ? 'select' : 'edittext')} pressed={tool === 'edittext'} disabled={!pages.length || busy || locked} title={t('Click a line of text to change it (the text is redrawn in a matching standard font)')} />
               </RGroup>
-              <RGroup label="Align">
+              <RGroup label={t('Align')}>
                 <RStack>
-                  <RB icon={AlignHorizontalJustifyStart} label="Left" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'left' as AlignMode))} disabled={selectedIds.size < 2} title="Align the selected annotations to their left edge (Shift-click to select several)" />
-                  <RB icon={AlignHorizontalJustifyCenter} label="Centre" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'centre'))} disabled={selectedIds.size < 2} title="Centre the selected annotations horizontally" />
-                  <RB icon={AlignHorizontalJustifyEnd} label="Right" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'right'))} disabled={selectedIds.size < 2} title="Align to the right edge" />
+                  <RB icon={AlignHorizontalJustifyStart} label={t('Left')} onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'left' as AlignMode))} disabled={selectedIds.size < 2} title={t('Align the selected annotations to their left edge (Shift-click to select several)')} />
+                  <RB icon={AlignHorizontalJustifyCenter} label={t('Centre')} onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'centre'))} disabled={selectedIds.size < 2} title={t('Centre the selected annotations horizontally')} />
+                  <RB icon={AlignHorizontalJustifyEnd} label={t('Right')} onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'right'))} disabled={selectedIds.size < 2} title={t('Align to the right edge')} />
                 </RStack>
                 <RStack>
-                  <RB icon={AlignVerticalJustifyStart} label="Top" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'top'))} disabled={selectedIds.size < 2} title="Align to the top edge" />
-                  <RB icon={AlignVerticalJustifyCenter} label="Middle" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'middle'))} disabled={selectedIds.size < 2} title="Centre vertically" />
-                  <RB icon={AlignVerticalJustifyEnd} label="Bottom" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'bottom'))} disabled={selectedIds.size < 2} title="Align to the bottom edge" />
+                  <RB icon={AlignVerticalJustifyStart} label={t('Top')} onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'top'))} disabled={selectedIds.size < 2} title={t('Align to the top edge')} />
+                  <RB icon={AlignVerticalJustifyCenter} label={t('Middle')} onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'middle'))} disabled={selectedIds.size < 2} title={t('Centre vertically')} />
+                  <RB icon={AlignVerticalJustifyEnd} label={t('Bottom')} onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'bottom'))} disabled={selectedIds.size < 2} title={t('Align to the bottom edge')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Distribute">
+              <RGroup label={t('Distribute')}>
                 <RStack>
-                  <RB icon={AlignHorizontalDistributeCenter} label="Across" onClick={() => arrangeSelected((l, i) => distributeAnnots(l, i, 'horizontal'))} disabled={selectedIds.size < 3} title="Space three or more selected annotations evenly across the page" />
-                  <RB icon={AlignVerticalDistributeCenter} label="Down" onClick={() => arrangeSelected((l, i) => distributeAnnots(l, i, 'vertical'))} disabled={selectedIds.size < 3} title="Space three or more selected annotations evenly down the page" />
+                  <RB icon={AlignHorizontalDistributeCenter} label={t('Across')} onClick={() => arrangeSelected((l, i) => distributeAnnots(l, i, 'horizontal'))} disabled={selectedIds.size < 3} title={t('Space three or more selected annotations evenly across the page')} />
+                  <RB icon={AlignVerticalDistributeCenter} label={t('Down')} onClick={() => arrangeSelected((l, i) => distributeAnnots(l, i, 'vertical'))} disabled={selectedIds.size < 3} title={t('Space three or more selected annotations evenly down the page')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Order">
+              <RGroup label={t('Order')}>
                 <RStack>
-                  <RB icon={BringToFront} label="To front" onClick={() => arrangeSelected((l, i) => restack(l, i, 'front' as StackMode), true)} disabled={!selectedIds.size} title="Draw the selected annotations on top of the others" />
-                  <RB icon={ArrowUp} label="Forward" onClick={() => arrangeSelected((l, i) => restack(l, i, 'forward'), true)} disabled={!selectedIds.size} title="Move the selected annotations one step forward" />
+                  <RB icon={BringToFront} label={t('To front')} onClick={() => arrangeSelected((l, i) => restack(l, i, 'front' as StackMode), true)} disabled={!selectedIds.size} title={t('Draw the selected annotations on top of the others')} />
+                  <RB icon={ArrowUp} label={t('Forward')} onClick={() => arrangeSelected((l, i) => restack(l, i, 'forward'), true)} disabled={!selectedIds.size} title={t('Move the selected annotations one step forward')} />
                 </RStack>
                 <RStack>
-                  <RB icon={SendToBack} label="To back" onClick={() => arrangeSelected((l, i) => restack(l, i, 'back'), true)} disabled={!selectedIds.size} title="Draw the selected annotations behind the others" />
-                  <RB icon={ArrowDown} label="Backward" onClick={() => arrangeSelected((l, i) => restack(l, i, 'backward'), true)} disabled={!selectedIds.size} title="Move the selected annotations one step back" />
+                  <RB icon={SendToBack} label={t('To back')} onClick={() => arrangeSelected((l, i) => restack(l, i, 'back'), true)} disabled={!selectedIds.size} title={t('Draw the selected annotations behind the others')} />
+                  <RB icon={ArrowDown} label={t('Backward')} onClick={() => arrangeSelected((l, i) => restack(l, i, 'backward'), true)} disabled={!selectedIds.size} title={t('Move the selected annotations one step back')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Shapes">
-                <RB big icon={Shapes} label="Edit shape" onClick={() => setTool(tool === 'editpath' ? 'select' : 'editpath')} pressed={tool === 'editpath'} disabled={!pages.length || busy || locked} title="Click a line, box or filled shape that is part of the page to move, resize or delete it" />
+              <RGroup label={t('Shapes')}>
+                <RB big icon={Shapes} label={t('Edit shape')} onClick={() => setTool(tool === 'editpath' ? 'select' : 'editpath')} pressed={tool === 'editpath'} disabled={!pages.length || busy || locked} title={t('Click a line, box or filled shape that is part of the page to move, resize or delete it')} />
               </RGroup>
-              <RGroup label="Images">
-                <RB big icon={ImageIcon} label="Add image" onClick={() => void startAddImage()} pressed={tool === 'addimage'} disabled={!pages.length || busy || locked} title="Choose a PNG or JPEG, then click the page to place it as page content" />
-                <RB big icon={ImageIcon} label="Edit image" onClick={() => setTool(tool === 'editimage' ? 'select' : 'editimage')} pressed={tool === 'editimage'} disabled={!pages.length || busy || locked} title="Click a picture to move it, resize it, replace it or delete it" />
+              <RGroup label={t('Images')}>
+                <RB big icon={ImageIcon} label={t('Add image')} onClick={() => void startAddImage()} pressed={tool === 'addimage'} disabled={!pages.length || busy || locked} title={t('Choose a PNG or JPEG, then click the page to place it as page content')} />
+                <RB big icon={ImageIcon} label={t('Edit image')} onClick={() => setTool(tool === 'editimage' ? 'select' : 'editimage')} pressed={tool === 'editimage'} disabled={!pages.length || busy || locked} title={t('Click a picture to move it, resize it, replace it or delete it')} />
               </RGroup>
-              <RGroup label="Edit">
+              <RGroup label={t('Edit')}>
                 <RStack>{undoButtons}</RStack>
               </RGroup>
             </>
@@ -3002,161 +3003,161 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           {ribbon === 'forms' && (
             <>
               <RGroup label={formFields.length ? `Fill (${formFields.length} field${formFields.length === 1 ? '' : 's'})` : 'Fill'}>
-                <RB big icon={Highlighter} label="Highlight fields" onClick={() => setHighlightFields(!highlightFields)} pressed={highlightFields} disabled={!formFields.length} title="Tint form fields so they are easy to find" />
-                <RB big icon={Eraser} label="Clear form" onClick={resetForm} disabled={!formFields.length || busy} title="Empty every field" />
-                <RB big icon={RotateCcw} label="Revert" onClick={() => setFormValues(new Map())} disabled={!formValues.size} title="Go back to the values saved in the file" />
+                <RB big icon={Highlighter} label={t('Highlight fields')} onClick={() => setHighlightFields(!highlightFields)} pressed={highlightFields} disabled={!formFields.length} title={t('Tint form fields so they are easy to find')} />
+                <RB big icon={Eraser} label={t('Clear form')} onClick={resetForm} disabled={!formFields.length || busy} title={t('Empty every field')} />
+                <RB big icon={RotateCcw} label={t('Revert')} onClick={() => setFormValues(new Map())} disabled={!formValues.size} title={t('Go back to the values saved in the file')} />
               </RGroup>
-              <RGroup label="Add a field">
+              <RGroup label={t('Add a field')}>
                 <RStack>
-                  <RB icon={TextCursorInput} label="Text" onClick={() => startField('text')} pressed={tool === 'formfield' && fieldKind === 'text'} disabled={!pages.length || busy || locked} title="Draw a text field on the page" />
-                  <RB icon={SquareCheck} label="Check box" onClick={() => startField('checkbox')} pressed={tool === 'formfield' && fieldKind === 'checkbox'} disabled={!pages.length || busy || locked} title="Draw a check box" />
-                  <RB icon={CircleDot} label="Radio" onClick={() => startField('radio')} pressed={tool === 'formfield' && fieldKind === 'radio'} disabled={!pages.length || busy || locked} title="Draw a radio button (buttons with the same group name are exclusive)" />
+                  <RB icon={TextCursorInput} label={t('Text')} onClick={() => startField('text')} pressed={tool === 'formfield' && fieldKind === 'text'} disabled={!pages.length || busy || locked} title={t('Draw a text field on the page')} />
+                  <RB icon={SquareCheck} label={t('Check box')} onClick={() => startField('checkbox')} pressed={tool === 'formfield' && fieldKind === 'checkbox'} disabled={!pages.length || busy || locked} title={t('Draw a check box')} />
+                  <RB icon={CircleDot} label={t('Radio')} onClick={() => startField('radio')} pressed={tool === 'formfield' && fieldKind === 'radio'} disabled={!pages.length || busy || locked} title={t('Draw a radio button (buttons with the same group name are exclusive)')} />
                 </RStack>
                 <RStack>
-                  <RB icon={SquareChevronDown} label="Drop-down" onClick={() => startField('dropdown')} pressed={tool === 'formfield' && fieldKind === 'dropdown'} disabled={!pages.length || busy || locked} title="Draw a drop-down list" />
-                  <RB icon={List} label="List box" onClick={() => startField('list')} pressed={tool === 'formfield' && fieldKind === 'list'} disabled={!pages.length || busy || locked} title="Draw a list box" />
-                  <RB icon={RectangleHorizontal} label="Button" onClick={() => startField('button')} pressed={tool === 'formfield' && fieldKind === 'button'} disabled={!pages.length || busy || locked} title="Draw a push button" />
+                  <RB icon={SquareChevronDown} label={t('Drop-down')} onClick={() => startField('dropdown')} pressed={tool === 'formfield' && fieldKind === 'dropdown'} disabled={!pages.length || busy || locked} title={t('Draw a drop-down list')} />
+                  <RB icon={List} label={t('List box')} onClick={() => startField('list')} pressed={tool === 'formfield' && fieldKind === 'list'} disabled={!pages.length || busy || locked} title={t('Draw a list box')} />
+                  <RB icon={RectangleHorizontal} label={t('Button')} onClick={() => startField('button')} pressed={tool === 'formfield' && fieldKind === 'button'} disabled={!pages.length || busy || locked} title={t('Draw a push button')} />
                 </RStack>
-                <RB big icon={PenLine} label="Signature" onClick={() => startField('signature')} pressed={tool === 'formfield' && fieldKind === 'signature'} disabled={!pages.length || busy || locked} title="Draw a signature field" />
+                <RB big icon={PenLine} label={t('Signature')} onClick={() => startField('signature')} pressed={tool === 'formfield' && fieldKind === 'signature'} disabled={!pages.length || busy || locked} title={t('Draw a signature field')} />
               </RGroup>
-              <RGroup label="Find fields">
-                <RB big icon={ScanSearch} label="Detect fields" onClick={() => void detectFormFields()} disabled={!pages.length || busy || locked || !client} title="Find blanks, lines, boxes and squares on the pages and make them into fields" />
+              <RGroup label={t('Find fields')}>
+                <RB big icon={ScanSearch} label={t('Detect fields')} onClick={() => void detectFormFields()} disabled={!pages.length || busy || locked || !client} title={t('Find blanks, lines, boxes and squares on the pages and make them into fields')} />
               </RGroup>
-              <RGroup label="Arrange fields">
-                <RB big icon={SquareDashedMousePointer} label="Edit fields" onClick={() => setTool(tool === 'formedit' ? 'select' : 'formedit')} pressed={tool === 'formedit'} disabled={!formFields.length || busy || locked} title="Select, move, resize, rename or delete fields" />
+              <RGroup label={t('Arrange fields')}>
+                <RB big icon={SquareDashedMousePointer} label={t('Edit fields')} onClick={() => setTool(tool === 'formedit' ? 'select' : 'formedit')} pressed={tool === 'formedit'} disabled={!formFields.length || busy || locked} title={t('Select, move, resize, rename or delete fields')} />
                 <RStack>
-                  <RB icon={Rows3} label="Tab by rows" onClick={() => chooseTabOrder('rows')} pressed={formFields[0]?.widgets[0]?.tabs === 'R'} disabled={!formFields.length || busy || locked} title="Tab moves along each row, then down" />
-                  <RB icon={Columns3} label="Tab by columns" onClick={() => chooseTabOrder('columns')} pressed={formFields[0]?.widgets[0]?.tabs === 'C'} disabled={!formFields.length || busy || locked} title="Tab moves down each column, then across" />
-                  <RB icon={ListOrdered} label="Tab in field order" onClick={() => chooseTabOrder('structure')} pressed={formFields[0]?.widgets[0]?.tabs === 'S'} disabled={!formFields.length || busy || locked} title="Tab follows the order of the fields on the page (use Earlier and Later to change it)" />
+                  <RB icon={Rows3} label={t('Tab by rows')} onClick={() => chooseTabOrder('rows')} pressed={formFields[0]?.widgets[0]?.tabs === 'R'} disabled={!formFields.length || busy || locked} title={t('Tab moves along each row, then down')} />
+                  <RB icon={Columns3} label={t('Tab by columns')} onClick={() => chooseTabOrder('columns')} pressed={formFields[0]?.widgets[0]?.tabs === 'C'} disabled={!formFields.length || busy || locked} title={t('Tab moves down each column, then across')} />
+                  <RB icon={ListOrdered} label={t('Tab in field order')} onClick={() => chooseTabOrder('structure')} pressed={formFields[0]?.widgets[0]?.tabs === 'S'} disabled={!formFields.length || busy || locked} title={t('Tab follows the order of the fields on the page (use Earlier and Later to change it)')} />
                 </RStack>
                 <RStack>
-                  <RB icon={ArrowUp} label="Earlier" onClick={() => stepTabOrder(-1)} disabled={!designSel || tool !== 'formedit' || busy} title="Move the selected field earlier in the tab order" />
-                  <RB icon={ArrowDown} label="Later" onClick={() => stepTabOrder(1)} disabled={!designSel || tool !== 'formedit' || busy} title="Move the selected field later in the tab order" />
-                </RStack>
-              </RGroup>
-              <RGroup label="Form data">
-                <RB big icon={FileInput} label="Import…" onClick={() => void importFormData()} disabled={!formFields.length || busy} title="Fill the fields from an FDF, XFDF, CSV or XML file" />
-                <RStack>
-                  <RB icon={FileOutput} label="XFDF" onClick={() => void exportFormData('xfdf')} disabled={!formFields.length} title="Export the values as XFDF (XML)" />
-                  <RB icon={FileOutput} label="FDF" onClick={() => void exportFormData('fdf')} disabled={!formFields.length} title="Export the values as FDF" />
-                </RStack>
-                <RStack>
-                  <RB icon={FileOutput} label="CSV" onClick={() => void exportFormData('csv')} disabled={!formFields.length} title="Export the values as CSV (a row of names and a row of values)" />
-                  <RB icon={FileOutput} label="XML" onClick={() => void exportFormData('xml')} disabled={!formFields.length} title="Export the values as XML" />
+                  <RB icon={ArrowUp} label={t('Earlier')} onClick={() => stepTabOrder(-1)} disabled={!designSel || tool !== 'formedit' || busy} title={t('Move the selected field earlier in the tab order')} />
+                  <RB icon={ArrowDown} label={t('Later')} onClick={() => stepTabOrder(1)} disabled={!designSel || tool !== 'formedit' || busy} title={t('Move the selected field later in the tab order')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Finish">
-                <RB big icon={Layers2} label="Flatten" onClick={() => void applyPageEdit(async (b) => (await flattenForm(b)).bytes, 'Form flattened: the fields are now part of the pages')} disabled={!formFields.length || busy || locked} title="Make the fields part of the page so they can no longer be edited" />
+              <RGroup label={t('Form data')}>
+                <RB big icon={FileInput} label={t('Import…')} onClick={() => void importFormData()} disabled={!formFields.length || busy} title={t('Fill the fields from an FDF, XFDF, CSV or XML file')} />
+                <RStack>
+                  <RB icon={FileOutput} label={t('XFDF')} onClick={() => void exportFormData('xfdf')} disabled={!formFields.length} title={t('Export the values as XFDF (XML)')} />
+                  <RB icon={FileOutput} label={t('FDF')} onClick={() => void exportFormData('fdf')} disabled={!formFields.length} title={t('Export the values as FDF')} />
+                </RStack>
+                <RStack>
+                  <RB icon={FileOutput} label={t('CSV')} onClick={() => void exportFormData('csv')} disabled={!formFields.length} title={t('Export the values as CSV (a row of names and a row of values)')} />
+                  <RB icon={FileOutput} label={t('XML')} onClick={() => void exportFormData('xml')} disabled={!formFields.length} title={t('Export the values as XML')} />
+                </RStack>
+              </RGroup>
+              <RGroup label={t('Finish')}>
+                <RB big icon={Layers2} label={t('Flatten')} onClick={() => void applyPageEdit(async (b) => (await flattenForm(b)).bytes, 'Form flattened: the fields are now part of the pages')} disabled={!formFields.length || busy || locked} title={t('Make the fields part of the page so they can no longer be edited')} />
               </RGroup>
               {!formFields.length && <p className="muted ribbon-note">This document has no form fields.</p>}
             </>
           )}
           {ribbon === 'redact' && (
             <>
-              <RGroup label="Mark">
-                <RB big icon={EyeOff} label="Mark area" onClick={() => setTool(tool === 'redact' ? 'select' : 'redact')} pressed={tool === 'redact'} disabled={!pages.length || busy || locked} title="Drag a box over what is to be removed" />
-                <RB big icon={TextSelect} label="Mark text" onClick={() => void markSelectionForRedaction()} disabled={!pages.length || busy || locked} title="Mark the text you have selected" />
-                <RB big icon={Search} label="Mark search" onClick={() => void markSearchForRedaction()} disabled={!pages.length || busy || locked} title="Mark every match of the current search (Ctrl+F to search)" />
+              <RGroup label={t('Mark')}>
+                <RB big icon={EyeOff} label={t('Mark area')} onClick={() => setTool(tool === 'redact' ? 'select' : 'redact')} pressed={tool === 'redact'} disabled={!pages.length || busy || locked} title={t('Drag a box over what is to be removed')} />
+                <RB big icon={TextSelect} label={t('Mark text')} onClick={() => void markSelectionForRedaction()} disabled={!pages.length || busy || locked} title={t('Mark the text you have selected')} />
+                <RB big icon={Search} label={t('Mark search')} onClick={() => void markSearchForRedaction()} disabled={!pages.length || busy || locked} title={t('Mark every match of the current search (Ctrl+F to search)')} />
               </RGroup>
-              <RGroup label="Apply">
-                <RB big icon={ShieldAlert} label="Apply" onClick={() => setRedactConfirm(true)} disabled={!redactMarks.length || busy || locked} title="Permanently remove what is under the marks" />
-                <RB big icon={X} label="Clear marks" onClick={() => setRedactMarks([])} disabled={!redactMarks.length} title="Take all the marks off without removing anything" />
+              <RGroup label={t('Apply')}>
+                <RB big icon={ShieldAlert} label={t('Apply')} onClick={() => setRedactConfirm(true)} disabled={!redactMarks.length || busy || locked} title={t('Permanently remove what is under the marks')} />
+                <RB big icon={X} label={t('Clear marks')} onClick={() => setRedactMarks([])} disabled={!redactMarks.length} title={t('Take all the marks off without removing anything')} />
               </RGroup>
-              <RGroup label="Sanitise">
-                <RB big icon={Eraser} label="Hidden information" onClick={() => void openSanitise()} disabled={!pages.length || busy || locked} title="Find and remove metadata, attached files, scripts and other things that are not on the pages" />
+              <RGroup label={t('Sanitise')}>
+                <RB big icon={Eraser} label={t('Hidden information')} onClick={() => void openSanitise()} disabled={!pages.length || busy || locked} title={t('Find and remove metadata, attached files, scripts and other things that are not on the pages')} />
               </RGroup>
             </>
           )}
           {ribbon === 'convert' && (
             <>
-            <RGroup label="Export">
-              <RB big icon={ImageIcon} label="Pictures" onClick={() => setExportImagesOpen(true)} disabled={!pages.length || busy} title="Save the pages as PNG, JPEG or TIFF pictures" />
-              <RB big icon={FileText} label="Text" onClick={() => void exportAs('txt')} disabled={!pages.length || busy} title="Save the text of the document as a plain text file" />
-              <RB big icon={Globe} label="HTML" onClick={() => void exportAs('html')} disabled={!pages.length || busy} title="Save the text as a web page, with headings and paragraphs (pictures and layout are not kept)" />
-              <RB big icon={FileOutput} label="Word" onClick={() => void exportAs('docx')} disabled={!pages.length || busy} title="Save the text as a Word document, with headings and paragraphs (best effort: pictures and layout are not kept)" />
+            <RGroup label={t('Export')}>
+              <RB big icon={ImageIcon} label={t('Pictures')} onClick={() => setExportImagesOpen(true)} disabled={!pages.length || busy} title={t('Save the pages as PNG, JPEG or TIFF pictures')} />
+              <RB big icon={FileText} label={t('Text')} onClick={() => void exportAs('txt')} disabled={!pages.length || busy} title={t('Save the text of the document as a plain text file')} />
+              <RB big icon={Globe} label={t('HTML')} onClick={() => void exportAs('html')} disabled={!pages.length || busy} title={t('Save the text as a web page, with headings and paragraphs (pictures and layout are not kept)')} />
+              <RB big icon={FileOutput} label={t('Word')} onClick={() => void exportAs('docx')} disabled={!pages.length || busy} title={t('Save the text as a Word document, with headings and paragraphs (best effort: pictures and layout are not kept)')} />
             </RGroup>
-            <RGroup label="Recognise">
-              <RB big icon={ScanText} label="OCR" onClick={() => setOcrOpen(true)} disabled={!pages.length || busy || locked} title="Recognise the text in scanned pages so they can be searched and copied" />
+            <RGroup label={t('Recognise')}>
+              <RB big icon={ScanText} label={t('OCR')} onClick={() => setOcrOpen(true)} disabled={!pages.length || busy || locked} title={t('Recognise the text in scanned pages so they can be searched and copied')} />
             </RGroup>
-            <RGroup label="Scan">
-              <RB big icon={ScanLine} label="Scan" onClick={() => setScanOpen(true)} disabled={busy} title="Scan paper with a scanner connected to this computer" />
+            <RGroup label={t('Scan')}>
+              <RB big icon={ScanLine} label={t('Scan')} onClick={() => setScanOpen(true)} disabled={busy} title={t('Scan paper with a scanner connected to this computer')} />
             </RGroup>
-            <RGroup label="Create PDF">
-              <RB big icon={ImageIcon} label="From pictures" onClick={() => void pickToCreate('images')} disabled={busy} title="Make a PDF from PNG, JPEG, GIF, BMP, WebP or TIFF pictures, one per page" />
-              <RB big icon={FileText} label="From text" onClick={() => void pickToCreate('text')} disabled={busy} title="Make a PDF from a plain text file" />
-              <RB big icon={Globe} label="From web page" onClick={() => void makeNew('Could not convert the web page', () => window.openpdf.htmlToPdf())} disabled={busy} title="Make a PDF from a saved .html file (scripts and network access are off)" />
-              <RB big icon={Paperclip} label="Portfolio" onClick={() => void window.openpdf.pickFiles().then((f) => f.length && setPortfolioFiles(f))} disabled={busy} title="Package several files of any kind in one PDF portfolio" />
-              <RB big icon={FileInput} label="From Office file" onClick={() => void makeNew('Could not convert the file', () => window.openpdf.officeToPdf())} disabled={busy} title={officeReady ? 'Make a PDF from a Word, Excel or PowerPoint file (uses LibreOffice)' : 'Needs LibreOffice, which is not installed'} />
-              <RB big icon={ClipboardPaste} label="From clipboard" onClick={() => void fromPicture('Could not create the PDF', () => window.openpdf.clipboardImage(), 'Clipboard.pdf', 'There is no picture on the clipboard.')} disabled={busy} title="Make a PDF from the picture on the clipboard" />
-              <RB big icon={Camera} label="Screenshot" onClick={() => void fromPicture('Could not take the screenshot', () => window.openpdf.screenshot(), `Screenshot ${today()}.pdf`, 'The screen could not be captured.')} disabled={busy} title="Make a PDF from a picture of the whole screen" />
+            <RGroup label={t('Create PDF')}>
+              <RB big icon={ImageIcon} label={t('From pictures')} onClick={() => void pickToCreate('images')} disabled={busy} title={t('Make a PDF from PNG, JPEG, GIF, BMP, WebP or TIFF pictures, one per page')} />
+              <RB big icon={FileText} label={t('From text')} onClick={() => void pickToCreate('text')} disabled={busy} title={t('Make a PDF from a plain text file')} />
+              <RB big icon={Globe} label={t('From web page')} onClick={() => void makeNew('Could not convert the web page', () => window.openpdf.htmlToPdf())} disabled={busy} title={t('Make a PDF from a saved .html file (scripts and network access are off)')} />
+              <RB big icon={Paperclip} label={t('Portfolio')} onClick={() => void window.openpdf.pickFiles().then((f) => f.length && setPortfolioFiles(f))} disabled={busy} title={t('Package several files of any kind in one PDF portfolio')} />
+              <RB big icon={FileInput} label={t('From Office file')} onClick={() => void makeNew('Could not convert the file', () => window.openpdf.officeToPdf())} disabled={busy} title={officeReady ? 'Make a PDF from a Word, Excel or PowerPoint file (uses LibreOffice)' : 'Needs LibreOffice, which is not installed'} />
+              <RB big icon={ClipboardPaste} label={t('From clipboard')} onClick={() => void fromPicture('Could not create the PDF', () => window.openpdf.clipboardImage(), 'Clipboard.pdf', 'There is no picture on the clipboard.')} disabled={busy} title={t('Make a PDF from the picture on the clipboard')} />
+              <RB big icon={Camera} label={t('Screenshot')} onClick={() => void fromPicture('Could not take the screenshot', () => window.openpdf.screenshot(), `Screenshot ${today()}.pdf`, 'The screen could not be captured.')} disabled={busy} title={t('Make a PDF from a picture of the whole screen')} />
             </RGroup>
             </>
           )}
           {ribbon === 'sign' && (
-            <RGroup label="Signatures">
-              <RB big icon={FileSignature} label="Sign document" onClick={() => setSignOpen(true)} disabled={!pages.length || busy || locked} title="Sign with a certificate from Windows or a certificate file" />
-              <RB big icon={ShieldCheck} label="Signatures" onClick={() => setSigPanel(true)} disabled={!pages.length} title="Check who signed this document and whether it has changed since" />
+            <RGroup label={t('Signatures')}>
+              <RB big icon={FileSignature} label={t('Sign document')} onClick={() => setSignOpen(true)} disabled={!pages.length || busy || locked} title={t('Sign with a certificate from Windows or a certificate file')} />
+              <RB big icon={ShieldCheck} label={t('Signatures')} onClick={() => setSigPanel(true)} disabled={!pages.length} title={t('Check who signed this document and whether it has changed since')} />
             </RGroup>
           )}
           {ribbon === 'layout' && (
             <>
-              <RGroup label="Header and footer">
-                <RB big icon={PanelTop} label="Header & footer" onClick={() => setMarksMode('headerfooter')} disabled={!pages.length || busy} title="Add a header and footer to pages" />
+              <RGroup label={t('Header and footer')}>
+                <RB big icon={PanelTop} label="Header & footer" onClick={() => setMarksMode('headerfooter')} disabled={!pages.length || busy} title={t('Add a header and footer to pages')} />
                 <RStack>
-                  <RB icon={Hash} label="Page numbers" onClick={() => setMarksMode('pagenumbers')} disabled={!pages.length || busy} title="Add page numbers" />
-                  <RB icon={Barcode} label="Bates numbers" onClick={() => setMarksMode('bates')} disabled={!pages.length || busy} title="Add Bates numbers (prefix and running number)" />
+                  <RB icon={Hash} label={t('Page numbers')} onClick={() => setMarksMode('pagenumbers')} disabled={!pages.length || busy} title={t('Add page numbers')} />
+                  <RB icon={Barcode} label={t('Bates numbers')} onClick={() => setMarksMode('bates')} disabled={!pages.length || busy} title={t('Add Bates numbers (prefix and running number)')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Watermark">
-                <RB big icon={Droplets} label="Watermark" onClick={() => setMarksMode('watermark')} disabled={!pages.length || busy} title="Add a text or picture watermark" />
-                <RB big icon={PaintBucket} label="Background" onClick={() => setMarksMode('background')} disabled={!pages.length || busy} title="Add a background colour or picture behind the pages" />
+              <RGroup label={t('Watermark')}>
+                <RB big icon={Droplets} label={t('Watermark')} onClick={() => setMarksMode('watermark')} disabled={!pages.length || busy} title={t('Add a text or picture watermark')} />
+                <RB big icon={PaintBucket} label={t('Background')} onClick={() => setMarksMode('background')} disabled={!pages.length || busy} title={t('Add a background colour or picture behind the pages')} />
               </RGroup>
-              <RGroup label="Page size">
+              <RGroup label={t('Page size')}>
                 <RStack>
-                  <RB icon={Crop} label="Crop…" onClick={() => setMarksMode('crop')} disabled={!pages.length || busy} title="Crop pages by margins" />
-                  <RB icon={SquareDashed} label="Crop tool" onClick={() => setTool(tool === 'crop' ? 'select' : 'crop')} pressed={tool === 'crop'} disabled={!pages.length || busy} title="Drag a box on a page to crop to it (the selected thumbnails get the same box)" />
-                  <RB icon={Maximize2} label="Resize…" onClick={() => setMarksMode('resize')} disabled={!pages.length || busy} title="Change the paper size of pages" />
+                  <RB icon={Crop} label={t('Crop…')} onClick={() => setMarksMode('crop')} disabled={!pages.length || busy} title={t('Crop pages by margins')} />
+                  <RB icon={SquareDashed} label={t('Crop tool')} onClick={() => setTool(tool === 'crop' ? 'select' : 'crop')} pressed={tool === 'crop'} disabled={!pages.length || busy} title={t('Drag a box on a page to crop to it (the selected thumbnails get the same box)')} />
+                  <RB icon={Maximize2} label={t('Resize…')} onClick={() => setMarksMode('resize')} disabled={!pages.length || busy} title={t('Change the paper size of pages')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Remove">
-                <RB big icon={Eraser} label="Remove marks" onClick={() => setMarksMode('remove')} disabled={!pages.length || busy || !presentMarks.size} title="Remove headers, footers, numbers, watermarks or backgrounds added with OpenPDF" />
+              <RGroup label={t('Remove')}>
+                <RB big icon={Eraser} label={t('Remove marks')} onClick={() => setMarksMode('remove')} disabled={!pages.length || busy || !presentMarks.size} title={t('Remove headers, footers, numbers, watermarks or backgrounds added with OpenPDF')} />
               </RGroup>
             </>
           )}
           {ribbon === 'view' && (
             <>
-              <RGroup label="Panes">
-                <RB big icon={LayoutGrid} label="Pages" onClick={() => setSidebar(sidebar === 'pages' ? null : 'pages')} pressed={sidebar === 'pages'} title="Show or hide page thumbnails" />
-                <RB big icon={Bookmark} label="Bookmarks" onClick={() => setSidebar(sidebar === 'bookmarks' ? null : 'bookmarks')} pressed={sidebar === 'bookmarks'} title="Show or hide bookmarks" />
+              <RGroup label={t('Panes')}>
+                <RB big icon={LayoutGrid} label={t('Pages')} onClick={() => setSidebar(sidebar === 'pages' ? null : 'pages')} pressed={sidebar === 'pages'} title={t('Show or hide page thumbnails')} />
+                <RB big icon={Bookmark} label={t('Bookmarks')} onClick={() => setSidebar(sidebar === 'bookmarks' ? null : 'bookmarks')} pressed={sidebar === 'bookmarks'} title={t('Show or hide bookmarks')} />
                 <RStack>
-                  <RB icon={PanelLeft} label="Dock left" onClick={() => onPaneSide('left')} pressed={paneSide === 'left'} title="Dock the side pane on the left" />
-                  <RB icon={PanelRight} label="Dock right" onClick={() => onPaneSide('right')} pressed={paneSide === 'right'} title="Dock the side pane on the right" />
+                  <RB icon={PanelLeft} label={t('Dock left')} onClick={() => onPaneSide('left')} pressed={paneSide === 'left'} title={t('Dock the side pane on the left')} />
+                  <RB icon={PanelRight} label={t('Dock right')} onClick={() => onPaneSide('right')} pressed={paneSide === 'right'} title={t('Dock the side pane on the right')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Page display">
-                <RB big icon={FileText} label="Single" onClick={() => setPageMode({ ...pageMode, twoUp: false })} pressed={!pageMode.twoUp} disabled={!pages.length} title="One page per row" />
-                <RB big icon={Columns2} label="Two pages" onClick={() => setPageMode({ ...pageMode, twoUp: true })} pressed={pageMode.twoUp} disabled={!pages.length} title="Two pages side by side" />
+              <RGroup label={t('Page display')}>
+                <RB big icon={FileText} label={t('Single')} onClick={() => setPageMode({ ...pageMode, twoUp: false })} pressed={!pageMode.twoUp} disabled={!pages.length} title={t('One page per row')} />
+                <RB big icon={Columns2} label={t('Two pages')} onClick={() => setPageMode({ ...pageMode, twoUp: true })} pressed={pageMode.twoUp} disabled={!pages.length} title={t('Two pages side by side')} />
                 <RStack>
-                  <RB icon={GalleryVertical} label="Continuous" onClick={() => setPageMode({ ...pageMode, continuous: !pageMode.continuous })} pressed={pageMode.continuous} disabled={!pages.length} title="Scroll through all pages, or show one page (or pair) at a time" />
-                  <RB icon={BookOpen} label="Cover page" onClick={() => setPageMode({ ...pageMode, cover: !pageMode.cover })} pressed={pageMode.cover} disabled={!pages.length || !pageMode.twoUp} title="With two pages: show the first page on its own, like a book cover" />
+                  <RB icon={GalleryVertical} label={t('Continuous')} onClick={() => setPageMode({ ...pageMode, continuous: !pageMode.continuous })} pressed={pageMode.continuous} disabled={!pages.length} title={t('Scroll through all pages, or show one page (or pair) at a time')} />
+                  <RB icon={BookOpen} label={t('Cover page')} onClick={() => setPageMode({ ...pageMode, cover: !pageMode.cover })} pressed={pageMode.cover} disabled={!pages.length || !pageMode.twoUp} title={t('With two pages: show the first page on its own, like a book cover')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Zoom">
-                <RB big icon={ScanSearch} label="Zoom tool" onClick={() => setTool(tool === 'zoom' ? 'select' : 'zoom')} disabled={!pages.length} pressed={tool === 'zoom'} title="Zoom tool: drag a box to fit it, click to zoom in, Shift+click to zoom out" />
+              <RGroup label={t('Zoom')}>
+                <RB big icon={ScanSearch} label={t('Zoom tool')} onClick={() => setTool(tool === 'zoom' ? 'select' : 'zoom')} disabled={!pages.length} pressed={tool === 'zoom'} title={t('Zoom tool: drag a box to fit it, click to zoom in, Shift+click to zoom out')} />
                 <RStack>
-                  <RB icon={ArrowLeftRight} label="Fit width" onClick={() => setMode('fit-width')} disabled={!pages.length} pressed={mode === 'fit-width'} title="Fit width (Ctrl+0)" />
-                  <RB icon={Expand} label="Fit page" onClick={() => setMode('fit-page')} disabled={!pages.length} pressed={mode === 'fit-page'} title="Fit page" />
+                  <RB icon={ArrowLeftRight} label={t('Fit width')} onClick={() => setMode('fit-width')} disabled={!pages.length} pressed={mode === 'fit-width'} title={t('Fit width (Ctrl+0)')} />
+                  <RB icon={Expand} label={t('Fit page')} onClick={() => setMode('fit-page')} disabled={!pages.length} pressed={mode === 'fit-page'} title={t('Fit page')} />
                 </RStack>
                 <RStack>
-                  <RB icon={Scan} label="Actual size" onClick={() => setMode(1)} disabled={!pages.length} pressed={mode === 1} title="Actual size (Ctrl+1)" />
-                  <RB icon={ZoomIn} label="Zoom in" onClick={() => stepZoom(1)} disabled={!pages.length} title="Zoom in (Ctrl++)" />
+                  <RB icon={Scan} label={t('Actual size')} onClick={() => setMode(1)} disabled={!pages.length} pressed={mode === 1} title={t('Actual size (Ctrl+1)')} />
+                  <RB icon={ZoomIn} label={t('Zoom in')} onClick={() => stepZoom(1)} disabled={!pages.length} title={t('Zoom in (Ctrl++)')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Rulers and grid">
+              <RGroup label={t('Rulers and grid')}>
                 <RStack>
-                  <RB icon={Ruler} label="Rulers" onClick={() => setAids({ ...aids, rulers: !aids.rulers })} pressed={aids.rulers} disabled={!pages.length} title="Show rulers. Drag from a ruler to add a guide; drag a guide back to remove it" />
-                  <RB icon={Grid3x3} label="Grid" onClick={() => setAids({ ...aids, grid: aids.grid ? null : (10 * 72) / 25.4 })} pressed={!!aids.grid} disabled={!pages.length} title="Show a grid over the pages" />
-                  <RB icon={Magnet} label="Snap" onClick={() => setAids({ ...aids, snap: !aids.snap })} pressed={aids.snap} disabled={!pages.length} title="Snap drawing and measuring to the grid and guides" />
+                  <RB icon={Ruler} label={t('Rulers')} onClick={() => setAids({ ...aids, rulers: !aids.rulers })} pressed={aids.rulers} disabled={!pages.length} title={t('Show rulers. Drag from a ruler to add a guide; drag a guide back to remove it')} />
+                  <RB icon={Grid3x3} label={t('Grid')} onClick={() => setAids({ ...aids, grid: aids.grid ? null : (10 * 72) / 25.4 })} pressed={!!aids.grid} disabled={!pages.length} title={t('Show a grid over the pages')} />
+                  <RB icon={Magnet} label={t('Snap')} onClick={() => setAids({ ...aids, snap: !aids.snap })} pressed={aids.snap} disabled={!pages.length} title={t('Snap drawing and measuring to the grid and guides')} />
                 </RStack>
                 <RStack>
                   <select className="rselect" aria-label="Ruler units" value={aids.unit} onChange={(e) => setAids({ ...aids, unit: e.target.value as ViewAids['unit'] })} title="Ruler units">
@@ -3178,12 +3179,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                       </option>
                     ))}
                   </select>
-                  <RB icon={Eraser} label="Clear guides" onClick={() => setGuides([])} disabled={!guides.length} title="Remove all guides" />
+                  <RB icon={Eraser} label={t('Clear guides')} onClick={() => setGuides([])} disabled={!guides.length} title={t('Remove all guides')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Read aloud">
+              <RGroup label={t('Read aloud')}>
                 {readerState === 'idle' ? (
-                  <RB big icon={Volume2} label="Read" onClick={() => void readAloud()} disabled={!pages.length || !voices.length} title={voices.length ? 'Read aloud from this page, or the selected text' : 'No speech voices are installed'} />
+                  <RB big icon={Volume2} label={t('Read')} onClick={() => void readAloud()} disabled={!pages.length || !voices.length} title={voices.length ? 'Read aloud from this page, or the selected text' : 'No speech voices are installed'} />
                 ) : (
                   <RB
                     big
@@ -3194,7 +3195,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   />
                 )}
                 <RStack>
-                  <RB icon={CircleStop} label="Stop" onClick={() => reader.current?.stop()} disabled={readerState === 'idle'} title="Stop reading" />
+                  <RB icon={CircleStop} label={t('Stop')} onClick={() => reader.current?.stop()} disabled={readerState === 'idle'} title={t('Stop reading')} />
                   <select className="rselect" aria-label="Reading speed" value={speechRate} onChange={(e) => setSpeechRate(Number(e.target.value))} title="Reading speed (applies next time)">
                     {[0.75, 1, 1.25, 1.5, 2].map((r) => (
                       <option key={r} value={r}>
@@ -3214,20 +3215,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   </select>
                 )}
               </RGroup>
-              <RGroup label="Reading">
-                <RB big icon={BookOpenText} label="Reading mode" onClick={() => setReadingMode(true)} disabled={!pages.length} title="Hide the ribbon and side pane (Ctrl+H). Esc to leave" />
+              <RGroup label={t('Reading')}>
+                <RB big icon={BookOpenText} label={t('Reading mode')} onClick={() => setReadingMode(true)} disabled={!pages.length} title={t('Hide the ribbon and side pane (Ctrl+H). Esc to leave')} />
                 <RStack>
-                  <RB icon={Sun} label="Normal colours" onClick={() => setPageColours('normal')} pressed={pageColours === 'normal'} title="Show pages in their own colours" />
-                  <RB icon={Moon} label="Night" onClick={() => setPageColours('night')} pressed={pageColours === 'night'} title="Light text on dark pages (view only)" />
-                  <RB icon={Contrast} label="High contrast" onClick={() => setPageColours('contrast')} pressed={pageColours === 'contrast'} title="High-contrast pages (view only)" />
+                  <RB icon={Sun} label={t('Normal colours')} onClick={() => setPageColours('normal')} pressed={pageColours === 'normal'} title={t('Show pages in their own colours')} />
+                  <RB icon={Moon} label={t('Night')} onClick={() => setPageColours('night')} pressed={pageColours === 'night'} title={t('Light text on dark pages (view only)')} />
+                  <RB icon={Contrast} label={t('High contrast')} onClick={() => setPageColours('contrast')} pressed={pageColours === 'contrast'} title={t('High-contrast pages (view only)')} />
                 </RStack>
               </RGroup>
-              <RGroup label="Show">
-                <RB big icon={PresentationIcon} label="Present" onClick={() => void present()} disabled={!pages.length} title="Full-screen presentation from this page (F5). Esc to leave" />
+              <RGroup label={t('Show')}>
+                <RB big icon={PresentationIcon} label={t('Present')} onClick={() => void present()} disabled={!pages.length} title={t('Full-screen presentation from this page (F5). Esc to leave')} />
               </RGroup>
-              <RGroup label="Rotate view">
-                <RB big icon={RotateCcw} label="Left" ariaLabel="Rotate view anticlockwise" onClick={() => rotateView(-1)} disabled={!pages.length} title="Rotate view anticlockwise (Ctrl+Shift+−). The file is not changed" />
-                <RB big icon={RotateCw} label="Right" ariaLabel="Rotate view clockwise" onClick={() => rotateView(1)} disabled={!pages.length} title="Rotate view clockwise (Ctrl+Shift++). The file is not changed" />
+              <RGroup label={t('Rotate view')}>
+                <RB big icon={RotateCcw} label={t('Left')} ariaLabel="Rotate view anticlockwise" onClick={() => rotateView(-1)} disabled={!pages.length} title={t('Rotate view anticlockwise (Ctrl+Shift+−). The file is not changed')} />
+                <RB big icon={RotateCw} label={t('Right')} ariaLabel="Rotate view clockwise" onClick={() => rotateView(1)} disabled={!pages.length} title={t('Rotate view clockwise (Ctrl+Shift++). The file is not changed')} />
               </RGroup>
             </>
           )}
@@ -3259,7 +3260,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         <div className={notice.kind === 'error' ? 'error banner' : 'info banner'} role={notice.kind === 'error' ? 'alert' : 'status'}>
           {notice.text}
           {notice.kind === 'error' && (
-            <IconButton icon={X} label="Dismiss" onClick={() => setNotice(null)} />
+            <IconButton icon={X} label={t('Dismiss')} onClick={() => setNotice(null)} />
           )}
         </div>
       )}
@@ -3277,8 +3278,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               if (e.key === 'Enter') stepMatch(e.shiftKey ? -1 : 1)
             }}
           />
-          <IconButton icon={ChevronUp} label="Previous match" title="Previous match (Shift+Enter)" onClick={() => stepMatch(-1)} disabled={!matches.length} />
-          <IconButton icon={ChevronDown} label="Next match" title="Next match (Enter)" onClick={() => stepMatch(1)} disabled={!matches.length} />
+          <IconButton icon={ChevronUp} label={t('Previous match')} title={t('Previous match (Shift+Enter)')} onClick={() => stepMatch(-1)} disabled={!matches.length} />
+          <IconButton icon={ChevronDown} label={t('Next match')} title={t('Next match (Enter)')} onClick={() => stepMatch(1)} disabled={!matches.length} />
           <label>
             <input type="checkbox" checked={matchCase} onChange={(e) => setMatchCase(e.target.checked)} /> Match case
           </label>
@@ -3294,7 +3295,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   ? 'Searching…'
                   : 'No results'}
           </span>
-          <IconButton icon={X} className="close" label="Close find" title="Close (Esc)" onClick={() => setSearchOpen(false)} />
+          <IconButton icon={X} className="close" label={t('Close find')} title={t('Close (Esc)')} onClick={() => setSearchOpen(false)} />
         </div>
       )}
 
@@ -3386,7 +3387,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       {signOpen && <SignDialog canCertify={sigRows.length === 0} onSign={startSign} onClose={() => setSignOpen(false)} />}
       {sigPanel && <SignaturesDialog rows={sigRows} onClose={() => setSigPanel(false)} />}
       {breakPrompt && (
-        <Modal title="This document is signed" onClose={() => { breakPrompt(false); setBreakPrompt(null) }}>
+        <Modal title={t('This document is signed')} onClose={() => { breakPrompt(false); setBreakPrompt(null) }}>
           <div className="marks-form">
             <p>
               Making this change will invalidate {validSigs === 1 ? 'its signature' : `its ${validSigs} signatures`}: they will show that the document was changed after it was signed.
@@ -3423,7 +3424,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         />
       )}
       {redactConfirm && (
-        <Modal title="Apply redactions" onClose={() => setRedactConfirm(false)}>
+        <Modal title={t('Apply redactions')} onClose={() => setRedactConfirm(false)}>
           <div className="marks-form">
             <p>
               {redactMarks.length} marked area{redactMarks.length === 1 ? '' : 's'} on {new Set(redactMarks.map((m) => m.page)).size} page{new Set(redactMarks.map((m) => m.page)).size === 1 ? '' : 's'}. The text, images and shapes under them are removed from the pages and each area is covered with a black box.
@@ -3441,7 +3442,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </Modal>
       )}
       {ownerPrompt && (
-        <Modal title="Permissions password" onClose={() => setOwnerPrompt(null)}>
+        <Modal title={t('Permissions password')} onClose={() => setOwnerPrompt(null)}>
           <form
             className="marks-form"
             onSubmit={(e) => {
@@ -3942,9 +3943,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         )}
       </div>
       <div className="statusbar toolbar" role="toolbar" aria-label="Page and zoom">
-        <IconButton icon={PanelLeft} label="Side panel" title="Show or hide the side panel" onClick={() => setSidebar(sidebar ? null : 'pages')} pressed={sidebar !== null} />
+        <IconButton icon={PanelLeft} label={t('Side panel')} title={t('Show or hide the side panel')} onClick={() => setSidebar(sidebar ? null : 'pages')} pressed={sidebar !== null} />
         <span className="sep" />
-        <IconButton icon={ChevronUp} label="Previous page" onClick={() => goTo(currentPage - 1)} disabled={currentPage <= 0} />
+        <IconButton icon={ChevronUp} label={t('Previous page')} onClick={() => goTo(currentPage - 1)} disabled={currentPage <= 0} />
         <input
           className="page-input"
           value={pageText}
@@ -3965,9 +3966,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }}
         />
         <span className="muted">{pageLabels ? `(${currentPage + 1} of ${pages.length})` : `/ ${pages.length || '–'}`}</span>
-        <IconButton icon={ChevronDown} label="Next page" onClick={() => goTo(currentPage + 1)} disabled={currentPage >= pages.length - 1} />
+        <IconButton icon={ChevronDown} label={t('Next page')} onClick={() => goTo(currentPage + 1)} disabled={currentPage >= pages.length - 1} />
         <span className="status-fill" />
-        <IconButton icon={ZoomOut} label="Zoom out" title="Zoom out (Ctrl+−)" onClick={() => stepZoom(-1)} disabled={!pages.length} />
+        <IconButton icon={ZoomOut} label={t('Zoom out')} title={t('Zoom out (Ctrl+−)')} onClick={() => stepZoom(-1)} disabled={!pages.length} />
         <select
           value={zoomValue}
           disabled={!pages.length}
@@ -3990,7 +3991,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         <span className="muted zoom-now" title="Current zoom">
           {Math.round(zoom * 100)}%
         </span>
-        <IconButton icon={ZoomIn} label="Zoom in" title="Zoom in (Ctrl++)" onClick={() => stepZoom(1)} disabled={!pages.length} />
+        <IconButton icon={ZoomIn} label={t('Zoom in')} title={t('Zoom in (Ctrl++)')} onClick={() => stepZoom(1)} disabled={!pages.length} />
       </div>
     </div>
   )

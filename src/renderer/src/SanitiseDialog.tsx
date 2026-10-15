@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { HiddenInfo, SanitiseOptions } from './sanitise'
+import { t } from './i18n'
 
 const ROWS: { key: keyof SanitiseOptions; label: string; plural: (n: number) => string }[] = [
   { key: 'metadata', label: 'Document properties and metadata', plural: () => 'author, title, dates, XMP' },
@@ -16,7 +17,7 @@ export function SanitiseDialog({ found, onApply, onClose }: { found: HiddenInfo;
   const [pick, setPick] = useState<SanitiseOptions>({ metadata: true, attachments: true, javascript: true, comments: false, bookmarks: false, thumbnails: true })
   const present = ROWS.filter((r) => found[r.key] > 0)
   return (
-    <Modal title="Remove hidden information" onClose={onClose}>
+    <Modal title={t('Remove hidden information')} onClose={onClose}>
       <form
         className="marks-form"
         onSubmit={(e) => {

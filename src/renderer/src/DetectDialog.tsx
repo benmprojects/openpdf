@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { Detected } from './formDetect'
+import { t } from './i18n'
 
 /** The fields found on the pages: tick the ones to create and adjust their names. */
 export function DetectDialog({ found, onApply, onClose }: { found: Detected[]; onApply: (chosen: Detected[]) => void; onClose: () => void }) {
@@ -15,7 +16,7 @@ export function DetectDialog({ found, onApply, onClose }: { found: Detected[]; o
   const bad = names.some((n) => !n || n.includes('.')) || new Set(names).size !== names.length
   const set = (i: number, patch: Partial<(typeof rows)[number]>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   return (
-    <Modal title="Detected fields" onClose={onClose}>
+    <Modal title={t('Detected fields')} onClose={onClose}>
       {rows.length === 0 ? (
         <div className="marks-form">
           <p>No blanks, rules, boxes or check squares with labels were found on these pages.</p>

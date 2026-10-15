@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import { ALL_ALLOWED, type EncryptOptions, type Permissions } from '../../shared/pdfSecurity'
+import { t } from './i18n'
 
 /** Passwords and permissions for the saved file. Applying sets them; "Remove security" clears them. */
 export function SecurityDialog({
@@ -38,7 +39,7 @@ export function SecurityDialog({
   }
 
   return (
-    <Modal title="Security" onClose={onClose}>
+    <Modal title={t('Security')} onClose={onClose}>
       <form
         className="marks-form props-form"
         onSubmit={(e) => {

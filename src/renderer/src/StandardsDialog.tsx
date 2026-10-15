@@ -1,6 +1,7 @@
 import { Modal } from './AppDialogs'
 import type { PdfAReport } from './pdfa'
 import type { CheckStatus, StandardsReport } from './standards'
+import { t } from './i18n'
 
 const MARK: Record<CheckStatus, string> = { pass: '✔', warn: '⚠', fail: '✖' }
 const WORD: Record<CheckStatus, string> = { pass: 'Passed', warn: 'Worth a look', fail: 'Failed' }
@@ -31,7 +32,7 @@ export function StandardsDialog({ report, conversion, onClose }: { report: Stand
   const a = report.claims.pdfa
   const ua = report.claims.pdfua
   return (
-    <Modal title="PDF standards" onClose={onClose}>
+    <Modal title={t('PDF standards')} onClose={onClose}>
       <div className="marks-form">
         <p className="muted">These are quick checks of things that can be tested from the file alone. They are not a full validator: passing them does not make a file conformant.</p>
         {conversion && (

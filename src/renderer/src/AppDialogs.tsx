@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { UpdateStatus } from '../../main/updates'
 import type { Settings } from '../../preload'
+import { languages, t } from './i18n'
 
 /** A centred modal panel. Esc and a click on the backdrop close it. */
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -133,13 +134,22 @@ export function SettingsDialog({
   onClose: () => void
 }) {
   return (
-    <Modal title="Settings" onClose={onClose}>
+    <Modal title={t('Settings')} onClose={onClose}>
       <div className="form-grid">
         <label htmlFor="set-theme">Theme</label>
         <select id="set-theme" value={settings.theme} onChange={(e) => onChange({ theme: e.target.value as Settings['theme'] })}>
           <option value="system">Same as Windows</option>
           <option value="dark">Dark</option>
           <option value="light">Light</option>
+        </select>
+        <label htmlFor="set-language">{t('Language')}</label>
+        <select id="set-language" value={settings.language} onChange={(e) => onChange({ language: e.target.value })}>
+          <option value="system">{t('Same as Windows')}</option>
+          {languages().map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.name}
+            </option>
+          ))}
         </select>
         <label htmlFor="set-author">Author name for comments</label>
         <input id="set-author" value={settings.author} onChange={(e) => onChange({ author: e.target.value })} />
@@ -191,7 +201,7 @@ export const SHORTCUTS: [string, string][] = [
 
 export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Keyboard shortcuts" onClose={onClose}>
+    <Modal title={t('Keyboard shortcuts')} onClose={onClose}>
       <table className="shortcuts">
         <tbody>
           {SHORTCUTS.map(([k, what]) => (

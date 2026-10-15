@@ -3,6 +3,7 @@ import { Modal } from './AppDialogs'
 import { appEnv, checkSteps, runBatch, STEP_LABELS, type BatchAction, type BatchResult, type BatchStep } from './batch'
 import { ALL_ALLOWED } from '../../shared/pdfSecurity'
 import type { InstalledPlugin } from '../../main/plugins'
+import { t } from './i18n'
 
 const KINDS = Object.keys(STEP_LABELS) as BatchStep['kind'][]
 
@@ -286,7 +287,7 @@ export function BatchDialog({ onClose }: { onClose: () => void }) {
 
   const okCount = results?.filter((r) => r.ok).length ?? 0
   return (
-    <Modal title="Batch processing" onClose={running ? () => undefined : onClose} wide>
+    <Modal title={t('Batch processing')} onClose={running ? () => undefined : onClose} wide>
       <div className="marks-form batch">
         <section aria-label="Steps">
           <h3>1. Steps</h3>

@@ -12,6 +12,7 @@ import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
 import { deleteAction, expandPdfs, listActions, readPdf as readBatchPdf, saveAction, writeResult } from './batchIo'
 import { HELP, loadAction, parseCli } from './cli'
 import { listPlaces } from './places'
+import { userCatalogues } from './locales'
 import { checkForUpdates, downloadUpdate, installUpdate, updateStatus } from './updates'
 import type { Place } from '../shared/places'
 import { fetchCatalogue, installFromCatalogue, installFromFolder, installFromZip, listPlugins, uninstallPlugin, type CatalogueEntry } from './plugins'
@@ -279,6 +280,9 @@ ipcMain.handle('scan:acquire', async (_e, o: ScanOptions) => {
   if (e2e && process.env.OPENPDF_E2E_SCAN) return Promise.all(process.env.OPENPDF_E2E_SCAN.split('|').map(async (f) => new Uint8Array(await readFile(f))))
   return scan(o)
 })
+
+/** Translations added by the user, from the locales folder of the user's data folder. */
+ipcMain.handle('locales:user', () => userCatalogues(join(app.getPath('userData'), 'locales')))
 
 /** Updates (opt in): check, download, install. */
 ipcMain.handle('updates:check', async (_e, feed: unknown) => checkForUpdates(typeof feed === 'string' ? feed : ''))

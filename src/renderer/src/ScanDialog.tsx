@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { ScanOptions, ScannerInfo } from '../../main/scan'
+import { t } from './i18n'
 
 export interface ScanRequest extends ScanOptions {
   /** Recognise the text after scanning so the result can be searched. */
@@ -29,7 +30,7 @@ export function ScanDialog({ onScan, onClose }: { onScan: (r: ScanRequest) => vo
 
   const direct = source !== 'dialog'
   return (
-    <Modal title="Scan to PDF" onClose={onClose}>
+    <Modal title={t('Scan to PDF')} onClose={onClose}>
       <form
         className="marks-form props-form"
         onSubmit={(e) => {

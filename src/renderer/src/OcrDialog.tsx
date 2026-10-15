@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Modal } from './AppDialogs'
+import { t } from './i18n'
 
 export interface OcrRequest {
   languages: string[]
@@ -41,7 +42,7 @@ export function OcrDialog({ pageCount, currentPage, onRun, onClose }: { pageCoun
       ))
 
   return (
-    <Modal title="Recognise text (OCR)" onClose={onClose}>
+    <Modal title={t('Recognise text (OCR)')} onClose={onClose}>
       <form
         className="marks-form props-form"
         onSubmit={(e) => {

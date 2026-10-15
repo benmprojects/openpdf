@@ -27,12 +27,18 @@ Electron + Vite + React + TypeScript. `npm run dev | build | typecheck`.
 - `bash scripts/corpus.sh`: generated corpus plus a short PDF fuzz (part of check.sh). `npx tsx scripts/corpus-check.mts <folder>` checks any folder of PDFs; `npx tsx scripts/fuzz-pdf.mts <folder> --runs N --seed S` fuzzes one.
 - `python scripts/make-big-pdf.py out.pdf 500`: large file for performance checks (`e2e/perf.spec.ts`).
 - `python scripts/make-test-pdf.py out.pdf`: test PDF with text and bookmarks.
+- `node scripts/i18n.mjs`: writes `src/renderer/src/locales/_template.json` (every `t('...')` string); `node scripts/i18n.mjs --check` finds stale or mismatched translations (also run by the unit tests). Wrap new UI text in `t('...')`; the English text is the key.
+- `npx electron-builder --win --dir`: builds `dist/win-unpacked/OpenPDF.exe`; `e2e/packaged.spec.ts` then tests the packaged program (OCR, Word export, plugins, signing, command line, update check). The NSIS installer step fails on the development PC.
+- `npm run licences`: regenerates `THIRD_PARTY_NOTICES.md` and fails on a copyleft or unknown licence (dual licences are fine when one option is permissive). Run it after adding a dependency.
 - UI end-to-end: launch `npx electron . --remote-debugging-port=9333 file.pdf` and drive it with `scripts/cdp.mjs` (Chrome DevTools Protocol over WebSocket). The test window is only about 800 px tall: keep click coordinates inside it, and re-measure the page rectangle before each action because the toolbar can wrap and shift the layout.
 - Work on a copy of any test PDF; Save overwrites the file.
 
 ## Gotchas
 - Long heredocs in the Bash tool can fail to parse. Write patch scripts to a file with the Write tool and run them.
 - Electron downloads its binary on first run (slow once).
+- Escapes in Python or JavaScript source written through a Bash heredoc can be changed on the way (`\\n` may reach the file as a real newline). Write such files with the Write tool, and check the result.
+- Another session may be editing the same working tree. Stage named files only (never `git add -A`), and when `HANDOFF.md` or `ROADMAP.md` have someone else's uncommitted edits, apply yours to the committed copy and stage that (hash-object + update-index) so theirs are not swept into your commit.
+- In e2e tests, `expect.poll` does not retry when the callback throws (reading a file that is not there yet): return an empty value instead. A playwright locator by role name matches substrings: use `exact: true` when two buttons share words.
 - pdf-lib cannot read or write encrypted PDFs: they are decrypted in memory with qpdf when the password is entered and encrypted again on save (`DocView` `unlock`, `protect`). Anything that reads `bytes` can assume they are not encrypted.
 
 ## Delegation (keeps this context small)

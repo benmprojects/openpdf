@@ -1,0 +1,21 @@
+{
+  "name": "English (United States)",
+  "messages": {
+    "Add a background colour or picture behind the pages": "Add a background color or picture behind the pages",
+    "Centre": "Center",
+    "Centre the selected annotations horizontally": "Center the selected annotations horizontally",
+    "Centre vertically": "Center vertically",
+    "Make the file smaller: reduce pictures, compress, remove unused objects, linearise": "Make the file smaller: reduce pictures, compress, remove unused objects, linearize",
+    "Normal colours": "Normal colors",
+    "Optimise": "Optimize",
+    "Organise": "Organize",
+    "Recognise": "Recognize",
+    "Recognise text (OCR)": "Recognize text (OCR)",
+    "Recognise the text in scanned pages so they can be searched and copied": "Recognize the text in scanned pages so they can be searched and copied",
+    "Rotate the selected pages anticlockwise (changes the file)": "Rotate the selected pages counterclockwise (changes the file)",
+    "Rotate view anticlockwise (Ctrl+Shift+−). The file is not changed": "Rotate view counterclockwise (Ctrl+Shift+−). The file is not changed",
+    "Run a list of steps (watermark, page numbers, optimise, OCR, clean-up) over many PDFs": "Run a list of steps (watermark, page numbers, optimize, OCR, clean-up) over many PDFs",
+    "Sanitise": "Sanitize",
+    "Show pages in their own colours": "Show pages in their own colors"
+  }
+}

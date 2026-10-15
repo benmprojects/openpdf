@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { OptimiseOptions } from './optimise'
+import { t } from './i18n'
 
 const PRESETS: { key: string; label: string; maxDpi: number | null; quality: number }[] = [
   { key: 'screen', label: 'Smallest file (screen, 96 dpi)', maxDpi: 96, quality: 0.6 },
@@ -25,7 +26,7 @@ export function OptimiseDialog({ size, onApply, onClose }: { size: number; onApp
   const [unused, setUnused] = useState(true)
   const [linearise, setLinearise] = useState(false)
   return (
-    <Modal title="Optimise" onClose={onClose}>
+    <Modal title={t('Optimise')} onClose={onClose}>
       <form
         className="marks-form"
         onSubmit={(e) => {

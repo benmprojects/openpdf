@@ -8,6 +8,7 @@ import { SearchPanel, type SearchJump } from './SearchPanel'
 import { Logo } from './Logo'
 import { IconButton } from './Ribbon'
 import { DocView, type DocMeta } from './DocView'
+import { addCatalogues, setLanguage, t, useLanguage } from './i18n'
 
 interface Tab {
   id: number
@@ -117,6 +118,15 @@ export function App() {
   const [places, setPlaces] = useState<Place[] | null>(null)
   const [recovery, setRecovery] = useState<RecoveryEntry[]>([])
   const [searchPanel, setSearchPanel] = useState(false)
+  useLanguage() // re-render everything below when the language changes
+  const [catalogues, setCatalogues] = useState(false)
+  useEffect(() => {
+    // Translations the user added come first, so choosing one of them works from the start.
+    void window.openpdf.userLocales().then((c) => addCatalogues(c), () => undefined).finally(() => setCatalogues(true))
+  }, [])
+  useEffect(() => {
+    if (settings && catalogues) setLanguage(settings.language)
+  }, [settings?.language, catalogues]) // eslint-disable-line react-hooks/exhaustive-deps
   const jumpKey = useRef(1)
   const nextId = useRef(1)
   const tabsRef = useRef(tabs)
@@ -346,7 +356,7 @@ export function App() {
               </button>
             </div>
           ))}
-          <IconButton icon={Plus} className="tab-new" label="Open file" title="Open (Ctrl+O)" onClick={open} />
+          <IconButton icon={Plus} className="tab-new" label={t('Open file')} title={t('Open (Ctrl+O)')} onClick={open} />
         </div>
         <div className="menu-anchor">
           <button
@@ -397,8 +407,8 @@ export function App() {
           <FileSearch size={15} strokeWidth={1.8} aria-hidden />
           <span>Search files</span>
         </button>
-        <IconButton icon={Settings2} className="strip-btn" label="Settings" onClick={() => setDialog('settings')} disabled={!settings} />
-        <IconButton icon={CircleHelp} className="strip-btn" label="Keyboard shortcuts" title="Keyboard shortcuts (F1)" onClick={() => setDialog('shortcuts')} />
+        <IconButton icon={Settings2} className="strip-btn" label={t('Settings')} onClick={() => setDialog('settings')} disabled={!settings} />
+        <IconButton icon={CircleHelp} className="strip-btn" label={t('Keyboard shortcuts')} title={t('Keyboard shortcuts (F1)')} onClick={() => setDialog('shortcuts')} />
       </div>
       {recovery.length > 0 && (
         <div className="recovery-bar" role="alert">

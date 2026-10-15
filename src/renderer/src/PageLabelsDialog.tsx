@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import { labelFor, type LabelRange, type LabelStyle } from './outlineEdit'
+import { t } from './i18n'
 
 const STYLES: [LabelStyle, string][] = [
   ['D', '1, 2, 3'],
@@ -36,7 +37,7 @@ export function PageLabelsDialog({
     return r ? labelFor(r, p) : String(p + 1)
   })
   return (
-    <Modal title="Page labels" onClose={onClose}>
+    <Modal title={t('Page labels')} onClose={onClose}>
       <form
         className="marks-form"
         onSubmit={(e) => {
