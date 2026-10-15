@@ -584,8 +584,9 @@ kbd {
   display: flex;
   align-items: stretch;
   flex-wrap: wrap;
-  height: 96px;
-  padding: 4px 6px 2px;
+  height: 112px;
+  /* Room under the groups for the sideways scrollbar, so it does not cover the group names. */
+  padding: 4px 6px 10px;
   /* Narrow windows scroll the ribbon sideways rather than cutting groups off. */
   flex-wrap: nowrap;
   overflow-x: auto;
@@ -687,9 +688,15 @@ kbd {
   font-size: 12px;
 }
 .rb.big .rb-label {
-  max-width: 76px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Long names wrap onto a second line rather than being cut off. */
+  max-width: 84px;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.rb.big {
+  white-space: normal;
 }
 .rselect {
   align-self: center;

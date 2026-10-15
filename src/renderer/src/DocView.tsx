@@ -2844,6 +2844,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={Keyboard} label={t('Typewriter')} onClick={() => setTool(tool === 'typewriter' ? 'select' : 'typewriter')} disabled={!pages.length} pressed={tool === 'typewriter'} title={t('Type straight onto the page: click where the text starts')} />
                   <RB icon={Paperclip} label={t('Attach file')} onClick={() => setTool(tool === 'fileattach' ? 'select' : 'fileattach')} disabled={!pages.length} pressed={tool === 'fileattach'} title={t('Attach a file: click on the page, then choose the file')} />
                   <RB icon={Volume2} label={t('Sound')} onClick={() => setTool(tool === 'sound' ? 'select' : 'sound')} disabled={!pages.length} pressed={tool === 'sound'} title={t('Attach a sound: click on the page, then choose a WAV recording')} />
+                </RStack>
+                <RStack>
                   <RB icon={Link2} label={t('Link')} onClick={() => setTool(tool === 'link' ? 'select' : 'link')} disabled={!pages.length} pressed={tool === 'link'} title={t('Add a link: drag a box, then choose a web address or a page')} />
                   <RB icon={MessageSquareShare} label={t('Callout')} onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title={t('Callout: drag from the point to call out to where the text box goes')} />
                 </RStack>
