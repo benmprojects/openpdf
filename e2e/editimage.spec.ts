@@ -119,3 +119,55 @@ test('edit image: move, resize, replace and delete pictures', async () => {
     rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
   }
 })
+
+test('add image: choose a picture, click the page, and it is saved as page content', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'openpdf-e2e-'))
+  const pdfPath = join(dir, 'blank.pdf')
+  const greenPath = join(dir, 'green.png')
+  // A blank page, and a 400 x 200 green picture.
+  execFileSync('python', [
+    '-c',
+    `
+import sys, pymupdf
+d = pymupdf.open()
+d.new_page(width=595, height=842)
+d.save(sys.argv[1])
+pm = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 400, 200))
+pm.set_rect(pm.irect, (30, 200, 30))
+pm.save(sys.argv[2])
+`,
+    pdfPath,
+    greenPath
+  ])
+  const app = await electron.launch({
+    args: ['.', pdfPath],
+    cwd: root,
+    env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_USERDATA: join(dir, 'ud'), OPENPDF_E2E_DISCARD: '1', OPENPDF_E2E_PICK: greenPath }
+  })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('.page')).toHaveCount(1)
+    const z = Number((await win.locator('.zoom-now').textContent())!.replace('%', '')) / 100
+    await win.getByRole('tab', { name: 'Edit', exact: true }).click()
+    await win.getByRole('button', { name: 'Add image' }).click()
+    await expect(win.getByText('Click the page where the picture should go.')).toBeVisible()
+    // The notice shifts the page: measure it again.
+    const pb2 = (await win.locator('.page').first().boundingBox())!
+    await win.mouse.click(pb2.x + 300 * z, pb2.y + 300 * z)
+    await expect(win.getByText('Image added')).toBeVisible()
+    await win.keyboard.press('Control+s')
+    await expect(win.locator('.tab-dirty')).toHaveCount(0)
+    const out = inspect(pdfPath, [300, 300])
+    expect(out.boxes).toHaveLength(1)
+    const [x0, y0, x1, y1] = out.boxes[0]
+    // 400 px is 300 pt at 96 dpi, capped at 240 pt wide: 240 x 120, centred on (300, 300).
+    expect(x1 - x0).toBeCloseTo(240, 0)
+    expect(y1 - y0).toBeCloseTo(120, 0)
+    expect(Math.abs((x0 + x1) / 2 - 300)).toBeLessThanOrEqual(2)
+    expect(Math.abs((y0 + y1) / 2 - 300)).toBeLessThanOrEqual(2)
+    expect(out.colour![1]).toBeGreaterThan(150)
+  } finally {
+    await app.close()
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+  }
+})

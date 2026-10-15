@@ -1,4 +1,4 @@
-import { app, nativeTheme } from 'electron'
+import { app, nativeTheme, session } from 'electron'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -15,6 +15,8 @@ export interface Settings {
   sidebarWidth: number
   /** Which side of the window the side pane docks to. */
   paneSide: 'left' | 'right'
+  /** Underline misspelled words in text boxes and offer suggestions. */
+  spellcheck: boolean
   /** Style each annotation tool starts with, by annotation kind (saved with "Make default"). */
   toolDefaults: Record<string, ToolStyle>
   /** Named tool presets: a kind and a style, shown in the Presets list. */
@@ -62,6 +64,7 @@ const defaults = (): Settings => ({
   author: process.env.USERNAME ?? process.env.USER ?? '',
   sidebarWidth: 220,
   paneSide: 'left',
+  spellcheck: true,
   toolDefaults: {},
   toolPresets: []
 })
@@ -86,6 +89,7 @@ function sanitise(raw: Partial<Settings>): Settings {
     author: typeof raw.author === 'string' ? raw.author.slice(0, 200) : d.author,
     sidebarWidth: typeof raw.sidebarWidth === 'number' ? Math.min(600, Math.max(140, raw.sidebarWidth)) : d.sidebarWidth,
     paneSide: raw.paneSide === 'right' ? 'right' : 'left',
+    spellcheck: typeof raw.spellcheck === 'boolean' ? raw.spellcheck : d.spellcheck,
     toolDefaults:
       raw.toolDefaults && typeof raw.toolDefaults === 'object'
         ? Object.fromEntries(
@@ -112,13 +116,29 @@ export async function loadSettings(): Promise<Settings> {
     current = defaults()
   }
   nativeTheme.themeSource = current.theme
+  applySpelling(current)
   return current
+}
+
+/** Turns the spell checker on or off, and prefers Australian English when the system has it. */
+function applySpelling(s: Settings): void {
+  try {
+    const ses = session.defaultSession
+    const available = ses.availableSpellCheckerLanguages
+    const pick = ['en-AU', 'en-GB', 'en-US'].find((l) => available.includes(l))
+    if (pick) ses.setSpellCheckerLanguages([pick])
+    // Last: choosing a language can switch the checker back on.
+    ses.setSpellCheckerEnabled(s.spellcheck)
+  } catch {
+    // No session yet (before the app is ready) or no dictionaries: the defaults stay.
+  }
 }
 
 export async function updateSettings(patch: Partial<Settings>): Promise<Settings> {
   const next = sanitise({ ...(await loadSettings()), ...patch })
   current = next
   nativeTheme.themeSource = next.theme
+  applySpelling(next)
   await mkdir(app.getPath('userData'), { recursive: true })
   await writeJson(file(), next)
   return next

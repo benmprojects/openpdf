@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
 import { findFont } from './fonts'
+import { editMenuTemplate } from './spellMenu'
 import { runQpdf } from './qpdf'
 import { addStamps, listStamps, removeStamp } from './stamps'
 import {
@@ -84,6 +85,16 @@ function createWindow(): void {
       void clearAllRecovery()
       e.preventDefault()
     }
+  })
+  // Right-click in a text box: spelling suggestions and the edit commands.
+  win.webContents.on('context-menu', (_e, params) => {
+    if (!params.isEditable) return
+    Menu.buildFromTemplate(
+      editMenuTemplate(params, {
+        replace: (w) => win.webContents.replaceMisspelling(w),
+        addWord: (w) => win.webContents.session.addWordToSpellCheckerDictionary(w)
+      })
+    ).popup({ window: win })
   })
   mainWindow = win
   const retint = () => {

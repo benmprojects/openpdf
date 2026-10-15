@@ -85,6 +85,7 @@ export type Tool =
   | 'crop'
   | 'edittext'
   | 'editimage'
+  | 'addimage'
 
 export interface DrawStyle {
   color: string
@@ -163,12 +164,13 @@ interface Props {
   onTouchAnnot: (id: number) => void
   /** Bumped when PDFium's drawing of the document changed and visible pages must be redrawn. */
   epoch: number
-  onSelectAnnot: (id: number | null) => void
+  onSelectAnnot: (id: number | null, additive?: boolean) => void
+  extraSelected: ReadonlySet<number>
   onMoveAnnot: (id: number, dx: number, dy: number) => void
   onResizeAnnot: (id: number, w: number, h: number) => void
   onEditAnnot: (id: number | null) => void
   onAnnotText: (id: number, text: string) => void
-  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound', page: number, x: number, y: number) => void
+  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound' | 'addimage', page: number, x: number, y: number) => void
   drawStyle: DrawStyle
   onCreateShape: (a: Omit<Annot, 'id'>) => void
   onReshapeAnnot: (id: number, index: number, dx: number, dy: number) => void
@@ -216,6 +218,7 @@ export function Viewer({
   onTouchAnnot,
   epoch,
   onSelectAnnot,
+  extraSelected,
   onMoveAnnot,
   onResizeAnnot,
   onEditAnnot,
@@ -865,7 +868,7 @@ export function Viewer({
         window.addEventListener('mouseup', up)
         return
       }
-      if (tool === 'note' || tool === 'textbox' || tool === 'stamp' || tool === 'caret' || tool === 'typewriter' || tool === 'fileattach' || tool === 'sound') {
+      if (tool === 'note' || tool === 'textbox' || tool === 'stamp' || tool === 'caret' || tool === 'typewriter' || tool === 'fileattach' || tool === 'sound' || tool === 'addimage') {
         e.preventDefault()
         const { x, y } = pointOnPage(pageEl, Number(pageEl.dataset.page), e.clientX, e.clientY)
         onPlace(tool, Number(pageEl.dataset.page), tool === 'note' ? x - NOTE_SIZE / 2 : x, tool === 'note' ? y - NOTE_SIZE / 2 : y)
@@ -908,7 +911,7 @@ export function Viewer({
           return
         }
         const hit = [...annots].reverse().find((a) => a.page === i && isMarkup(a.kind) && a.rects.some((q) => pointInRect(q, x, y, 2)))
-        onSelectAnnot(hit ? hit.id : null)
+        onSelectAnnot(hit ? hit.id : null, !!hit && (ev.shiftKey || ev.ctrlKey || ev.metaKey))
         // Double-click a replace-text strikeout to edit the replacement.
         if (hit && ev.detail >= 2 && hit.replace) onEditAnnot(hit.id)
       }
@@ -1079,7 +1082,7 @@ export function Viewer({
                 onGuideDown={onGuideDown}
                 epoch={epoch}
                 scroller={scroller}
-                annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
+                annotProps={{ tool, selectedAnnot, extraSelected, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
                 selection={selForPage(i)}
                 matches={matchesByPage.get(i)}
                 currentMatch={currentMatch}
@@ -1156,10 +1159,11 @@ interface PageViewProps {
   annotProps: {
     tool: Tool
     selectedAnnot: number | null
+    extraSelected: ReadonlySet<number>
     editingAnnot: number | null
     touchedAnnots: ReadonlySet<number>
     onTouchAnnot: (id: number) => void
-    onSelectAnnot: (id: number | null) => void
+    onSelectAnnot: (id: number | null, additive?: boolean) => void
     onMoveAnnot: (id: number, dx: number, dy: number) => void
     onResizeAnnot: (id: number, w: number, h: number) => void
     onReshapeAnnot: (id: number, index: number, dx: number, dy: number) => void
@@ -1345,6 +1349,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
           interactive={annotProps.tool === 'select'}
           linkMode={annotProps.tool === 'link'}
           selectedId={annotProps.selectedAnnot}
+          extraSelected={annotProps.extraSelected}
           editingId={annotProps.editingAnnot}
           touched={annotProps.touchedAnnots}
           onTouch={annotProps.onTouchAnnot}

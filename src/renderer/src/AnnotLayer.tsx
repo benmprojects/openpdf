@@ -17,6 +17,7 @@ import {
   squigglePoints,
   type Annot
 } from './annotations'
+import { boundsOf } from './arrange'
 import { deltaToPage, type Rotation } from './viewRotation'
 
 interface Props {
@@ -30,7 +31,9 @@ interface Props {
   touched: ReadonlySet<number>
   /** Called before an imported annotation changes, so PDFium stops drawing the original. */
   onTouch: (id: number) => void
-  onSelect: (id: number | null) => void
+  onSelect: (id: number | null, additive?: boolean) => void
+  /** Annotations selected along with `selectedId` (Shift or Ctrl click). */
+  extraSelected?: ReadonlySet<number>
   onMove: (id: number, dx: number, dy: number) => void
   onResize: (id: number, w: number, h: number) => void
   onReshape: (id: number, index: number, dx: number, dy: number) => void
@@ -52,6 +55,7 @@ export function AnnotLayer({
   touched,
   onTouch,
   onSelect,
+  extraSelected,
   onMove,
   onResize,
   onReshape,
@@ -67,8 +71,10 @@ export function AnnotLayer({
     if (e.button !== 0 || !(interactive || (linkMode && a.kind === 'link'))) return
     e.stopPropagation()
     e.preventDefault()
-    onSelect(a.id)
-    if (editingId === a.id && kind === 'move') return
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey
+    if (additive) onSelect(a.id, true)
+    else if (a.id !== selectedId && !extraSelected?.has(a.id)) onSelect(a.id)
+    if (additive || (editingId === a.id && kind === 'move')) return
     const sx = e.clientX
     const sy = e.clientY
     let moved = false
@@ -325,6 +331,10 @@ export function AnnotLayer({
             )}
           </div>
         )
+      })}
+      {extraSelected && extraSelected.size > 0 && annots.filter((a) => extraSelected.has(a.id)).map((a) => {
+        const b = boundsOf(a)
+        return <div key={`sel-${a.id}`} className="multi-sel" style={{ left: b.x * zoom - 2, top: b.y * zoom - 2, width: b.w * zoom + 4, height: b.h * zoom + 4 }} aria-hidden />
       })}
       <ShapeLayer
         annots={annots.filter((a) => isShapeKind(a.kind) || a.kind === 'stamp')}

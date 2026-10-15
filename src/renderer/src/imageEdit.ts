@@ -3,7 +3,8 @@
  * image object of the page is the k-th image-drawing operation of its content stream); the stream's operation is then
  * wrapped in a `cm` that carries the change, swapped for a new picture, or taken out.
  */
-import { PDFDocument, PDFName, type PDFPage } from 'pdf-lib'
+import { PDFDocument, PDFName, concatTransformationMatrix, drawObject, popGraphicsState, pushGraphicsState, type PDFPage } from 'pdf-lib'
+import { frameFor } from './annotWrite'
 import { cmOp, imageDraws, matInverse, matMul, parseContent, removeOps, stringToBytes, type ImageDraw, type Matrix6 } from './content'
 import { isImageXObject, pageContent } from './pageContent'
 
@@ -83,5 +84,32 @@ export async function replaceImage(bytes: Uint8Array, t: ImageEditTarget, image:
   const fit: Matrix6 = newAspect > oldAspect ? [1, 0, 0, oldAspect / newAspect, 0, (1 - oldAspect / newAspect) / 2] : [newAspect / oldAspect, 0, 0, 1, (1 - newAspect / oldAspect) / 2, 0]
   const out = `${src.slice(0, op.start)}q ${cmOp(fit)} /${key} Do Q${src.slice(op.end)}`
   setContent(doc, page, out)
+  return doc.save()
+}
+
+/**
+ * Puts a PNG or JPEG on a page as page content, centred on a point given in display space (points from the top-left
+ * of the page as shown). Its width is its pixel width at 96 dpi, capped at 240 points and 60 % of the page; the
+ * picture stays upright on rotated pages.
+ */
+export async function addImage(bytes: Uint8Array, pageIndex: number, centre: { x: number; y: number }, image: { data: Uint8Array; kind: 'png' | 'jpg' }): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  const page = doc.getPage(pageIndex)
+  const pic = image.kind === 'png' ? await doc.embedPng(image.data) : await doc.embedJpg(image.data)
+  const cb = page.getCropBox()
+  const rotation = page.getRotation().angle
+  const sideways = rotation % 180 !== 0
+  const shownW = sideways ? cb.height : cb.width
+  const shownH = sideways ? cb.width : cb.height
+  const w = Math.min(pic.width * 0.75, 240, shownW * 0.6)
+  const h = (w * pic.height) / pic.width
+  const x = Math.max(0, Math.min(shownW - w, centre.x - w / 2))
+  const y = Math.max(0, Math.min(shownH - h, centre.y - h / 2))
+  const f = frameFor(cb.x, cb.y, cb.x + cb.width, cb.y + cb.height, rotation).m
+  // The image's unit square (y up) onto its display rectangle (y down), then display space onto the page.
+  const m = matMul([w, 0, 0, -h, x, y + h], f)
+  const key = `OPImg${Math.random().toString(36).slice(2, 10)}`
+  page.node.setXObject(PDFName.of(key), pic.ref)
+  page.pushOperators(pushGraphicsState(), concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]), drawObject(key), popGraphicsState())
   return doc.save()
 }

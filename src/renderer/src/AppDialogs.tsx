@@ -61,6 +61,9 @@ export function SettingsDialog({
           {![0, 1, 2, 5, 10].includes(settings.autosaveMinutes) && <option value={settings.autosaveMinutes}>Every {settings.autosaveMinutes} minutes</option>}
         </select>
       </div>
+      <label className="inline" style={{ marginTop: 10 }}>
+        <input type="checkbox" checked={settings.spellcheck} onChange={(e) => onChange({ spellcheck: e.target.checked })} /> Check spelling in text boxes (right-click a word for suggestions)
+      </label>
       <p className="muted small">
         Recovery snapshots are kept only until you save or close a document. After a crash they are offered back the next
         time OpenPDF starts.

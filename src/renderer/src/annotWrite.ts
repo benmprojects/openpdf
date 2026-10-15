@@ -219,7 +219,9 @@ export async function writeAnnotations(
   bytes: Uint8Array,
   annots: Annot[],
   deleted: DeletedAnnot[] = [],
-  rewrite?: ReadonlySet<number>
+  rewrite?: ReadonlySet<number>,
+  /** When true, `annots` holds every annotation in stacking order (later is on top) and each page's /Annots is put in that order. */
+  stacked = false
 ): Promise<Uint8Array> {
   const pdf = await PDFDocument.load(bytes)
   const ctx = pdf.context
@@ -304,6 +306,9 @@ export async function writeAnnotations(
     }
   }
 
+  /** Each annotation's object in the file, for putting them in stacking order at the end. */
+  const refOf = new Map<number, PDFRef>()
+
   for (const a of annots) {
     if (a.page < 0 || a.page >= pdf.getPageCount() || !a.rects.length) continue
     const page: PDFPage = pdf.getPage(a.page)
@@ -312,7 +317,10 @@ export async function writeAnnotations(
       const existing = findExisting(page, a.origin)
       const list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
       const ref = existing && list ? list.get(existing.index) : null
-      if (existing && ref instanceof PDFRef) writeReplies(page, a, ref, existing.dict.lookup(PDFName.of('Rect')) as never)
+      if (existing && ref instanceof PDFRef) {
+        refOf.set(a.id, ref)
+        writeReplies(page, a, ref, existing.dict.lookup(PDFName.of('Rect')) as never)
+      }
       continue
     }
     const cb = page.getCropBox()
@@ -690,7 +698,10 @@ export async function writeAnnotations(
         for (const [key, value] of fresh.entries()) existing.dict.set(key, value)
         const list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
         const ref = list?.get(existing.index)
-        if (ref instanceof PDFRef) writeReplies(page, a, ref, dict.Rect)
+        if (ref instanceof PDFRef) {
+          refOf.set(a.id, ref)
+          writeReplies(page, a, ref, dict.Rect)
+        }
         continue
       }
     }
@@ -744,6 +755,7 @@ export async function writeAnnotations(
       page.node.set(PDFName.of('Annots'), list)
     }
     list.push(ref)
+    refOf.set(a.id, ref)
     writeReplies(page, a, ref, dict.Rect)
   }
 
@@ -754,6 +766,27 @@ export async function writeAnnotations(
       const entry = list.get(i)
       list.remove(i)
       if (entry instanceof PDFRef) ctx.delete(entry)
+    }
+  }
+
+  if (stacked) {
+    for (let p = 0; p < pdf.getPageCount(); p++) {
+      const list = pdf.getPage(p).node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+      if (!list) continue
+      const ordered = annots.filter((a) => a.page === p && refOf.has(a.id)).map((a) => refOf.get(a.id)!)
+      if (ordered.length < 2) continue
+      const mine = new Set(ordered.map((r) => r.toString()))
+      const others: unknown[] = []
+      const present = new Set<string>()
+      for (let i = 0; i < list.size(); i++) {
+        const entry = list.get(i)
+        if (entry instanceof PDFRef && mine.has(entry.toString())) present.add(entry.toString())
+        else others.push(entry)
+      }
+      // Everything we do not manage keeps its place at the bottom; ours follow in the chosen order.
+      while (list.size()) list.remove(list.size() - 1)
+      for (const o of others) list.push(o as PDFRef)
+      for (const r of ordered) if (present.has(r.toString())) list.push(r)
     }
   }
 

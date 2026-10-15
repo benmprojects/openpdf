@@ -1,8 +1,8 @@
 import { deflateSync } from 'node:zlib'
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, degrees } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { imageDraws, parseContent } from './content'
-import { replaceImage, transformImage, type ImageEditTarget } from './imageEdit'
+import { addImage, replaceImage, transformImage, type ImageEditTarget } from './imageEdit'
 import { isImageXObject, pageContent } from './pageContent'
 
 /** A solid-colour PNG, built by hand (signature, IHDR, IDAT, IEND with CRCs). */
@@ -97,5 +97,37 @@ describe('imageEdit', () => {
   it('refuses when the count or the position does not match PDFium', async () => {
     await expect(transformImage(await makePdf(), { ...first, total: 3 }, null)).rejects.toThrow(/cannot be edited safely/)
     await expect(transformImage(await makePdf(), target(0, [200, 0, 0, 100, 51, 60]), null)).rejects.toThrow(/page changed/)
+  })
+})
+
+describe('addImage', () => {
+  async function blank(rotation = 0): Promise<Uint8Array> {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([300, 400])
+    if (rotation) page.setRotation(degrees(rotation))
+    return doc.save()
+  }
+
+  it('places a picture centred on the click, at its natural size capped to the page', async () => {
+    const out = await addImage(await blank(), 0, { x: 150, y: 200 }, { data: png(400, 200), kind: 'png' })
+    const d = await draws(out)
+    expect(d).toHaveLength(1)
+    // 400 px is 300 pt at 96 dpi: capped to 60 % of the 300 pt page = 180 x 90, centred on (150, 200) from the top.
+    expect(d[0].ctm.map((v) => Math.round(v * 100) / 100)).toEqual([180, 0, 0, 90, 60, 155])
+  })
+
+  it('keeps the picture on the page', async () => {
+    const out = await addImage(await blank(), 0, { x: 0, y: 0 }, { data: png(400, 200), kind: 'png' })
+    const d = await draws(out)
+    expect(d[0].ctm[4]).toBe(0)
+    expect(d[0].ctm[5]).toBe(400 - 90)
+  })
+
+  it('turns the picture with a rotated page so it reads upright', async () => {
+    const out = await addImage(await blank(90), 0, { x: 200, y: 150 }, { data: png(400, 200), kind: 'png' })
+    const [a, b, c, d] = (await draws(out))[0].ctm
+    expect(Math.abs(a)).toBeLessThan(1e-6)
+    expect(Math.abs(d)).toBeLessThan(1e-6)
+    expect(Math.hypot(a, b)).toBeCloseTo(Math.hypot(c, d) * 2, 1)
   })
 })

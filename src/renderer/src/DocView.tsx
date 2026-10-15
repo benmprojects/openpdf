@@ -67,7 +67,8 @@ import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
 import { replaceText, weightAndSlant } from './textEdit'
-import { replaceImage, transformImage } from './imageEdit'
+import { addImage, replaceImage, transformImage } from './imageEdit'
+import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
@@ -102,6 +103,18 @@ import {
   Tags,
   Gauge,
   ImageIcon,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignHorizontalDistributeCenter,
+  AlignVerticalDistributeCenter,
+  BringToFront,
+  SendToBack,
+  ArrowUp,
+  ArrowDown,
   FolderOpen,
   Hand,
   Highlighter,
@@ -394,20 +407,6 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setNotice({ kind: 'error', text: `Could not read the document properties: ${e instanceof Error ? e.message : String(e)}` })
     }
   }
-  const runOptimise = async (o: OptimiseOptions) => {
-    setOptimising(false)
-    let before = 0
-    let summary = ''
-    await applyPageEdit(async (b) => {
-      before = b.length
-      const r = await optimise(b, o)
-      const parts = [r.images && `${r.images} picture${r.images === 1 ? '' : 's'} reduced`, r.thumbnails && `${r.thumbnails} thumbnail${r.thumbnails === 1 ? '' : 's'} removed`].filter(Boolean)
-      const pct = Math.round((1 - r.bytes.length / before) * 100)
-      summary = `Optimised: ${formatSize(before)} to ${formatSize(r.bytes.length)} (${pct >= 0 ? `${pct}% smaller` : `${-pct}% larger`})${parts.length ? `; ${parts.join(', ')}` : ''}`
-      return r.bytes
-    })
-    if (summary) setNotice({ kind: 'info', text: summary })
-  }
   const openPageLabels = async () => {
     try {
       setLabelRanges(await readLabelRanges(bytes))
@@ -477,6 +476,37 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const history = useHistory<Annot[]>([])
   const annots = history.present
   const [selectedAnnot, setSelectedAnnot] = useState<number | null>(null)
+  /** Annotations selected along with `selectedAnnot` (Shift or Ctrl click). */
+  const [extraSel, setExtraSel] = useState<ReadonlySet<number>>(new Set())
+  /** The stacking order was changed and must be written on save. */
+  const [zDirty, setZDirty] = useState(false)
+  const selectedIds = useMemo(() => new Set<number>([...(selectedAnnot !== null ? [selectedAnnot] : []), ...extraSel]), [selectedAnnot, extraSel])
+  const selIdsRef = useRef<ReadonlySet<number>>(selectedIds)
+  selIdsRef.current = selectedIds
+  const selRef = useRef({ primary: selectedAnnot, extra: extraSel })
+  selRef.current = { primary: selectedAnnot, extra: extraSel }
+  const selectAnnot = useCallback((id: number | null, additive?: boolean) => {
+    const { primary, extra } = selRef.current
+    if (!additive || id === null) {
+      setSelectedAnnot(id)
+      setExtraSel(new Set())
+      return
+    }
+    if (primary === null) {
+      setSelectedAnnot(id)
+      return
+    }
+    if (id === primary) {
+      const rest = [...extra]
+      setSelectedAnnot(rest[0] ?? null)
+      setExtraSel(new Set(rest.slice(1)))
+      return
+    }
+    const next = new Set(extra)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setExtraSel(next)
+  }, [])
   const [editingAnnot, setEditingAnnot] = useState<number | null>(null)
   const [hasTextSelection, setHasTextSelection] = useState(false)
   const [colors, setColors] = useState<Record<AnnotKind, string>>(() => {
@@ -630,11 +660,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }, [annots])
   const changed = (a: Annot) => !a.origin || baseline.current.get(a.id)?.sig !== signature(a)
   const hasNewReplies = (a: Annot) => !!a.replies?.some((r) => !r.origin)
-  const annotsDirty = deleted.length > 0 || annots.some(changed) || annots.some(hasNewReplies)
+  const annotsDirty = deleted.length > 0 || annots.some(changed) || annots.some(hasNewReplies) || zDirty
   /** Writes the pending annotation edits (and new replies) into `src`. */
   const applyEdits = (src: Uint8Array) => {
-    const list = annots.filter((a) => changed(a) || hasNewReplies(a))
-    return writeAnnotations(src, list, deleted, new Set(list.filter(changed).map((a) => a.id)))
+    // A changed stacking order needs every annotation in order, not just the changed ones.
+    const list = zDirty ? annots : annots.filter((a) => changed(a) || hasNewReplies(a))
+    return writeAnnotations(src, list, deleted, new Set(annots.filter(changed).map((a) => a.id)), zDirty)
   }
   const dirty = annotsDirty || bytes !== savedBytes
   useEffect(() => onMeta({ dirty }), [dirty, onMeta])
@@ -707,6 +738,22 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     },
     [colors, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
   )
+
+  /** The picture chosen with Add image, waiting for a click on the page. */
+  const pendingImage = useRef<{ data: Uint8Array; kind: 'png' | 'jpg' } | null>(null)
+  const startAddImage = async () => {
+    const file = await window.openpdf.pickFile({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg'] })
+    if (!file) return
+    const d = file.data
+    const kind = d[0] === 0x89 && d[1] === 0x50 ? 'png' : d[0] === 0xff && d[1] === 0xd8 ? 'jpg' : null
+    if (!kind) {
+      setNotice({ kind: 'error', text: 'That file is not a PNG or JPEG picture.' })
+      return
+    }
+    pendingImage.current = { data: d, kind }
+    setTool('addimage')
+    setNotice({ kind: 'info', text: 'Click the page where the picture should go.' })
+  }
 
   const place = useCallback(
     async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound', page: number, x: number, y: number) => {
@@ -841,10 +888,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const moveAnnot = useCallback(
     (id: number, dx: number, dy: number) => {
-      touch(id)
+      // Dragging one of several selected annotations moves them all.
+      const ids = selIdsRef.current.has(id) && selIdsRef.current.size > 1 ? selIdsRef.current : new Set([id])
+      ids.forEach(touch)
       history.commit((list) =>
         list.map((a) => {
-          if (a.id !== id) return a
+          if (!ids.has(a.id)) return a
           const size = pages[a.page]
           const r = a.rects[0]
           const x = Math.max(0, Math.min(size.width - r.w, r.x + dx))
@@ -884,6 +933,25 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     },
     [history.commit, touch]
   )
+
+  const removeMany = useCallback(
+    (ids: ReadonlySet<number>) => {
+      ids.forEach(touch)
+      history.commit((list) => list.filter((a) => !ids.has(a.id)))
+      setSelectedAnnot(null)
+      setExtraSel(new Set())
+      setEditingAnnot(null)
+    },
+    [history.commit, touch]
+  )
+
+  /** Align, distribute or restack the selected annotations. */
+  const arrangeSelected = (fn: (list: Annot[], ids: ReadonlySet<number>) => Annot[], order = false) => {
+    const ids = selectedIds
+    if (!order) ids.forEach(touch)
+    history.commit((list) => fn(list, ids))
+    if (order) setZDirty(true)
+  }
 
   const [linkDraft, setLinkDraft] = useState<{ page: number; rect: { x: number; y: number; w: number; h: number }; to: 'uri' | 'page'; uri: string; page1: string; id?: number } | null>(null)
   const editAnnot = useCallback(
@@ -934,7 +1002,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool === 'editimage' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool === 'editimage' || tool === 'addimage' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -1080,6 +1148,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         onMeta({ name: saved.name, path: saved.path })
         baseline.current = new Map() // the reloaded document is re-imported with fresh positions
         history.reset([])
+        setZDirty(false)
+        setExtraSel(new Set())
         setSelectedAnnot(null)
         setEditingAnnot(null)
         setSavedBytes(out)
@@ -1098,6 +1168,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const swapBytes = useCallback((next: Uint8Array) => {
     baseline.current = new Map()
     history.reset([])
+    setZDirty(false)
+    setExtraSel(new Set())
     setSelectedAnnot(null)
     setEditingAnnot(null)
     setBytes(next)
@@ -1127,6 +1199,33 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       }
     },
     [busy, saving, password, annotsDirty, bytes, annots, deleted, swapBytes] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  const runOptimise = async (o: OptimiseOptions) => {
+    setOptimising(false)
+    let before = 0
+    let summary = ''
+    await applyPageEdit(async (b) => {
+      before = b.length
+      const r = await optimise(b, o)
+      const parts = [r.images && `${r.images} picture${r.images === 1 ? '' : 's'} reduced`, r.thumbnails && `${r.thumbnails} thumbnail${r.thumbnails === 1 ? '' : 's'} removed`].filter(Boolean)
+      const pct = Math.round((1 - r.bytes.length / before) * 100)
+      summary = `Optimised: ${formatSize(before)} to ${formatSize(r.bytes.length)} (${pct >= 0 ? `${pct}% smaller` : `${-pct}% larger`})${parts.length ? `; ${parts.join(', ')}` : ''}`
+      return r.bytes
+    })
+    if (summary) setNotice({ kind: 'info', text: summary })
+  }
+
+  /** Click-to-place tools: Add image puts the picked picture on the page as content; the rest make annotations. */
+  const placeTool = useCallback(
+    async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound' | 'addimage', page: number, x: number, y: number) => {
+      if (kind !== 'addimage') return place(kind, page, x, y)
+      const img = pendingImage.current
+      pendingImage.current = null
+      setTool('select')
+      if (img) await applyPageEdit((b) => addImage(b, page, { x, y }, img), 'Image added')
+    },
+    [place, applyPageEdit]
   )
 
   // Bookmark edits come quicker than the document reloads: keep the latest tree and write it when free.
@@ -1728,7 +1827,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         else (history.canUndo || !pageUndo.length ? history.undo : undoPageEdit)()
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && !inField && selectedAnnot !== null) {
         e.preventDefault()
-        removeAnnot(selectedAnnot)
+        if (selIdsRef.current.size > 1) removeMany(selIdsRef.current)
+        else removeAnnot(selectedAnnot)
       } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault()
         openSearch()
@@ -1740,8 +1840,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         else if (printDialog) setPrintDialog(null)
         else if (searchOpen) setSearchOpen(false)
         else if (tool !== 'select') setTool('select')
-        else if (selectedAnnot !== null) setSelectedAnnot(null)
-        else viewer.current?.clearSelection()
+        else if (selectedAnnot !== null) {
+          setSelectedAnnot(null)
+          setExtraSel(new Set())
+        } else viewer.current?.clearSelection()
       } else if (ctrl && e.key.toLowerCase() === 'c' && !inField && viewer.current?.hasSelection()) {
         e.preventDefault()
         void viewer.current.copySelection()
@@ -1779,7 +1881,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, searchOpen, tool, selectedAnnot, openSearch, rotateView, openPrint, printDialog, present, readingMode, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
+  }, [active, searchOpen, tool, selectedAnnot, openSearch, rotateView, openPrint, printDialog, present, readingMode, stepMatch, stepZoom, save, removeAnnot, removeMany, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
 
   // ---- Page box -------------------------------------------------------------------------------------
   const [pageText, setPageText] = useState('1')
@@ -2090,7 +2192,36 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Text">
                 <RB big icon={TextCursorInput} label="Edit text" onClick={() => setTool(tool === 'edittext' ? 'select' : 'edittext')} pressed={tool === 'edittext'} disabled={!pages.length || busy || !!password} title="Click a line of text to change it (the text is redrawn in a matching standard font)" />
               </RGroup>
+              <RGroup label="Align">
+                <RStack>
+                  <RB icon={AlignHorizontalJustifyStart} label="Left" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'left' as AlignMode))} disabled={selectedIds.size < 2} title="Align the selected annotations to their left edge (Shift-click to select several)" />
+                  <RB icon={AlignHorizontalJustifyCenter} label="Centre" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'centre'))} disabled={selectedIds.size < 2} title="Centre the selected annotations horizontally" />
+                  <RB icon={AlignHorizontalJustifyEnd} label="Right" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'right'))} disabled={selectedIds.size < 2} title="Align to the right edge" />
+                </RStack>
+                <RStack>
+                  <RB icon={AlignVerticalJustifyStart} label="Top" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'top'))} disabled={selectedIds.size < 2} title="Align to the top edge" />
+                  <RB icon={AlignVerticalJustifyCenter} label="Middle" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'middle'))} disabled={selectedIds.size < 2} title="Centre vertically" />
+                  <RB icon={AlignVerticalJustifyEnd} label="Bottom" onClick={() => arrangeSelected((l, i) => alignAnnots(l, i, 'bottom'))} disabled={selectedIds.size < 2} title="Align to the bottom edge" />
+                </RStack>
+              </RGroup>
+              <RGroup label="Distribute">
+                <RStack>
+                  <RB icon={AlignHorizontalDistributeCenter} label="Across" onClick={() => arrangeSelected((l, i) => distributeAnnots(l, i, 'horizontal'))} disabled={selectedIds.size < 3} title="Space three or more selected annotations evenly across the page" />
+                  <RB icon={AlignVerticalDistributeCenter} label="Down" onClick={() => arrangeSelected((l, i) => distributeAnnots(l, i, 'vertical'))} disabled={selectedIds.size < 3} title="Space three or more selected annotations evenly down the page" />
+                </RStack>
+              </RGroup>
+              <RGroup label="Order">
+                <RStack>
+                  <RB icon={BringToFront} label="To front" onClick={() => arrangeSelected((l, i) => restack(l, i, 'front' as StackMode), true)} disabled={!selectedIds.size} title="Draw the selected annotations on top of the others" />
+                  <RB icon={ArrowUp} label="Forward" onClick={() => arrangeSelected((l, i) => restack(l, i, 'forward'), true)} disabled={!selectedIds.size} title="Move the selected annotations one step forward" />
+                </RStack>
+                <RStack>
+                  <RB icon={SendToBack} label="To back" onClick={() => arrangeSelected((l, i) => restack(l, i, 'back'), true)} disabled={!selectedIds.size} title="Draw the selected annotations behind the others" />
+                  <RB icon={ArrowDown} label="Backward" onClick={() => arrangeSelected((l, i) => restack(l, i, 'backward'), true)} disabled={!selectedIds.size} title="Move the selected annotations one step back" />
+                </RStack>
+              </RGroup>
               <RGroup label="Images">
+                <RB big icon={ImageIcon} label="Add image" onClick={() => void startAddImage()} pressed={tool === 'addimage'} disabled={!pages.length || busy || !!password} title="Choose a PNG or JPEG, then click the page to place it as page content" />
                 <RB big icon={ImageIcon} label="Edit image" onClick={() => setTool(tool === 'editimage' ? 'select' : 'editimage')} pressed={tool === 'editimage'} disabled={!pages.length || busy || !!password} title="Click a picture to move it, resize it, replace it or delete it" />
               </RGroup>
               <RGroup label="Edit">
@@ -2684,8 +2815,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}
+              extraSelected={extraSel}
               editingAnnot={editingAnnot}
-              onSelectAnnot={setSelectedAnnot}
+              onSelectAnnot={selectAnnot}
               onMoveAnnot={moveAnnot}
               onResizeAnnot={resizeAnnot}
               onEditAnnot={editAnnot}
@@ -2693,7 +2825,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onTouchAnnot={touch}
               epoch={epoch}
               onAnnotText={finishText}
-              onPlace={place}
+              onPlace={placeTool}
               drawStyle={{ color: colors[toolKind ?? 'line'], lineWidth: styleMap[toolKind ?? 'line']?.lineWidth ?? drawWidth }}
               onCreateShape={createShape}
               onReshapeAnnot={reshapeAnnot}

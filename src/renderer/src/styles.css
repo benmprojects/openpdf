@@ -1615,6 +1615,12 @@ button.compare-item:hover {
   flex-direction: column;
   gap: 8px;
 }
+.multi-sel {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
 .imageedit-layer {
   position: absolute;
   inset: 0;
