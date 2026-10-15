@@ -74,7 +74,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Fill AcroForms (text, checkbox, radio, combo, list; signature fields are shown but signing is Phase 6): Forms tab. Fields are real controls over the page (PDFium draws no widgets), values are written with pdf-lib on save, print and page edits
 - [ ] Form field designer (all field types), tab order, calculation and format scripts. Done: draw text, check box, radio, drop-down, list, button and signature fields; properties dialog; move, resize, rename and delete; tab order (rows, columns, field order with Earlier/Later); button actions (clear form, web address, send, script stored). Still to do: calculation and format scripts (with the JavaScript item)
 - [x] Flatten, reset, import and export form data (FDF, XFDF, CSV, XML): Forms tab (Clear form, Revert, Import, Export, Flatten)
-- [ ] Auto-detect form fields
+- [x] Auto-detect form fields (Forms > Detect fields: underscore and dotted blanks, rules, empty boxes and small squares, named from their labels; confirm in a dialog; tables start unticked)
 - [ ] JavaScript field actions (sandboxed)
 
 ## Phase 6: Security and signatures (P1)

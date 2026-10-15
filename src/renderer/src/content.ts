@@ -396,6 +396,14 @@ export interface PathDraw {
   bbox: { x0: number; y0: number; x1: number; y1: number }
   /** The path also sets a clip (W or W*), so cutting it out would change what is clipped. */
   clips: boolean
+  /** A single rectangle (`re`, or four or five corner points that form one), a single straight segment, or anything else. */
+  shape: 'rect' | 'line' | 'other'
+  stroked: boolean
+  filled: boolean
+  /** Fill colour in force (RGB, 0 to 1), or null when it was never set (black by default). */
+  fill: [number, number, number] | null
+  /** Line width in force, in user units before the transform. */
+  lineWidth: number
 }
 
 /**
@@ -404,34 +412,52 @@ export interface PathDraw {
  */
 export function pathDraws(ops: Op[]): PathDraw[] {
   let ctm: Matrix = IDENTITY
-  const stack: Matrix[] = []
+  let fill: [number, number, number] | null = null
+  let lineWidth = 1
+  const stack: { ctm: Matrix; fill: [number, number, number] | null; lineWidth: number }[] = []
   const out: PathDraw[] = []
   let first = -1
   let pts: [number, number][] = []
   let clips = false
+  let segments = 0
+  let rects = 0
+  let curves = false
   const reset = () => {
     first = -1
     pts = []
     clips = false
+    segments = 0
+    rects = 0
+    curves = false
   }
   ops.forEach((o, i) => {
     const n = nums(o)
-    if (o.op === 'q') stack.push(ctm)
-    else if (o.op === 'Q') ctm = stack.pop() ?? ctm
-    else if (o.op === 'cm') {
+    if (o.op === 'q') stack.push({ ctm, fill, lineWidth })
+    else if (o.op === 'Q') {
+      const top = stack.pop()
+      if (top) ({ ctm, fill, lineWidth } = top)
+    } else if (o.op === 'cm') {
       if (n.length === 6) ctm = mul(n as Matrix, ctm)
-    } else if (PATH_BUILD.has(o.op)) {
+    } else if (o.op === 'g' && n.length === 1) fill = [n[0], n[0], n[0]]
+    else if (o.op === 'rg' && n.length === 3) fill = [n[0], n[1], n[2]]
+    else if (o.op === 'k' && n.length === 4) fill = [(1 - n[0]) * (1 - n[3]), (1 - n[1]) * (1 - n[3]), (1 - n[2]) * (1 - n[3])]
+    else if (o.op === 'w' && n.length === 1) lineWidth = n[0]
+    else if (PATH_BUILD.has(o.op)) {
       if (first < 0) first = i
       if (o.op === 'W' || o.op === 'W*') clips = true
       if (o.op === 're' && n.length === 4) {
         const [x, y, w, h] = n
         pts.push([x, y], [x + w, y], [x, y + h], [x + w, y + h])
+        rects++
       } else if (o.op === 'm' || o.op === 'l') {
         if (n.length === 2) pts.push([n[0], n[1]])
+        if (o.op === 'l') segments++
       } else if (o.op === 'c') {
         for (let k = 0; k + 1 < n.length; k += 2) pts.push([n[k], n[k + 1]])
+        curves = true
       } else if (o.op === 'v' || o.op === 'y') {
         for (let k = 0; k + 1 < n.length; k += 2) pts.push([n[k], n[k + 1]])
+        curves = true
       }
     } else if (PATH_PAINT.has(o.op)) {
       if (first >= 0 && pts.length) {
@@ -441,7 +467,17 @@ export function pathDraws(ops: Op[]): PathDraw[] {
           xs.push(x * ctm[0] + y * ctm[2] + ctm[4])
           ys.push(x * ctm[1] + y * ctm[3] + ctm[5])
         }
-        out.push({ paint: i, first, ctm, bbox: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) }, clips })
+        // Rectangles drawn as four or five corners (m l l l [l] [h]) count too: every point on a corner of the bbox.
+        const bx0 = Math.min(...pts.map((p) => p[0]))
+        const bx1 = Math.max(...pts.map((p) => p[0]))
+        const by0 = Math.min(...pts.map((p) => p[1]))
+        const by1 = Math.max(...pts.map((p) => p[1]))
+        const onCorner = pts.every((p) => (Math.abs(p[0] - bx0) < 1e-6 || Math.abs(p[0] - bx1) < 1e-6) && (Math.abs(p[1] - by0) < 1e-6 || Math.abs(p[1] - by1) < 1e-6))
+        const polygonRect = !curves && rects === 0 && (segments === 3 || segments === 4) && pts.length === segments + 1 && onCorner && bx1 > bx0 && by1 > by0
+        const shape: PathDraw['shape'] = !curves && rects === 1 && segments === 0 ? 'rect' : polygonRect ? 'rect' : !curves && rects === 0 && segments === 1 && pts.length === 2 ? 'line' : 'other'
+        const stroked = ['S', 's', 'B', 'B*', 'b', 'b*'].includes(o.op)
+        const filled = ['f', 'F', 'f*', 'B', 'B*', 'b', 'b*'].includes(o.op)
+        out.push({ paint: i, first, ctm, bbox: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) }, clips, shape, stroked, filled, fill, lineWidth })
       }
       reset()
     } else if (o.op === 'n') reset()

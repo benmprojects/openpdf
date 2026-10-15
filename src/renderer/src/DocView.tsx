@@ -71,7 +71,9 @@ import { addImage, replaceImage, transformImage } from './imageEdit'
 import { transformPath } from './pathEdit'
 import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
 import { applyFormValues, flattenForm, readForm, type FieldType, type FormField, type FormValue } from './forms'
-import { addField, deleteField, moveInTabOrder, placeWidget, setTabOrder, updateField, type FieldPatch, type FieldSpec, type TabOrder } from './formDesign'
+import { detectInDocument, type Detected } from './formDetect'
+import { DetectDialog } from './DetectDialog'
+import { addField, addFields, deleteField, moveInTabOrder, placeWidget, setTabOrder, updateField, type FieldPatch, type FieldSpec, type TabOrder } from './formDesign'
 import { FieldDialog } from './FieldDialog'
 import { entriesFor, readDataFile, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataFormat } from './formData'
 import { DocPropsDialog } from './DocPropsDialog'
@@ -509,6 +511,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [fieldDraft, setFieldDraft] = useState<{ type: FieldType; page: number; rect: { x: number; y: number; w: number; h: number } } | null>(null)
   const [fieldEdit, setFieldEdit] = useState<string | null>(null)
   const [designSel, setDesignSel] = useState<{ name: string; widget: number } | null>(null)
+  /** Fields found on the pages, waiting for the user to choose which to create (null: not looking). */
+  const [detected, setDetected] = useState<Detected[] | null>(null)
   const formFieldsRef = useRef<FormField[]>([])
   formFieldsRef.current = formFields
   const setFormValue = useCallback((name: string, v: FormValue) => {
@@ -1368,6 +1372,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     await applyPageEdit((b) => addField(b, { ...spec, type: d.type, page: d.page, rect: d.rect }), 'Field added')
     setTool('formedit')
     setDesignSel({ name: spec.name, widget: 0 })
+  }
+  /** Look for places where fields belong (blanks, rules, boxes, squares) and ask which to create. */
+  const detectFormFields = async () => {
+    if (!client) return
+    setNotice({ kind: 'info', text: 'Looking for fields…' })
+    try {
+      const existing = formFields.flatMap((f) => f.widgets.filter((w) => w.page >= 0).map((w) => ({ name: f.name, page: w.page, rect: w.rect })))
+      setDetected(await detectInDocument(bytes, (p) => client.pageText(p), existing))
+      setNotice(null)
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not look for fields: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  const createDetected = async (chosen: Detected[]) => {
+    setDetected(null)
+    const specs: FieldSpec[] = chosen.map((d) => ({ type: d.type, name: d.name, page: d.page, rect: d.rect, border: null, background: null, tooltip: d.label || undefined }))
+    await applyPageEdit((b) => addFields(b, specs), `${specs.length} field${specs.length === 1 ? '' : 's'} added`)
   }
   const changeField = async (name: string, patch: FieldPatch) => {
     setFieldEdit(null)
@@ -2414,6 +2435,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
                 <RB big icon={PenLine} label="Signature" onClick={() => startField('signature')} pressed={tool === 'formfield' && fieldKind === 'signature'} disabled={!pages.length || busy || !!password} title="Draw a signature field" />
               </RGroup>
+              <RGroup label="Find fields">
+                <RB big icon={ScanSearch} label="Detect fields" onClick={() => void detectFormFields()} disabled={!pages.length || busy || !!password || !client} title="Find blanks, lines, boxes and squares on the pages and make them into fields" />
+              </RGroup>
               <RGroup label="Arrange fields">
                 <RB big icon={SquareDashedMousePointer} label="Edit fields" onClick={() => setTool(tool === 'formedit' ? 'select' : 'formedit')} pressed={tool === 'formedit'} disabled={!formFields.length || busy || !!password} title="Select, move, resize, rename or delete fields" />
                 <RStack>
@@ -2647,6 +2671,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         />
       )}
 
+      {detected && <DetectDialog found={detected} onApply={(c) => void createDetected(c)} onClose={() => setDetected(null)} />}
       {fieldDraft && <FieldDialog type={fieldDraft.type} names={formFields.map((f) => f.name)} proposedName={proposeName(fieldDraft.type)} onCreate={(s) => void createField(s)} onUpdate={() => {}} onClose={() => setFieldDraft(null)} />}
       {fieldEdit &&
         (() => {

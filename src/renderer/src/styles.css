@@ -2477,6 +2477,15 @@ button.compare-item:hover {
   text-overflow: ellipsis;
   pointer-events: none;
 }
+.detect-form {
+  min-width: 520px;
+}
+.detect-table {
+  width: 100%;
+}
+.detect-table input:not([type='checkbox']) {
+  width: 14em;
+}
 .ribbon-note {
   align-self: center;
   padding: 0 12px;

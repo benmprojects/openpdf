@@ -88,7 +88,17 @@ function common(field: PDFField, spec: FieldSpec): void {
 
 /** Adds a field (or, for a radio group that exists, one more button) to a page. Returns the new file. */
 export async function addField(bytes: Uint8Array, spec: FieldSpec): Promise<Uint8Array> {
+  return addFields(bytes, [spec])
+}
+
+/** Adds several fields in one go (one load and one save). */
+export async function addFields(bytes: Uint8Array, specs: FieldSpec[]): Promise<Uint8Array> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  for (const spec of specs) await addOne(doc, spec)
+  return doc.save({ updateFieldAppearances: false })
+}
+
+async function addOne(doc: PDFDocument, spec: FieldSpec): Promise<void> {
   const form = doc.getForm()
   const page = doc.getPage(spec.page)
   const names = form.getFields().map((f) => f.getName())
@@ -183,7 +193,6 @@ export async function addField(bytes: Uint8Array, spec: FieldSpec): Promise<Uint
     if (f instanceof PDFTextField || f instanceof PDFDropdown || f instanceof PDFOptionList || f instanceof PDFButton) f.updateAppearances(font2)
     else if (f instanceof PDFCheckBox || f instanceof PDFRadioGroup) f.updateAppearances()
   }
-  return doc.save({ updateFieldAppearances: false })
 }
 
 export interface FieldPatch {
