@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
 function createWindow(): void {
@@ -92,6 +93,88 @@ ipcMain.handle('file:save-many', async (e, files: { name: string; data: Uint8Arr
     written.push(target)
   }
   return { dir, written }
+})
+
+// ---- Printing ---------------------------------------------------------------------------------------
+// The renderer sends one PNG per page (rendered by PDFium at print resolution); they are spooled to a temporary
+// folder so neither process holds the whole document. A hidden window lays them out one per sheet and prints.
+const printJobs = new Map<string, { dir: string; sizes: { w: number; h: number }[] }>()
+
+ipcMain.handle('print:begin', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'openpdf-print-'))
+  const id = basename(dir)
+  printJobs.set(id, { dir, sizes: [] })
+  return id
+})
+
+ipcMain.handle('print:page', async (_e, id: string, n: number, png: Uint8Array, w: number, h: number) => {
+  const job = printJobs.get(id)
+  if (!job || !Number.isInteger(n) || n < 0) throw new Error('Unknown print job')
+  await writeFile(join(job.dir, `${n}.png`), png)
+  job.sizes[n] = { w, h }
+})
+
+async function endJob(id: string) {
+  const job = printJobs.get(id)
+  printJobs.delete(id)
+  if (job) await rm(job.dir, { recursive: true, force: true })
+}
+
+ipcMain.handle('print:cancel', (_e, id: string) => endJob(id))
+
+/** One sheet per page. Fit: scale to the printable area keeping proportions. Actual size: the page's own size in points. */
+function printHtml(sizes: { w: number; h: number }[], fit: boolean): string {
+  const sheets = sizes
+    .map((s, n) =>
+      fit
+        ? `<div class="sheet"><img src="${n}.png"></div>`
+        : `<div class="sheet"><img src="${n}.png" style="width:${s.w}pt;height:${s.h}pt;max-width:none;max-height:none"></div>`
+    )
+    .join('')
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+${fit ? '' : '@page { margin: 0 }'}
+html, body { margin: 0; padding: 0; background: #fff }
+.sheet { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; break-after: page }
+.sheet:last-child { break-after: auto }
+img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain }
+</style></head><body>${sheets}</body></html>`
+}
+
+ipcMain.handle('print:run', async (e, id: string, opts: { copies: number; fit: boolean; count: number }) => {
+  const job = printJobs.get(id)
+  if (!job) throw new Error('Unknown print job')
+  const parent = BrowserWindow.fromWebContents(e.sender) ?? undefined
+  const win = new BrowserWindow({
+    show: false,
+    parent,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false }
+  })
+  try {
+    const html = join(job.dir, 'print.html')
+    await writeFile(html, printHtml(job.sizes.slice(0, opts.count), opts.fit))
+    await win.loadFile(html) // resolves once the page and its images have loaded
+    const margins = { marginType: opts.fit ? ('printableArea' as const) : ('none' as const) }
+    // Test hook: write what would be printed to a PDF instead of showing the system print dialog.
+    if (e2e && process.env.OPENPDF_E2E_PRINT) {
+      const pdf = await win.webContents.printToPDF({
+        pageSize: 'A4',
+        // Inches. A quarter inch stands in for a printer's unprintable edge when fitting.
+        margins: opts.fit ? { top: 0.25, bottom: 0.25, left: 0.25, right: 0.25 } : { top: 0, bottom: 0, left: 0, right: 0 },
+        printBackground: true
+      })
+      await writeFile(process.env.OPENPDF_E2E_PRINT, pdf)
+      return { ok: true, pdfPath: process.env.OPENPDF_E2E_PRINT }
+    }
+    return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      win.webContents.print(
+        { silent: false, printBackground: true, copies: Math.max(1, Math.min(999, Math.round(opts.copies))), margins },
+        (ok, reason) => resolve(ok ? { ok } : { ok, error: reason === 'cancelled' ? undefined : reason })
+      )
+    })
+  } finally {
+    win.destroy()
+    await endJob(id)
+  }
 })
 
 // PDF paths passed on the command line (e.g. file association or `openpdf a.pdf b.pdf`).

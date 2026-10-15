@@ -11,6 +11,7 @@ import {
   isMarkup,
   type Annot
 } from './annotations'
+import { deltaToPage, type Rotation } from './viewRotation'
 
 interface Props {
   annots: Annot[]
@@ -28,6 +29,8 @@ interface Props {
   onResize: (id: number, w: number, h: number) => void
   onReshape: (id: number, index: number, dx: number, dy: number) => void
   pageSize: { width: number; height: number }
+  /** View rotation, so that drags on screen move things the right way in the page frame. */
+  rotation: Rotation
   onEdit: (id: number | null) => void
   onText: (id: number, text: string) => void
 }
@@ -45,6 +48,7 @@ export function AnnotLayer({
   onResize,
   onReshape,
   pageSize,
+  rotation,
   onEdit,
   onText
 }: Props) {
@@ -60,8 +64,7 @@ export function AnnotLayer({
     const sy = e.clientY
     let moved = false
     const move = (ev: MouseEvent) => {
-      const dx = ev.clientX - sx
-      const dy = ev.clientY - sy
+      const { dx, dy } = deltaToPage(rotation, ev.clientX - sx, ev.clientY - sy)
       if (!moved && Math.hypot(dx, dy) < 3) return
       if (!moved) onTouch(a.id)
       moved = true
@@ -72,8 +75,9 @@ export function AnnotLayer({
       window.removeEventListener('mouseup', up)
       setGesture(null)
       if (!moved) return
-      const dx = (ev.clientX - sx) / zoom
-      const dy = (ev.clientY - sy) / zoom
+      const d = deltaToPage(rotation, ev.clientX - sx, ev.clientY - sy)
+      const dx = d.dx / zoom
+      const dy = d.dy / zoom
       if (kind === 'move') onMove(a.id, dx, dy)
       else if (kind === 'reshape') onReshape(a.id, index ?? 0, dx, dy)
       else onResize(a.id, a.rects[0].w + dx, a.rects[0].h + dy)

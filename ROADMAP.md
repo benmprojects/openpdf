@@ -19,7 +19,8 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Open, tabs, drag and drop
 - [x] Password-protected files
 - [x] Zoom: fit width, fit page, presets, Ctrl+/-; continuous scroll
-- [ ] Marquee zoom, rotate view, single and two-page modes
+- [x] Rotate view (view only, per tab, Ctrl+Shift++ / Ctrl+Shift+-)
+- [ ] Marquee zoom, single and two-page modes
 - [x] Thumbnails, bookmarks/outline
 - [ ] Attachments, layers, page labels
 - [x] Text search (highlight all, whole word, match case, next/previous)
@@ -27,7 +28,8 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Text select and copy
 - [x] Hand and select tools
 - [ ] Snapshot tool
-- [ ] Print (page ranges, scaling, booklet, N-up), presentation/full-screen mode
+- [x] Print: page ranges, copies, fit or actual size, auto-rotate (output checked through the test hook; the system print dialog itself is not yet tested)
+- [ ] Booklet and N-up printing, presentation/full-screen mode
 - [ ] Read-aloud (system TTS), reading mode, accessibility (screen-reader, high contrast)
 - [ ] Rulers, grid, guides, measurement tools (distance, perimeter, area)
 

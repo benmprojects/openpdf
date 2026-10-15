@@ -24,8 +24,18 @@ import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, type Match } from './textLogic'
 import { useHistory } from './useHistory'
 import { PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
+import { printDocument } from './print'
+import { displayDims, turn, type Rotation } from './viewRotation'
 
 type ZoomMode = 'fit-width' | 'fit-page' | number
+
+interface PrintChoice {
+  range: 'all' | 'current' | 'custom'
+  custom: string
+  copies: number
+  fit: boolean
+  autoRotate: boolean
+}
 
 const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 8]
 const MIN_ZOOM = 0.1
@@ -83,6 +93,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [tool, setTool] = useState<Tool>('select')
 
   const [mode, setMode] = useState<ZoomMode>('fit-width')
+  // View-only rotation for this tab. It never touches the bytes, so it cannot mark the document unsaved.
+  const [rotation, setRotation] = useState<Rotation>(0)
+  const rotateView = useCallback((dir: 1 | -1) => setRotation((r) => turn(r, dir)), [])
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [currentPage, setCurrentPage] = useState(0)
   const [sidebar, setSidebar] = useState<SidebarTab | null>('pages')
@@ -117,12 +130,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const zoom = useMemo(() => {
     if (typeof mode === 'number') return mode
     if (!pages.length || !size.w) return 1
-    const maxW = Math.max(...pages.map((p) => p.width))
-    const maxH = Math.max(...pages.map((p) => p.height))
+    const shown = pages.map((p) => displayDims(p, rotation))
+    const maxW = Math.max(...shown.map((p) => p.width))
+    const maxH = Math.max(...shown.map((p) => p.height))
     const byWidth = (size.w - 2 * PAD) / maxW
     const z = mode === 'fit-width' ? byWidth : Math.min(byWidth, (size.h - 2 * PAD) / maxH)
     return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
-  }, [mode, pages, size])
+  }, [mode, pages, size, rotation])
 
   const stepZoom = useCallback(
     (dir: 1 | -1) => {
@@ -548,6 +562,49 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   /** Merge: append whole files to the end of this document. */
   const mergeFiles = () => void runPageOp({ kind: 'insert', at: pages.length }, [])
 
+  // ---- Print ----------------------------------------------------------------------------------------
+  const [printDialog, setPrintDialog] = useState<PrintChoice | null>(null)
+  const [printing, setPrinting] = useState<{ done: number; total: number; ctrl: AbortController } | null>(null)
+  const openPrint = useCallback(() => {
+    if (!pages.length || printing) return
+    setPrintDialog((d) => d ?? { range: 'all', custom: `1-${pages.length}`, copies: 1, fit: true, autoRotate: true })
+  }, [pages.length, printing])
+
+  const runPrint = async (c: PrintChoice) => {
+    let list: number[]
+    try {
+      list =
+        c.range === 'all' ? pages.map((_, i) => i) : c.range === 'current' ? [currentPage] : parsePageRanges(c.custom, pages.length)
+    } catch (e) {
+      setNotice({ kind: 'error', text: e instanceof Error ? e.message : String(e) })
+      return
+    }
+    setPrintDialog(null)
+    const ctrl = new AbortController()
+    setPrinting({ done: 0, total: list.length, ctrl })
+    try {
+      // Pending annotation edits are written into a copy first, so the printout matches what Save would write.
+      // PDFium then draws everything, including annotations, at print resolution.
+      let src = bytes
+      if (annotsDirty && password) setNotice({ kind: 'info', text: 'Unsaved annotation changes are not printed for password-protected PDFs.' })
+      else if (annotsDirty) src = await writeAnnotations(bytes, annots.filter(changed), deleted)
+      const res = await printDocument(
+        src,
+        password,
+        { pages: list, copies: c.copies, fit: c.fit, autoRotate: c.autoRotate },
+        (done, total) => setPrinting((p) => (p ? { ...p, done, total } : p)),
+        ctrl.signal
+      )
+      if (res.error) setNotice({ kind: 'error', text: `Could not print: ${res.error}` })
+      else if (res.pdfPath) setNotice({ kind: 'info', text: `Print output written to ${res.pdfPath}` })
+      else if (res.ok) setNotice({ kind: 'info', text: `Sent ${list.length} page${list.length === 1 ? '' : 's'} to the printer` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not print: ${e instanceof Error ? e.message : String(e)}` })
+    } finally {
+      setPrinting(null)
+    }
+  }
+
   // ---- Search ---------------------------------------------------------------------------------------
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -646,13 +703,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         e.preventDefault()
         stepMatch(e.shiftKey ? -1 : 1)
       } else if (e.key === 'Escape') {
-        if (searchOpen) setSearchOpen(false)
+        if (printDialog) setPrintDialog(null)
+        else if (searchOpen) setSearchOpen(false)
         else if (tool !== 'select') setTool('select')
         else if (selectedAnnot !== null) setSelectedAnnot(null)
         else viewer.current?.clearSelection()
       } else if (ctrl && e.key.toLowerCase() === 'c' && !inField && viewer.current?.hasSelection()) {
         e.preventDefault()
         void viewer.current.copySelection()
+      } else if (ctrl && e.shiftKey && (e.key === '+' || e.key === '=' || e.code === 'Equal' || e.code === 'NumpadAdd')) {
+        e.preventDefault()
+        rotateView(1)
+      } else if (ctrl && e.shiftKey && (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract')) {
+        e.preventDefault()
+        rotateView(-1)
+      } else if (ctrl && k === 'p') {
+        e.preventDefault()
+        openPrint()
       } else if (ctrl && (e.key === '=' || e.key === '+')) {
         e.preventDefault()
         stepZoom(1)
@@ -669,7 +736,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, searchOpen, tool, selectedAnnot, openSearch, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
+  }, [active, searchOpen, tool, selectedAnnot, openSearch, rotateView, openPrint, printDialog, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
 
   // ---- Page box -------------------------------------------------------------------------------------
   const [pageText, setPageText] = useState('1')
@@ -757,6 +824,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </span>
         <button onClick={() => stepZoom(1)} disabled={!pages.length} title="Zoom in (Ctrl++)" aria-label="Zoom in">
           +
+        </button>
+        <span className="sep" />
+        <button onClick={() => rotateView(-1)} disabled={!pages.length} title="Rotate view anticlockwise (Ctrl+Shift+−). The file is not changed" aria-label="Rotate view anticlockwise">
+          ⟲
+        </button>
+        <button onClick={() => rotateView(1)} disabled={!pages.length} title="Rotate view clockwise (Ctrl+Shift++). The file is not changed" aria-label="Rotate view clockwise">
+          ⟳
         </button>
         <span className="sep" />
         <button onClick={openSearch} disabled={!pages.length} aria-pressed={searchOpen} title="Find (Ctrl+F)">
@@ -864,6 +938,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         <button onClick={mergeFiles} disabled={!pages.length || busy} title="Merge: add the pages of other PDFs to the end">
           Merge…
         </button>
+        <button onClick={openPrint} disabled={!pages.length || !!printing} title="Print (Ctrl+P)">
+          Print…
+        </button>
         <span className="sep" />
         <button onClick={() => void save(false)} disabled={saving || !pages.length} title="Save (Ctrl+S)">
           {saving ? 'Saving…' : dirty ? 'Save •' : 'Save'}
@@ -920,6 +997,77 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           </span>
           <button className="close" onClick={() => setSearchOpen(false)} title="Close (Esc)" aria-label="Close find">
             ✕
+          </button>
+        </div>
+      )}
+
+      {printDialog && (
+        <form
+          className="page-dialog print-dialog"
+          aria-label="Print"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void runPrint(printDialog)
+          }}
+        >
+          <span className="muted">Print</span>
+          <select
+            aria-label="Pages to print"
+            value={printDialog.range}
+            onChange={(e) => setPrintDialog({ ...printDialog, range: e.target.value as PrintChoice['range'] })}
+          >
+            <option value="all">All pages</option>
+            <option value="current">Current page ({currentPage + 1})</option>
+            <option value="custom">Pages…</option>
+          </select>
+          {printDialog.range === 'custom' && (
+            <input
+              autoFocus
+              aria-label="Page range, for example 1-3, 5"
+              title="For example 1-3, 5"
+              value={printDialog.custom}
+              onChange={(e) => setPrintDialog({ ...printDialog, custom: e.target.value })}
+            />
+          )}
+          <label>
+            Copies
+            <input
+              type="number"
+              min={1}
+              max={999}
+              className="copies"
+              value={printDialog.copies}
+              onChange={(e) => setPrintDialog({ ...printDialog, copies: Math.max(1, Math.min(999, Number(e.target.value) || 1)) })}
+            />
+          </label>
+          <select
+            aria-label="Page scaling"
+            value={printDialog.fit ? 'fit' : 'actual'}
+            onChange={(e) => setPrintDialog({ ...printDialog, fit: e.target.value === 'fit' })}
+          >
+            <option value="fit">Fit to paper</option>
+            <option value="actual">Actual size</option>
+          </select>
+          <label title="Turn landscape pages so they fill portrait paper">
+            <input type="checkbox" checked={printDialog.autoRotate} onChange={(e) => setPrintDialog({ ...printDialog, autoRotate: e.target.checked })} />
+            Auto-rotate
+          </label>
+          <button className="primary" type="submit">
+            Print…
+          </button>
+          <button type="button" onClick={() => setPrintDialog(null)}>
+            Cancel
+          </button>
+        </form>
+      )}
+
+      {printing && (
+        <div className="page-dialog print-progress" role="status">
+          <span>
+            Preparing pages for printing: {printing.done} of {printing.total}
+          </span>
+          <button type="button" onClick={() => printing.ctrl.abort()}>
+            Cancel
           </button>
         </div>
       )}
@@ -990,6 +1138,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               client={client}
               pages={pages}
               zoom={zoom}
+              rotation={rotation}
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}

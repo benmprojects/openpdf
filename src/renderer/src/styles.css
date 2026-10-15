@@ -324,6 +324,13 @@ select:focus-visible {
 .page canvas {
   display: block;
 }
+/* The unrotated page frame; view rotation transforms this box. */
+.page-stack {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
 .hl-layer {
   position: absolute;
   inset: 0;
@@ -614,4 +621,17 @@ select:focus-visible {
   flex-direction: column;
   gap: 3px;
   font-size: 12px;
+}
+.print-dialog,
+.print-progress {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.print-dialog label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.print-dialog input.copies {
+  width: 4.5em;
 }

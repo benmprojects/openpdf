@@ -13,6 +13,7 @@ import {
   type Match,
   type Rect
 } from './textLogic'
+import { displayDims, stackTransform, toDisplay, toPage, type Rotation } from './viewRotation'
 
 /** Space around the page stack and between pages, in CSS pixels. */
 export const PAD = 16
@@ -67,6 +68,8 @@ interface Props {
   client: PdfClient
   pages: PageSize[]
   zoom: number
+  /** View-only rotation of every page; the file is not changed. */
+  rotation: Rotation
   tool: Tool
   annots: Annot[]
   selectedAnnot: number | null
@@ -101,6 +104,7 @@ export function Viewer({
   client,
   pages,
   zoom,
+  rotation,
   tool,
   annots,
   selectedAnnot,
@@ -150,10 +154,19 @@ export function Viewer({
     let y = PAD
     for (const p of pages) {
       tops.push(y)
-      y += Math.round(p.height * zoom) + GAP
+      y += Math.round(displayDims(p, rotation).height * zoom) + GAP
     }
     return tops
-  }, [pages, zoom])
+  }, [pages, zoom, rotation])
+
+  /** A screen point to page points on the given page element, undoing the view rotation. */
+  const pointOnPage = useCallback(
+    (el: HTMLElement, page: number, cx: number, cy: number) => {
+      const r = el.getBoundingClientRect()
+      return toPage(rotation, (cx - r.left) / zoom, (cy - r.top) / zoom, pages[page])
+    },
+    [rotation, zoom, pages]
+  )
 
   const pageAtDocY = useCallback(
     (y: number) => {
@@ -191,7 +204,7 @@ export function Viewer({
       el.scrollLeft = a.x * el.scrollWidth - el.clientWidth / 2
     }
     reportPage()
-  }, [zoom, reportPage])
+  }, [zoom, rotation, reportPage])
 
   useEffect(() => {
     const el = scroller.current
@@ -227,12 +240,12 @@ export function Viewer({
       const i = pageAtDocY(cy - sc.getBoundingClientRect().top + sc.scrollTop)
       const el = pageEls.current[i]
       if (!el) return null
-      const r = el.getBoundingClientRect()
+      const p = pointOnPage(el, i, cx, cy)
       const pt = await client.pageText(i)
-      const char = hitTest(pt.boxes, (cx - r.left) / zoom, (cy - r.top) / zoom)
+      const char = hitTest(pt.boxes, p.x, p.y)
       return char < 0 ? null : { page: i, char }
     },
-    [client, zoom, pageAtDocY]
+    [client, pointOnPage, pageAtDocY]
   )
 
   const onMouseDown = useCallback(
@@ -269,11 +282,8 @@ export function Viewer({
         const kind = tool
         const style = drawStyleRef.current
         const toPt = (cx: number, cy: number): Pt => {
-          const r = pageEl.getBoundingClientRect()
-          return {
-            x: Math.min(size.width, Math.max(0, (cx - r.left) / zoom)),
-            y: Math.min(size.height, Math.max(0, (cy - r.top) / zoom))
-          }
+          const p = pointOnPage(pageEl, pageIdx, cx, cy)
+          return { x: Math.min(size.width, Math.max(0, p.x)), y: Math.min(size.height, Math.max(0, p.y)) }
         }
         const start = toPt(e.clientX, e.clientY)
         const trail: Pt[] = [start]
@@ -315,9 +325,7 @@ export function Viewer({
       }
       if (tool === 'note' || tool === 'textbox' || tool === 'stamp') {
         e.preventDefault()
-        const r = pageEl.getBoundingClientRect()
-        const x = (e.clientX - r.left) / zoom
-        const y = (e.clientY - r.top) / zoom
+        const { x, y } = pointOnPage(pageEl, Number(pageEl.dataset.page), e.clientX, e.clientY)
         onPlace(tool, Number(pageEl.dataset.page), tool === 'note' ? x - NOTE_SIZE / 2 : x, tool === 'note' ? y - NOTE_SIZE / 2 : y)
         return
       }
@@ -351,17 +359,16 @@ export function Viewer({
         const sc = scroller.current
         if (!sc) return
         const i = pageAtDocY(ev.clientY - sc.getBoundingClientRect().top + sc.scrollTop)
-        const r = pageEls.current[i]?.getBoundingClientRect()
-        if (!r) return
-        const x = (ev.clientX - r.left) / zoom
-        const y = (ev.clientY - r.top) / zoom
+        const el = pageEls.current[i]
+        if (!el) return
+        const { x, y } = pointOnPage(el, i, ev.clientX, ev.clientY)
         const hit = [...annots].reverse().find((a) => a.page === i && isMarkup(a.kind) && a.rects.some((q) => pointInRect(q, x, y, 2)))
         onSelectAnnot(hit ? hit.id : null)
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, zoom, pages, pageAtDocY, onSelectAnnot, onPlace, onCreateShape]
+    [posAt, tool, annots, pages, pageAtDocY, pointOnPage, onSelectAnnot, onPlace, onCreateShape]
   )
 
   const ordered = useMemo(() => {
@@ -401,9 +408,13 @@ export function Viewer({
         const pt = await client.pageText(match.page)
         const r = rangeRects(pt.boxes, match.from, match.to)[0]
         if (!r) return
-        const top = offsets[match.page] + r.y * zoom
+        // The corner of the match nearest the displayed top left, whatever the view rotation.
+        const corners = [toDisplay(rotation, r.x, r.y, pages[match.page]), toDisplay(rotation, r.x + r.w, r.y + r.h, pages[match.page])]
+        const u = Math.min(corners[0].u, corners[1].u)
+        const v = Math.min(corners[0].v, corners[1].v)
+        const top = offsets[match.page] + v * zoom
         if (top < el.scrollTop + 40 || top > el.scrollTop + el.clientHeight - 80) el.scrollTop = top - el.clientHeight / 3
-        const left = pageEl.offsetLeft + r.x * zoom
+        const left = pageEl.offsetLeft + u * zoom
         if (left < el.scrollLeft + 20 || left > el.scrollLeft + el.clientWidth - 60) el.scrollLeft = left - el.clientWidth / 3
       },
       async copySelection() {
@@ -431,7 +442,7 @@ export function Viewer({
       hasSelection: () => selRef.current !== null,
       clearSelection: () => setSel(null)
     }),
-    [client, offsets, zoom, ordered]
+    [client, offsets, zoom, rotation, pages, ordered]
   )
 
   return (
@@ -444,6 +455,7 @@ export function Viewer({
             index={i}
             size={size}
             zoom={zoom}
+            rotation={rotation}
             annots={annotsByPage.get(i)}
             draft={draft && draft.page === i ? draft : undefined}
             epoch={epoch}
@@ -466,6 +478,7 @@ interface PageViewProps {
   index: number
   size: PageSize
   zoom: number
+  rotation: Rotation
   annots?: Annot[]
   draft?: Annot
   epoch: number
@@ -488,7 +501,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, epoch, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, epoch, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -496,6 +509,7 @@ function PageView({ client, index, size, zoom, epoch, annots, draft, annotProps,
 
   const cssW = Math.round(size.width * zoom)
   const cssH = Math.round(size.height * zoom)
+  const rotated = rotation === 90 || rotation === 270
 
   useEffect(() => {
     const el = holder.current
@@ -566,13 +580,16 @@ function PageView({ client, index, size, zoom, epoch, annots, draft, annotProps,
       }}
       data-page={index}
       className="page"
-      style={{ width: cssW, height: cssH, marginBottom: GAP }}
+      style={{ width: rotated ? cssH : cssW, height: rotated ? cssW : cssH, marginBottom: GAP }}
     >
+      {/* Everything below stays in the unrotated page frame; the view rotation turns the whole stack. */}
+      <div className="page-stack" style={{ width: cssW, height: cssH, transform: stackTransform(rotation, cssW, cssH) }}>
       <canvas ref={canvas} style={{ width: cssW, height: cssH }} />
       {(annots || draft) && (
         <AnnotLayer
           annots={draft ? [...(annots ?? []), draft] : annots!}
           pageSize={size}
+          rotation={rotation}
           onReshape={annotProps.onReshapeAnnot}
           zoom={zoom}
           interactive={annotProps.tool === 'select'}
@@ -592,6 +609,7 @@ function PageView({ client, index, size, zoom, epoch, annots, draft, annotProps,
           rects.map((r, k) => box(r, idx === currentMatch ? 'hl match current' : 'hl match', `m${idx}-${k}`))
         )}
         {selRects.map((r, k) => box(r, 'hl sel', `s${k}`))}
+      </div>
       </div>
     </div>
   )
