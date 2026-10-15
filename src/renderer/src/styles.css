@@ -2534,3 +2534,36 @@ button.compare-item:hover {
 .redact-mark:hover {
   background: rgba(211, 48, 43, 0.4);
 }
+
+/* Signatures panel */
+.sig-row {
+  border-left: 4px solid #6b7280;
+  padding: 4px 10px;
+  margin: 8px 0;
+}
+.sig-ok {
+  border-left-color: #1c8a3a;
+}
+.sig-warn {
+  border-left-color: #c77d00;
+}
+.sig-bad {
+  border-left-color: #d3302b;
+}
+.sig-row h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+}
+.sig-details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.sig-details dt {
+  color: var(--muted, #6b7280);
+}
+.sig-details dd {
+  margin: 0;
+}

@@ -87,6 +87,8 @@ export type Tool =
   | 'crop'
   /** Redaction: drag a box on a page to mark what is to be removed. */
   | 'redact'
+  /** Drag a box where a visible signature is to appear. */
+  | 'signbox'
   | 'edittext'
   | 'editimage'
   | 'editpath'
@@ -691,7 +693,7 @@ export function Viewer({
         setMeasureDraft({ kind: measureKind, page, points, cursor: null })
         return
       }
-      if (tool === 'snapshot' || tool === 'link' || tool === 'crop' || tool === 'redact' || tool === 'formfield') {
+      if (tool === 'snapshot' || tool === 'link' || tool === 'crop' || tool === 'redact' || tool === 'signbox' || tool === 'formfield') {
         const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
         if (!pageEl) return
         e.preventDefault()
@@ -711,7 +713,7 @@ export function Viewer({
           const y0 = Math.max(0, Math.min(a.y, b.y))
           const x1 = Math.min(size.width, Math.max(a.x, b.x))
           const y1 = Math.min(size.height, Math.max(a.y, b.y))
-          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : tool === 'crop' ? onCropRect : tool === 'redact' ? onRedactRect : tool === 'formfield' ? onFieldRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : tool === 'crop' ? onCropRect : tool === 'redact' || tool === 'signbox' ? onRedactRect : tool === 'formfield' ? onFieldRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
         }
         window.addEventListener('mousemove', move)
         window.addEventListener('mouseup', up)

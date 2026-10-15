@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, net, shell } from 'electron'
 import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -6,6 +6,7 @@ import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
 import { findFont } from './fonts'
 import { editMenuTemplate } from './spellMenu'
 import { copyEncryption, decryptPdf, encryptionInfo, encryptPdf, runQpdf } from './qpdf'
+import { chainStatus, listCertificates, pfxInfo, signCms, type SignSource } from './signing'
 import { addStamps, listStamps, removeStamp } from './stamps'
 import {
   addRecent,
@@ -327,6 +328,21 @@ ipcMain.handle('pdf:encrypt', (_e, data: Uint8Array, o: Parameters<typeof encryp
 ipcMain.handle('pdf:copy-encryption', (_e, plain: Uint8Array, original: Uint8Array, password: unknown) =>
   copyEncryption(new Uint8Array(plain), new Uint8Array(original), typeof password === 'string' ? password : '')
 )
+
+/** Digital signatures: the user's certificates, signing with one, and whether Windows trusts a signer. */
+ipcMain.handle('sign:certs', () => listCertificates())
+ipcMain.handle('sign:pfx-info', (_e, data: Uint8Array, password: unknown) => pfxInfo(new Uint8Array(data), typeof password === 'string' ? password : ''))
+ipcMain.handle('sign:cms', (_e, data: Uint8Array, source: SignSource) => {
+  if (!source || (source.kind !== 'store' && source.kind !== 'pfx')) throw new Error('Invalid certificate')
+  return signCms(new Uint8Array(data), source.kind === 'pfx' ? { kind: 'pfx', data: new Uint8Array(source.data), password: typeof source.password === 'string' ? source.password : '' } : source)
+})
+ipcMain.handle('sign:timestamp', async (_e, url: unknown, request: Uint8Array) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) throw new Error('The time-stamp server address must start with http:// or https://')
+  const res = await net.fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/timestamp-query' }, body: Buffer.from(request), signal: AbortSignal.timeout(20000) })
+  if (!res.ok) throw new Error(`The time-stamp server answered ${res.status}.`)
+  return new Uint8Array(await res.arrayBuffer())
+})
+ipcMain.handle('sign:chain', (_e, certs: Uint8Array[]) => chainStatus(Array.isArray(certs) ? certs.map((c) => new Uint8Array(c)) : []))
 
 /** An installed font matching a PDF font name, for redrawing edited text in the same typeface. */
 ipcMain.handle('font:find', async (_e, name: unknown, bold: unknown, italic: unknown) => {

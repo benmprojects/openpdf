@@ -3,6 +3,7 @@ import type { RecoveryEntry, Settings } from '../main/settings'
 import type { EncryptionInfo, EncryptOptions } from '../shared/pdfSecurity'
 import type { PrintLayout } from '../shared/printLayout'
 import type { ImageStamp } from '../main/stamps'
+import type { CertInfo, ChainResult, SignSource } from '../main/signing'
 
 export type { ImageStamp }
 
@@ -53,6 +54,16 @@ const api = {
   decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
   /** The file encrypted with new passwords and permissions. */
   encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** Certificates with a private key in the Windows personal store. */
+  signCertificates: (): Promise<CertInfo[]> => ipcRenderer.invoke('sign:certs'),
+  /** Describes the certificate in a .pfx file; rejects when the password is wrong. */
+  pfxInfo: (data: Uint8Array, password: string): Promise<CertInfo> => ipcRenderer.invoke('sign:pfx-info', data, password),
+  /** A detached CMS signature over `data`, made with a store certificate or a .pfx file. */
+  signCms: (data: Uint8Array, source: SignSource): Promise<Uint8Array> => ipcRenderer.invoke('sign:cms', data, source),
+  /** Sends a time-stamp request (DER) to a time-stamping server and returns its response. */
+  timestamp: (url: string, request: Uint8Array): Promise<Uint8Array> => ipcRenderer.invoke('sign:timestamp', url, request),
+  /** Whether Windows trusts the first of these DER certificates. */
+  chainStatus: (certs: Uint8Array[]): Promise<ChainResult> => ipcRenderer.invoke('sign:chain', certs),
   /** `plain` encrypted like `original` (same passwords and permissions). */
   copyEncryption: (plain: Uint8Array, original: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:copy-encryption', plain, original, password),
   /** An installed font file matching a PDF font name (Windows), or null. */

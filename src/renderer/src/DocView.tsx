@@ -53,6 +53,9 @@ import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from 
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, rangeRects, type Match } from './textLogic'
 import { SanitiseDialog } from './SanitiseDialog'
+import { SignDialog, type SignRequest } from './SignDialog'
+import { SignaturesDialog, signatureState, type SignatureRow } from './SignaturesDialog'
+import { addTimestamp, buildTimestampRequest, prepareSignature, readSignatures, verifySignature } from './sign'
 import { sanitise, scanHidden, type HiddenInfo } from './sanitise'
 import { redactPages, type RedactMark, type RedactReport } from './redact'
 import { useHistory } from './useHistory'
@@ -209,6 +212,7 @@ import {
   Trash2,
   Type,
   EyeOff,
+  FileSignature,
   ShieldAlert,
   TextSelect,
   Underline,
@@ -277,13 +281,14 @@ function mightBeEncrypted(data: Uint8Array): boolean {
   return look(data.subarray(0, 65536)) || (data.length > 65536 && look(data.subarray(data.length - 65536)))
 }
 
-type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'redact' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
+type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'redact' | 'sign' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
   ['home', 'Home'],
   ['edit', 'Edit'],
   ['forms', 'Forms'],
   ['redact', 'Redact'],
+  ['sign', 'Sign'],
   ['comment', 'Comment'],
   ['draw', 'Draw'],
   ['measure', 'Measure'],
@@ -1226,6 +1231,18 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const nextMark = useRef(1)
   const [redactConfirm, setRedactConfirm] = useState(false)
   const [hidden, setHidden] = useState<HiddenInfo | null>(null)
+  const [signOpen, setSignOpen] = useState(false)
+  const [sigPanel, setSigPanel] = useState(false)
+  const [sigRows, setSigRows] = useState<SignatureRow[]>([])
+  const [pendingSign, setPendingSign] = useState<SignRequest | null>(null)
+  /** Asking whether to go on with a change that would invalidate valid signatures. */
+  const [breakPrompt, setBreakPrompt] = useState<((ok: boolean) => void) | null>(null)
+  const validSigs = sigRows.filter((r) => r.check.intact && r.check.signatureValid).length
+  const validSigsRef = useRef(0)
+  const hadSigs = useRef(false)
+  hadSigs.current = sigRows.length > 0
+  validSigsRef.current = validSigs
+  const askBreak = () => new Promise<boolean>((resolve) => setBreakPrompt(() => resolve))
   const [linkDraft, setLinkDraft] = useState<{ page: number; rect: { x: number; y: number; w: number; h: number }; to: 'uri' | 'page'; uri: string; page1: string; id?: number } | null>(null)
   const editAnnot = useCallback(
     (id: number | null) => {
@@ -1275,7 +1292,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'redact' || tool === 'edittext' || tool === 'editimage' || tool === 'editpath' || tool === 'addimage' || tool === 'formfield' || tool === 'formedit' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'redact' || tool === 'signbox' || tool === 'edittext' || tool === 'editimage' || tool === 'editpath' || tool === 'addimage' || tool === 'formfield' || tool === 'formedit' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -1410,6 +1427,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setNotice({ kind: 'error', text: 'The owner of this document does not allow changes, so nothing was written. Enter the owner password to unlock it.' })
         return
       }
+      if (annotsDirty && validSigsRef.current > 0 && !(await askBreak())) return
       setSaving(true)
       try {
         const out = annotsDirty ? await applyEdits(bytes) : bytes
@@ -1454,12 +1472,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   /** Runs a structural edit. `fn` gets bytes with pending annotation edits already written in. */
   const applyPageEdit = useCallback(
-    async (fn: (base: Uint8Array) => Promise<Uint8Array | null>, done?: string) => {
+    async (fn: (base: Uint8Array) => Promise<Uint8Array | null>, done?: string, keepsSignatures = false) => {
       if (busy || saving) return
       if (locked) {
         setNotice({ kind: 'error', text: 'The owner of this document does not allow changes.' })
         return
       }
+      if (!keepsSignatures && validSigsRef.current > 0 && !(await askBreak())) return
       setBusy(true)
       try {
         const base = annotsDirty ? await applyEdits(bytes) : bytes
@@ -1806,6 +1825,72 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     void applyPageEdit((b) => cropPages(b, opPagesRef.current.includes(page) ? opPagesRef.current : [page], { rect }), 'Cropped')
   }
   const opPagesRef = useRef<number[]>([])
+
+  // ---- Signatures ------------------------------------------------------------------------------------
+  useEffect(() => {
+    let live = true
+    const needle = new TextEncoder().encode('/ByteRange')
+    const mayBeSigned = (() => {
+      outer: for (let i = 0; i + needle.length <= bytes.length; i++) {
+        if (bytes[i] !== 0x2f) continue
+        for (let k = 1; k < needle.length; k++) if (bytes[i + k] !== needle[k]) continue outer
+        return true
+      }
+      return false
+    })()
+    // A file rewritten after signing keeps its signature dictionary but compresses it, so a document that was signed stays listed.
+    if (!mayBeSigned && !hadSigs.current) {
+      setSigRows([])
+      return
+    }
+    void (async () => {
+      const infos = await readSignatures(bytes)
+      const end = (i: { byteRange: number[] }) => i.byteRange[2] + i.byteRange[3]
+      const rows: SignatureRow[] = []
+      for (const info of infos) rows.push({ info, check: await verifySignature(bytes, info), later: infos.some((o) => o !== info && end(o) > end(info)) })
+      if (!live) return
+      setSigRows(rows)
+      // Whether Windows trusts each signer takes a moment longer, so it follows.
+      const withChain = await Promise.all(rows.map(async (r) => ({ ...r, chain: await window.openpdf.chainStatus(r.check.certificates).catch(() => undefined) })))
+      if (live) setSigRows(withChain)
+    })().catch(() => live && setSigRows([]))
+    return () => {
+      live = false
+    }
+  }, [bytes])
+  useEffect(() => {
+    if (tool !== 'signbox') setPendingSign(null)
+  }, [tool])
+
+  const startSign = (r: SignRequest) => {
+    setSignOpen(false)
+    if (protection.kind !== 'none') return setNotice({ kind: 'error', text: 'This document is protected with a password. Remove the security (File > Security), then sign it.' })
+    if (r.visible) {
+      setPendingSign(r)
+      setTool('signbox')
+      setNotice({ kind: 'info', text: 'Drag a box on the page where the signature should appear.' })
+    } else void doSign(r)
+  }
+  const doSign = async (r: SignRequest, visible?: { page: number; rect: { x: number; y: number; w: number; h: number } }) => {
+    setTool('select')
+    setPendingSign(null)
+    await applyPageEdit(
+      async (base) => {
+        const prepared = await prepareSignature(base, { signerName: r.signerName, reason: r.reason || undefined, location: r.location || undefined, contact: r.contact || undefined, signedAt: new Date(), visible, certify: r.certify })
+        let cms = await window.openpdf.signCms(prepared.toSign, r.source)
+        if (r.tsaUrl) {
+          try {
+            cms = addTimestamp(cms, await window.openpdf.timestamp(r.tsaUrl, await buildTimestampRequest(cms)))
+          } catch (e) {
+            throw new Error(`The time-stamp could not be added, so the document was not signed (${e instanceof Error ? e.message : String(e)}).`, { cause: e })
+          }
+        }
+        return prepared.finish(cms)
+      },
+      'Signed. Save to write the signed file; changing it afterwards invalidates the signature.',
+      true
+    )
+  }
 
   // ---- Redaction -------------------------------------------------------------------------------------
   const addMarks = (list: RedactMark[]) => setRedactMarks((m) => [...m, ...list.map((x) => ({ ...x, id: nextMark.current++ }))])
@@ -2701,6 +2786,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
             </>
           )}
+          {ribbon === 'sign' && (
+            <RGroup label="Signatures">
+              <RB big icon={FileSignature} label="Sign document" onClick={() => setSignOpen(true)} disabled={!pages.length || busy || locked} title="Sign with a certificate from Windows or a certificate file" />
+              <RB big icon={ShieldCheck} label="Signatures" onClick={() => setSigPanel(true)} disabled={!pages.length} title="Check who signed this document and whether it has changed since" />
+            </RGroup>
+          )}
           {ribbon === 'layout' && (
             <>
               <RGroup label="Header and footer">
@@ -2845,6 +2936,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           </button>
         </div>
       )}
+      {sigRows.length > 0 && (
+        <div className={sigRows.some((r) => signatureState(r).level === 'bad') ? 'error banner' : 'info banner'} role="status">
+          {(() => {
+            const states = sigRows.map(signatureState)
+            const worst = states.find((x) => x.level === 'bad') ?? states.find((x) => x.level === 'warn')
+            const who = sigRows.map((r) => r.check.signer?.commonName ?? r.info.name ?? 'unknown').join(', ')
+            return worst ? `Signed by ${who}. ${worst.text}` : `Signed by ${who}. ${sigRows.length === 1 ? 'The signature is valid.' : 'All signatures are valid.'}`
+          })()}
+          <button type="button" onClick={() => setSigPanel(true)}>
+            Signature details…
+          </button>
+        </div>
+      )}
       {notice && (
         <div className={notice.kind === 'error' ? 'error banner' : 'info banner'} role={notice.kind === 'error' ? 'alert' : 'status'}>
           {notice.text}
@@ -2939,6 +3043,25 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             setNotice({ kind: 'info', text: 'Security removed. Save to write the unprotected file.' })
           }}
         />
+      )}
+      {signOpen && <SignDialog canCertify={sigRows.length === 0} onSign={startSign} onClose={() => setSignOpen(false)} />}
+      {sigPanel && <SignaturesDialog rows={sigRows} onClose={() => setSigPanel(false)} />}
+      {breakPrompt && (
+        <Modal title="This document is signed" onClose={() => { breakPrompt(false); setBreakPrompt(null) }}>
+          <div className="marks-form">
+            <p>
+              Making this change will invalidate {validSigs === 1 ? 'its signature' : `its ${validSigs} signatures`}: they will show that the document was changed after it was signed.
+            </p>
+            <div className="marks-actions">
+              <button type="button" onClick={() => { breakPrompt(false); setBreakPrompt(null) }}>
+                Cancel
+              </button>
+              <button className="primary" type="button" onClick={() => { breakPrompt(true); setBreakPrompt(null) }}>
+                Change anyway
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
       {hidden && (
         <SanitiseDialog
@@ -3357,7 +3480,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onGuides={setGuides}
               onErase={eraseInk}
               onCropRect={cropToRect}
-              onRedactRect={(page, rect) => addMarks([{ page, rect }])}
+              onRedactRect={(page, rect) => (tool === 'signbox' && pendingSign ? void doSign(pendingSign, { page, rect }) : addMarks([{ page, rect }]))}
               redactMarks={redactMarks}
               onUnmark={(id) => setRedactMarks((m) => m.filter((x) => x.id !== id))}
               onLinkRect={(page, rect) => setLinkDraft({ page, rect, to: 'uri', uri: 'https://', page1: String(Math.min(pages.length, page + 2)) })}
