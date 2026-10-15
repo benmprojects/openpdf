@@ -49,7 +49,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Properties panel (colour, fill, opacity, line width and style, font and size, author; Ctrl+E), tool defaults saved in Settings, named tool presets
 - [x] Edit annotations already in a file: highlight, underline, strikeout, note, text box (select, recolour, move, resize, edit text, delete; unedited ones are left byte-for-byte as they were)
 - [x] Edit annotations from other tools: arrows by /LE, dashed styles, callouts by /CL, measurements by /Measure (read with pdf-lib in the worker); anything else (other stamps, file attachments, sounds) can be moved, resized, deleted and commented on; reply threads. Links are in Phase 3
-- [ ] Attach file, sound and links; import and export FDF/XFDF
+- [x] Attach file and sound (WAV), links (follow, and add with the Link tool); import and export comments as XFDF and FDF
 - [ ] Review: compare annotation sets across files
 
 ## Phase 3: Page and document organisation (P0)

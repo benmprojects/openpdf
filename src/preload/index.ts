@@ -29,6 +29,9 @@ const api = {
   /** Save dialog for a text file; resolves to the written path, or null if cancelled. */
   saveText: (suggested: string, text: string, filter: { name: string; ext: string }): Promise<string | null> =>
     ipcRenderer.invoke('file:save-text', suggested, text, filter),
+  /** Save dialog for any bytes; resolves to the written path, or null if cancelled. */
+  saveData: (suggested: string, data: Uint8Array, filter: { name: string; ext: string }): Promise<string | null> =>
+    ipcRenderer.invoke('file:save-data', suggested, data, filter),
   listStamps: (): Promise<ImageStamp[]> => ipcRenderer.invoke('stamps:list'),
   /** Asks for PNG or JPEG files and copies them into the stamp library. */
   addStamps: (): Promise<{ added: number; refused: string[] }> => ipcRenderer.invoke('stamps:add'),

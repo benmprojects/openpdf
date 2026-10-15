@@ -48,6 +48,7 @@ import { Presentation } from './Presentation'
 import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
 import { CommentsPane } from './CommentsPane'
 import { commentsCsv, commentSummaryPdf } from './commentReport'
+import { fromFdf, fromNorms, fromXfdf, pageFrames, toFdf, toNorms, toXfdf } from './interchange'
 import { StampPicker, type StampChoice } from './StampPicker'
 import type { ImageStamp } from '../../preload'
 import { Reader, type ReaderState } from './readAloud'
@@ -78,6 +79,7 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  FileInput,
   Paperclip,
   Link2,
   SlidersHorizontal,
@@ -1248,6 +1250,35 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setNotice({ kind: 'error', text: `Could not summarise the comments: ${e instanceof Error ? e.message : String(e)}` })
     }
   }
+  /** Comments out as XFDF or FDF, in PDF page coordinates. */
+  const exportComments = async (format: 'xfdf' | 'fdf') => {
+    try {
+      const norms = toNorms(commentAnnots, await pageFrames(bytes))
+      const data = format === 'xfdf' ? new TextEncoder().encode(toXfdf(norms, name)) : toFdf(norms, name)
+      const saved = await window.openpdf.saveData(`${baseName}.${format}`, data, { name: format === 'xfdf' ? 'XFDF comments' : 'FDF comments', ext: format })
+      if (saved) setNotice({ kind: 'info', text: `Exported ${commentAnnots.length} comment${commentAnnots.length === 1 ? '' : 's'} to ${saved}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not export the comments: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  /** Comments in from an XFDF or FDF file: added as new annotations (undo removes them). */
+  const importComments = async () => {
+    const file = await window.openpdf.pickFile({ name: 'Comment files (XFDF, FDF)', ext: ['xfdf', 'fdf', 'xml'] })
+    if (!file) return
+    try {
+      const head = new TextDecoder('latin1').decode(file.data.subarray(0, 8))
+      const norms = head.startsWith('%FDF-') ? await fromFdf(file.data) : fromXfdf(new TextDecoder().decode(file.data))
+      const { annots: made, skipped } = fromNorms(norms, await pageFrames(bytes), () => nextAnnotId.current++)
+      const usable = made.filter((a) => a.page < pages.length)
+      history.commit((list) => [...list, ...usable])
+      setNotice({
+        kind: 'info',
+        text: `Imported ${usable.length} comment${usable.length === 1 ? '' : 's'} from ${file.name}${skipped + made.length - usable.length ? ` (${skipped + made.length - usable.length} could not be used)` : ''}`
+      })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not import the comments: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   const exportCommentsCsv = async () => {
     const saved = await window.openpdf.saveText(`${baseName} (comments).csv`, commentsCsv(annots, pageLabels), { name: 'CSV (comma separated)', ext: 'csv' })
     if (saved) setNotice({ kind: 'info', text: `Comments exported to ${saved}` })
@@ -1672,6 +1703,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Save} label="Save" badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
                 <RB big icon={SaveAll} label="Save as" onClick={() => void save(true)} disabled={saving || !pages.length} title="Save a copy (Ctrl+Shift+S)" />
                 <RB big icon={X} label="Close" onClick={onCloseDoc} title="Close this document (Ctrl+W)" />
+              </RGroup>
+              <RGroup label="Comments">
+                <RB big icon={FileInput} label="Import" onClick={() => void importComments()} disabled={!pages.length} title="Import comments from an XFDF or FDF file" />
+                <RStack>
+                  <RB icon={FileOutput} label="Export XFDF" onClick={() => void exportComments('xfdf')} disabled={!commentAnnots.length} title="Export the comments as XFDF (XML)" />
+                  <RB icon={FileOutput} label="Export FDF" onClick={() => void exportComments('fdf')} disabled={!commentAnnots.length} title="Export the comments as FDF" />
+                </RStack>
               </RGroup>
               <RGroup label="Output">
                 <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing} title="Print (Ctrl+P)" />
