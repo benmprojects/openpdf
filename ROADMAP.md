@@ -95,7 +95,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Batch processing and action wizard (watermark, OCR, optimise on folders) (File > Batch: ordered steps, saved actions, shareable action files; originals are never changed or overwritten)
 - [x] Command-line interface and scripting API (`OpenPDF --batch <action> --out <folder> ...`, action files as JSON, exit codes and a JSON report; the scripting surface is the action file, there is no embedded scripting language)
 - [x] Compare two documents (text and visual) (Organise > Compare: word-level changes with context and pages; page overlays with red for only-in-first and blue for only-in-second, and a check of every page)
-- [ ] Portfolios/packages, embedded files
+- [x] Portfolios/packages, embedded files (Attachments pane: add, save all, remove; Convert > Portfolio makes a package with a cover page and a /Collection entry; portfolios open on their file list)
 - [ ] 3D, multimedia and rich media playback (low priority)
 - [ ] Plugin API and extension store
 - [ ] Optional cloud connectors (OneDrive, SharePoint, Google Drive)

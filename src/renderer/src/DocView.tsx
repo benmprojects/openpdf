@@ -53,6 +53,8 @@ import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from 
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
 import { BatchDialog } from './BatchDialog'
+import { PortfolioDialog } from './PortfolioDialog'
+import { createPortfolio, embedFiles, isPortfolio, removeEmbedded } from './portfolio'
 import { CompareDocsDialog } from './CompareDocsDialog'
 import { CreateDialog, type CreateRequest } from './CreateDialog'
 import { imagesToPdf, textToPdf } from './createPdf'
@@ -473,6 +475,26 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setNotice({ kind: 'error', text: `Could not save the attachment: ${e instanceof Error ? e.message : String(e)}` })
     }
   }
+  const [portfolioFiles, setPortfolioFiles] = useState<{ name: string; data: Uint8Array }[] | null>(null)
+  const addAttachments = async () => {
+    const files = await window.openpdf.pickFiles()
+    if (files.length) await applyPageEdit((b) => embedFiles(b, files.map((f) => ({ name: f.name, data: f.data, modified: new Date() }))), `Attached ${files.length} file${files.length === 1 ? '' : 's'} to the document`)
+  }
+  const removeAttachment = (a: AttachmentInfo) =>
+    void applyPageEdit(async (b) => {
+      const r = await removeEmbedded(b, a.index, a.name)
+      return r.removed ? r.bytes : null
+    }, `Removed ${a.name}`)
+  const saveAllAttachments = async () => {
+    try {
+      const files: { name: string; data: Uint8Array }[] = []
+      for (const a of attachments) files.push({ name: a.name, data: await clientRef.current!.attachmentData(a.index, a.page) })
+      const saved = await window.openpdf.saveFiles(files)
+      if (saved) setNotice({ kind: 'info', text: `Saved ${files.length} file${files.length === 1 ? '' : 's'} in ${saved.dir}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not save the files: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   const [pageLabels, setPageLabels] = useState<string[] | null>(null)
   const [labelRanges, setLabelRanges] = useState<LabelRange[] | null>(null)
   const [optimising, setOptimising] = useState(false)
@@ -830,6 +852,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }, [])
   const [lastMarkup, setLastMarkup] = useState<AnnotKind>('highlight')
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
+  // A portfolio opens on its list of files.
+  useEffect(() => {
+    void isPortfolio(data)
+      .then((p) => {
+        if (!p) return
+        setSidebar('attachments')
+        setNotice({ kind: 'info', text: 'This PDF is a portfolio: its files are in the Attachments pane.' })
+      })
+      .catch(() => undefined)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [saving, setSaving] = useState(false)
   const nextAnnotId = useRef(1)
   const annotsRef = useRef(annots)
@@ -3026,6 +3058,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RB big icon={ImageIcon} label="From pictures" onClick={() => void pickToCreate('images')} disabled={busy} title="Make a PDF from PNG, JPEG, GIF, BMP, WebP or TIFF pictures, one per page" />
               <RB big icon={FileText} label="From text" onClick={() => void pickToCreate('text')} disabled={busy} title="Make a PDF from a plain text file" />
               <RB big icon={Globe} label="From web page" onClick={() => void makeNew('Could not convert the web page', () => window.openpdf.htmlToPdf())} disabled={busy} title="Make a PDF from a saved .html file (scripts and network access are off)" />
+              <RB big icon={Paperclip} label="Portfolio" onClick={() => void window.openpdf.pickFiles().then((f) => f.length && setPortfolioFiles(f))} disabled={busy} title="Package several files of any kind in one PDF portfolio" />
               <RB big icon={FileInput} label="From Office file" onClick={() => void makeNew('Could not convert the file', () => window.openpdf.officeToPdf())} disabled={busy} title={officeReady ? 'Make a PDF from a Word, Excel or PowerPoint file (uses LibreOffice)' : 'Needs LibreOffice, which is not installed'} />
               <RB big icon={ClipboardPaste} label="From clipboard" onClick={() => void fromPicture('Could not create the PDF', () => window.openpdf.clipboardImage(), 'Clipboard.pdf', 'There is no picture on the clipboard.')} disabled={busy} title="Make a PDF from the picture on the clipboard" />
               <RB big icon={Camera} label="Screenshot" onClick={() => void fromPicture('Could not take the screenshot', () => window.openpdf.screenshot(), `Screenshot ${today()}.pdf`, 'The screen could not be captured.')} disabled={busy} title="Make a PDF from a picture of the whole screen" />
@@ -3292,6 +3325,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       )}
       {scanOpen && <ScanDialog onScan={runScan} onClose={() => setScanOpen(false)} />}
       {ocrOpen && <OcrDialog pageCount={pages.length} currentPage={currentPage} onRun={(r) => void runOcr(r)} onClose={() => setOcrOpen(false)} />}
+      {portfolioFiles && (
+        <PortfolioDialog
+          files={portfolioFiles.map((f) => f.name)}
+          onClose={() => setPortfolioFiles(null)}
+          onCreate={(title, cover) => {
+            const files = portfolioFiles
+            setPortfolioFiles(null)
+            void makeNew('Could not create the portfolio', async () => ({ name: `${title}.pdf`, data: await createPortfolio(files.map((f) => ({ name: f.name, data: f.data })), { title, cover }) }))
+          }}
+        />
+      )}
       {compareOpen && client && <CompareDocsDialog current={{ name, client, pages }} onClose={() => setCompareOpen(false)} />}
       {batchOpen && <BatchDialog onClose={() => setBatchOpen(false)} />}
       {exportImagesOpen && <ExportImagesDialog pageCount={pages.length} currentPage={currentPage} onExport={(r) => void runExportImages(r)} onClose={() => setExportImagesOpen(false)} />}
@@ -3679,6 +3723,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 labels={pageLabels}
                 attachments={attachments}
                 onSaveAttachment={(a) => void saveAttachment(a)}
+                onAddAttachments={locked ? undefined : () => void addAttachments()}
+                onRemoveAttachment={locked ? undefined : removeAttachment}
+                onSaveAllAttachments={() => void saveAllAttachments()}
                 layers={layers}
                 isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
                 onToggleLayer={toggleLayer}

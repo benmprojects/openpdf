@@ -16,6 +16,7 @@ import {
   Paperclip,
   PencilLine,
   Trash2,
+  X,
   type LucideIcon
 } from 'lucide-react'
 import { indentAt, insertAfter, moveAt, nodeAt, outdentAt, removeAt, updateAt, type BookmarkNode, type Path } from './outlineEdit'
@@ -58,6 +59,10 @@ interface Props {
   labels: string[] | null
   attachments: AttachmentInfo[]
   onSaveAttachment: (a: AttachmentInfo) => void
+  /** Adding and removing files in the document, and saving them all; left out when the document cannot be changed. */
+  onAddAttachments?: () => void
+  onRemoveAttachment?: (a: AttachmentInfo) => void
+  onSaveAllAttachments?: () => void
   layers: Layer[]
   isLayerVisible: (key: string) => boolean
   onToggleLayer: (key: string) => void
@@ -103,7 +108,7 @@ export function Sidebar(props: Props) {
       ) : tab === 'comments' ? (
         props.comments
       ) : tab === 'attachments' ? (
-        <Attachments list={props.attachments} onSave={props.onSaveAttachment} />
+        <Attachments list={props.attachments} onSave={props.onSaveAttachment} onAdd={props.onAddAttachments} onRemove={props.onRemoveAttachment} onSaveAll={props.onSaveAllAttachments} />
       ) : (
         <LayerList layers={props.layers} isVisible={props.isLayerVisible} onToggle={props.onToggleLayer} />
       )}
@@ -118,28 +123,52 @@ function formatSize(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-function Attachments({ list, onSave }: { list: AttachmentInfo[]; onSave: (a: AttachmentInfo) => void }) {
-  if (!list.length) return <div className="side-empty">This document has no attached files.</div>
+function Attachments({ list, onSave, onAdd, onRemove, onSaveAll }: { list: AttachmentInfo[]; onSave: (a: AttachmentInfo) => void; onAdd?: () => void; onRemove?: (a: AttachmentInfo) => void; onSaveAll?: () => void }) {
   return (
-    <ul className="side-list" aria-label="Attached files">
-      {list.map((a) => (
-        <li key={`${a.page ?? 'doc'}-${a.index}`}>
-          <FileIcon className="side-list-icon" size={18} strokeWidth={1.6} aria-hidden />
-          <span className="side-list-text">
-            <span className="side-list-name" title={a.name}>
-              {a.name}
-            </span>
-            <span className="muted small">
-              {formatSize(a.size)}
-              {a.page !== undefined ? ` · on page ${a.page + 1}` : ''}
-            </span>
-          </span>
-          <button className="icon-btn" onClick={() => onSave(a)} aria-label={`Save ${a.name}`} title="Save a copy of this file…">
-            <Download size={16} strokeWidth={1.8} aria-hidden />
-          </button>
-        </li>
-      ))}
-    </ul>
+    <>
+      {(onAdd || onSaveAll) && (
+        <div className="side-toolbar">
+          {onAdd && (
+            <button type="button" onClick={onAdd}>
+              Add files…
+            </button>
+          )}
+          {onSaveAll && (
+            <button type="button" onClick={onSaveAll} disabled={!list.length}>
+              Save all…
+            </button>
+          )}
+        </div>
+      )}
+      {!list.length ? (
+        <div className="side-empty">This document has no attached files.</div>
+      ) : (
+        <ul className="side-list" aria-label="Attached files">
+          {list.map((a) => (
+            <li key={`${a.page ?? 'doc'}-${a.index}`}>
+              <FileIcon className="side-list-icon" size={18} strokeWidth={1.6} aria-hidden />
+              <span className="side-list-text">
+                <span className="side-list-name" title={a.name}>
+                  {a.name}
+                </span>
+                <span className="muted small">
+                  {formatSize(a.size)}
+                  {a.page !== undefined ? ` · on page ${a.page + 1}` : ''}
+                </span>
+              </span>
+              <button className="icon-btn" onClick={() => onSave(a)} aria-label={`Save ${a.name}`} title="Save a copy of this file…">
+                <Download size={16} strokeWidth={1.8} aria-hidden />
+              </button>
+              {onRemove && a.page === undefined && (
+                <button className="icon-btn" onClick={() => onRemove(a)} aria-label={`Remove ${a.name}`} title="Remove this file from the document">
+                  <X size={16} strokeWidth={1.8} aria-hidden />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   )
 }
 
