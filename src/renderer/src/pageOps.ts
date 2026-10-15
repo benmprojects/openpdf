@@ -92,3 +92,87 @@ export function parsePageRanges(text: string, pageCount: number): number[] {
   if (!out.size) throw new Error('Enter at least one page.')
   return sorted([...out])
 }
+
+/** Inserts copies of `pages` straight after the last of them. */
+export async function duplicatePages(bytes: Uint8Array, pages: number[]): Promise<Uint8Array> {
+  const doc = await load(bytes)
+  const idx = sorted(pages)
+  const copies = await doc.copyPages(doc, idx)
+  const at = idx[idx.length - 1] + 1
+  copies.forEach((p, k) => doc.insertPage(at + k, p))
+  return doc.save()
+}
+
+/** Replaces `pages` with pages of `other` (all of them, or `otherPages`), placed where the first replaced page was. */
+export async function replacePages(bytes: Uint8Array, pages: number[], other: Uint8Array, otherPages?: number[]): Promise<Uint8Array> {
+  const doc = await load(bytes)
+  const src = await load(other)
+  const gone = sorted(pages)
+  const copied = await doc.copyPages(src, otherPages ? sorted(otherPages) : src.getPageIndices())
+  if (!copied.length) throw new Error('There are no pages to put in.')
+  for (const i of [...gone].reverse()) doc.removePage(i)
+  copied.forEach((p, k) => doc.insertPage(gone[0] + k, p))
+  return doc.save()
+}
+
+export interface Part {
+  first: number
+  last: number
+  title?: string
+  bytes: Uint8Array
+}
+
+/** One file per range (1-based, inclusive). */
+export async function splitByRanges(bytes: Uint8Array, ranges: { first: number; last: number; title?: string }[]): Promise<Part[]> {
+  const src = await load(bytes)
+  const parts: Part[] = []
+  for (const r of ranges) {
+    const out = await PDFDocument.create()
+    ;(await out.copyPages(src, Array.from({ length: r.last - r.first + 1 }, (_, k) => r.first - 1 + k))).forEach((p) => out.addPage(p))
+    parts.push({ ...r, bytes: await out.save() })
+  }
+  return parts
+}
+
+/**
+ * Page ranges from the top-level bookmarks: each runs from its bookmark's page to the page before the next.
+ * Pages before the first bookmark form their own range.
+ */
+export function bookmarkRanges(top: { title: string; page: number }[], pageCount: number): { first: number; last: number; title?: string }[] {
+  const marks = top
+    .filter((b) => b.page >= 0 && b.page < pageCount)
+    .sort((a, b) => a.page - b.page)
+    .filter((b, i, all) => i === 0 || b.page !== all[i - 1].page)
+  if (!marks.length) return [{ first: 1, last: pageCount }]
+  const out: { first: number; last: number; title?: string }[] = []
+  if (marks[0].page > 0) out.push({ first: 1, last: marks[0].page })
+  marks.forEach((b, i) => out.push({ first: b.page + 1, last: i + 1 < marks.length ? marks[i + 1].page : pageCount, title: b.title }))
+  return out
+}
+
+/** Consecutive files each at most about `maxBytes` (a single page bigger than that gets a file of its own). */
+export async function splitBySize(bytes: Uint8Array, maxBytes: number): Promise<Part[]> {
+  const src = await load(bytes)
+  const n = src.getPageCount()
+  const build = async (first: number, last: number) => {
+    const out = await PDFDocument.create()
+    ;(await out.copyPages(src, Array.from({ length: last - first + 1 }, (_, k) => first + k))).forEach((p) => out.addPage(p))
+    return out.save()
+  }
+  const parts: Part[] = []
+  let start = 0
+  while (start < n) {
+    let end = start
+    let best = await build(start, start)
+    // Grow the part a page at a time while it still fits.
+    while (end + 1 < n) {
+      const next = await build(start, end + 1)
+      if (next.length > maxBytes) break
+      end++
+      best = next
+    }
+    parts.push({ first: start + 1, last: end + 1, bytes: best })
+    start = end + 1
+  }
+  return parts
+}

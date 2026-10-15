@@ -32,7 +32,23 @@ import {
   type Pt
 } from './annotations'
 import { writeAnnotations, type DeletedAnnot } from './annotWrite'
-import { deletePages, extractPages, insertPagesFrom, movePages, parsePageRanges, rotatePages, splitEvery } from './pageOps'
+import {
+  bookmarkRanges,
+  deletePages,
+  duplicatePages,
+  extractPages,
+  insertPagesFrom,
+  movePages,
+  parsePageRanges,
+  replacePages,
+  rotatePages,
+  splitByRanges,
+  splitBySize,
+  splitEvery,
+  type Part
+} from './pageOps'
+import { getPageClip, onPageClip, setPageClip } from './pageClipboard'
+import { PDFDocument } from 'pdf-lib'
 import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, type Match } from './textLogic'
@@ -80,6 +96,8 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  ClipboardPaste,
+  CopyPlus,
   GitCompare,
   FileInput,
   Paperclip,
@@ -238,7 +256,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [savedBytes, setSavedBytes] = useState(() => (recovered ? new Uint8Array(0) : data))
   const [pageUndo, setPageUndo] = useState<Uint8Array[]>([])
   const [pageRedo, setPageRedo] = useState<Uint8Array[]>([])
-  const [pageDialog, setPageDialog] = useState<{ kind: 'extract' | 'split'; pages: number[] } | null>(null)
+  const [pageDialog, setPageDialog] = useState<
+    | { kind: 'extract'; pages: number[] }
+    | { kind: 'split'; pages: number[]; mode: 'count' | 'bookmarks' | 'size' }
+    | { kind: 'replace'; pages: number[]; other: { name: string; data: Uint8Array }; otherCount: number; theirs: string }
+    | null
+  >(null)
   const [dialogText, setDialogText] = useState('')
   const [busy, setBusy] = useState(false)
   const [client, setClient] = useState<PdfClient | null>(null)
@@ -1083,12 +1106,41 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }).then(() => total && setNotice({ kind: 'info', text: `Inserted ${total} page${total === 1 ? '' : 's'}` }))
         }
         case 'extract':
+          setDialogText(compactRanges(selection))
+          setPageDialog({ kind: 'extract', pages: selection })
+          return
         case 'split':
-          setDialogText(op.kind === 'split' ? '1' : compactRanges(selection))
-          setPageDialog({ kind: op.kind, pages: selection })
+          setDialogText('1')
+          setPageDialog({ kind: 'split', pages: selection, mode: 'count' })
+          return
+        case 'copy': {
+          const src = annotsDirty ? await applyEdits(bytes) : bytes
+          setPageClip({ bytes: await extractPages(src, selection), count: selection.length, from: name })
+          return setNotice({ kind: 'info', text: `Copied ${count}. Paste them into any open document with Ctrl+V in its page thumbnails.` })
+        }
+        case 'paste': {
+          const clip = getPageClip()
+          if (!clip) return
+          return applyPageEdit(async (b) => (await insertPagesFrom(b, clip.bytes, Math.min(op.at, n))).bytes, `Pasted ${clip.count} page${clip.count === 1 ? '' : 's'}`)
+        }
+        case 'duplicate':
+          return applyPageEdit((b) => duplicatePages(b, selection), `Duplicated ${count}`)
+        case 'replace': {
+          const file = await window.openpdf.pickFile({ name: 'PDF documents', ext: ['pdf'] })
+          if (!file) return
+          let otherCount: number
+          try {
+            otherCount = (await PDFDocument.load(file.data, { updateMetadata: false, ignoreEncryption: true })).getPageCount()
+          } catch {
+            return setNotice({ kind: 'error', text: `${file.name} could not be read as a PDF.` })
+          }
+          setDialogText(compactRanges(selection))
+          setPageDialog({ kind: 'replace', pages: selection, other: file, otherCount, theirs: `1-${Math.min(otherCount, selection.length)}` })
+          return
+        }
       }
     },
-    [pages.length, applyPageEdit]
+    [pages.length, applyPageEdit, annotsDirty, bytes, name] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   const submitPageDialog = async () => {
@@ -1101,12 +1153,31 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         const out = await extractPages(src, idx)
         const saved = await window.openpdf.saveFileAs(`${baseName} (extract).pdf`, out)
         if (saved) setNotice({ kind: 'info', text: `Extracted ${idx.length} page${idx.length === 1 ? '' : 's'} to ${saved.name}` })
+      } else if (d.kind === 'replace') {
+        const mine = parsePageRanges(dialogText, pages.length)
+        const theirs = parsePageRanges(d.theirs, d.otherCount)
+        setPageDialog(null)
+        await applyPageEdit((b) => replacePages(b, mine, d.other.data, theirs), `Replaced ${mine.length} page${mine.length === 1 ? '' : 's'} with ${theirs.length} from ${d.other.name}`)
+        return
       } else {
-        const size = parseInt(dialogText, 10)
-        if (!Number.isFinite(size) || size < 1) throw new Error('Enter a whole number of pages per file, 1 or more.')
-        const parts = await splitEvery(src, size)
+        let parts: Part[]
+        if (d.mode === 'count') {
+          const size = parseInt(dialogText, 10)
+          if (!Number.isFinite(size) || size < 1) throw new Error('Enter a whole number of pages per file, 1 or more.')
+          parts = await splitEvery(src, size)
+        } else if (d.mode === 'size') {
+          const mb = parseFloat(dialogText.replace(',', '.'))
+          if (!(mb > 0)) throw new Error('Enter the largest file size in MB, for example 5.')
+          parts = await splitBySize(src, mb * 1024 * 1024)
+        } else {
+          if (!outline?.length) throw new Error('This document has no bookmarks to split by.')
+          parts = await splitByRanges(src, bookmarkRanges(outline, pages.length))
+        }
+        // Characters Windows does not allow in file names, including control characters.
+        // eslint-disable-next-line no-control-regex
+        const safe = (t: string) => t.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim().slice(0, 80)
         const res = await window.openpdf.saveMany(
-          parts.map((p) => ({ name: `${baseName} (pages ${p.first}-${p.last}).pdf`, data: p.bytes }))
+          parts.map((p) => ({ name: p.title ? `${baseName} - ${safe(p.title)}.pdf` : `${baseName} (pages ${p.first}-${p.last}).pdf`, data: p.bytes }))
         )
         if (res) setNotice({ kind: 'info', text: `Wrote ${res.written.length} files to ${res.dir}` })
       }
@@ -1165,6 +1236,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const GRID_MM = [5, 10, 20, 50]
 
   const commentAnnots = useMemo(() => annots.filter((a) => a.kind !== 'link'), [annots])
+
+  const [hasPageClip, setHasPageClip] = useState(() => getPageClip() !== null)
+  useEffect(() => onPageClip(() => setHasPageClip(getPageClip() !== null)), [])
 
   // ---- Links ----------------------------------------------------------------------------------------
   const [linkDraft, setLinkDraft] = useState<{ page: number; rect: { x: number; y: number; w: number; h: number }; to: 'uri' | 'page'; uri: string; page1: string } | null>(null)
@@ -1854,6 +1928,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
                 <RB big icon={Trash2} label="Delete" onClick={() => void runPageOp({ kind: 'delete' }, opPages)} disabled={!pages.length || busy || opPages.length >= pages.length} title="Delete the selected pages" />
               </RGroup>
+              <RGroup label="Copy">
+                <RStack>
+                  <RB icon={Copy} label="Copy pages" onClick={() => void runPageOp({ kind: 'copy' }, opPages)} disabled={!pages.length || busy} title="Copy the selected pages (Ctrl+C in the thumbnails)" />
+                  <RB icon={ClipboardPaste} label="Paste pages" onClick={() => void runPageOp({ kind: 'paste', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy || !hasPageClip} title="Paste copied pages after the selected pages (Ctrl+V in the thumbnails)" />
+                  <RB icon={CopyPlus} label="Duplicate" onClick={() => void runPageOp({ kind: 'duplicate' }, opPages)} disabled={!pages.length || busy} title="Insert copies of the selected pages after them" />
+                </RStack>
+                <RB big icon={Replace} label="Replace" onClick={() => void runPageOp({ kind: 'replace' }, opPages)} disabled={!pages.length || busy} title="Replace the selected pages with pages from another PDF" />
+              </RGroup>
               <RGroup label="Insert and extract">
                 <RB big icon={FilePlus2} label="Insert" onClick={() => void runPageOp({ kind: 'insert', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy} title="Insert pages from another PDF after the selected pages" />
                 <RB big icon={FileOutput} label="Extract" onClick={() => void runPageOp({ kind: 'extract' }, opPages)} disabled={!pages.length || busy} title="Save the selected pages as a new PDF" />
@@ -2196,12 +2278,46 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             void submitPageDialog()
           }}
         >
-          <label>
-            {pageDialog.kind === 'extract' ? 'Pages to extract (for example 1-3, 5)' : 'Pages per file'}
-            <input autoFocus value={dialogText} onChange={(e) => setDialogText(e.target.value)} />
-          </label>
+          {pageDialog.kind === 'split' && (
+            <label>
+              Split
+              <select
+                aria-label="Split by"
+                value={pageDialog.mode}
+                onChange={(e) => {
+                  const mode = e.target.value as 'count' | 'bookmarks' | 'size'
+                  setPageDialog({ ...pageDialog, mode })
+                  setDialogText(mode === 'size' ? '5' : '1')
+                }}
+              >
+                <option value="count">Every N pages</option>
+                <option value="bookmarks" disabled={!outline?.length}>
+                  At each top-level bookmark
+                </option>
+                <option value="size">By file size</option>
+              </select>
+            </label>
+          )}
+          {!(pageDialog.kind === 'split' && pageDialog.mode === 'bookmarks') && (
+            <label>
+              {pageDialog.kind === 'extract'
+                ? 'Pages to extract (for example 1-3, 5)'
+                : pageDialog.kind === 'replace'
+                  ? 'Replace these pages'
+                  : pageDialog.mode === 'size'
+                    ? 'Largest file size (MB)'
+                    : 'Pages per file'}
+              <input autoFocus aria-label={pageDialog.kind === 'replace' ? 'Pages to replace' : undefined} value={dialogText} onChange={(e) => setDialogText(e.target.value)} />
+            </label>
+          )}
+          {pageDialog.kind === 'replace' && (
+            <label>
+              With pages of {pageDialog.other.name} (1-{pageDialog.otherCount})
+              <input aria-label="Replacement pages" value={pageDialog.theirs} onChange={(e) => setPageDialog({ ...pageDialog, theirs: e.target.value })} />
+            </label>
+          )}
           <button className="primary" type="submit">
-            {pageDialog.kind === 'extract' ? 'Extract…' : 'Split…'}
+            {pageDialog.kind === 'extract' ? 'Extract…' : pageDialog.kind === 'replace' ? 'Replace' : 'Split…'}
           </button>
           <button type="button" onClick={() => setPageDialog(null)}>
             Cancel

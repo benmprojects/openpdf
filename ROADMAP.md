@@ -56,7 +56,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Rotate, delete and reorder pages (thumbnail pane: select, right-click menu, drag; undo/redo; verified in the app)
 - [x] Extract and insert pages (verified end to end with the dialog test hook: saved files checked with PyMuPDF; the real native dialog windows were not exercised)
 - [x] Merge and split by page count (same; split never overwrites existing files)
-- [ ] Copy and replace pages; split by bookmark or size
+- [x] Copy and paste pages (also between documents), duplicate, replace with pages from another PDF; split every N pages, at top-level bookmarks, or by file size
 - [ ] Crop, resize, headers and footers, Bates numbering, page numbers
 - [ ] Watermarks and backgrounds
 - [ ] Bookmarks, page labels and link editing

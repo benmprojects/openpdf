@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { deletePages, extractPages, insertPagesFrom, movePages, parsePageRanges, rotatePages, splitEvery } from './pageOps'
+import { bookmarkRanges, deletePages, duplicatePages, extractPages, insertPagesFrom, movePages, parsePageRanges, replacePages, rotatePages, splitByRanges, splitBySize, splitEvery } from './pageOps'
 
 /** A PDF whose page i has width 100 + i, so pages can be told apart after reordering. */
 async function makePdf(n: number): Promise<Uint8Array> {
@@ -71,5 +71,31 @@ describe('page operations', () => {
     expect(parts.map((p) => [p.first, p.last])).toEqual([[1, 2], [3, 4], [5, 5]])
     expect(await widths(parts[2].bytes)).toEqual([104])
     expect(await widths(parts[1].bytes)).toEqual([102, 103])
+  })
+})
+
+describe('copy, replace and split', () => {
+  it('duplicates pages after the last selected one', async () => {
+    expect(await widths(await duplicatePages(await makePdf(4), [1, 2]))).toEqual([100, 101, 102, 101, 102, 103])
+  })
+  it('replaces pages with pages of another file', async () => {
+    const other = await makePdf(3) // widths 100..102
+    expect(await widths(await replacePages(await makePdf(5), [1, 2], other, [2]))).toEqual([100, 102, 103, 104])
+  })
+  it('splits by ranges and by top-level bookmarks', async () => {
+    const ranges = bookmarkRanges([{ title: 'B', page: 4 }, { title: 'A', page: 1 }], 6)
+    expect(ranges).toEqual([{ first: 1, last: 1 }, { first: 2, last: 4, title: 'A' }, { first: 5, last: 6, title: 'B' }])
+    const parts = await splitByRanges(await makePdf(6), ranges)
+    expect(await Promise.all(parts.map((p) => widths(p.bytes)))).toEqual([[100], [101, 102, 103], [104, 105]])
+  })
+  it('splits by size, keeping each part under the limit', async () => {
+    const big = await makePdf(10)
+    const one = (await splitEvery(big, 1))[0].bytes.length
+    const two = (await splitEvery(big, 2))[0].bytes.length
+    const limit = (one + two) / 2 // room for one page per file, not two
+    const parts = await splitBySize(big, limit)
+    expect(parts).toHaveLength(10)
+    expect(parts.every((p) => p.bytes.length <= limit)).toBe(true)
+    expect(parts.map((p) => p.last - p.first + 1).reduce((a, b) => a + b)).toBe(10)
   })
 })

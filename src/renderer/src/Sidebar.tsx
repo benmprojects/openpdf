@@ -1,5 +1,6 @@
 import { Bookmark, Download, Eye, EyeOff, File as FileIcon, Layers, LayoutGrid, MessageSquare, Paperclip, type LucideIcon } from 'lucide-react'
 import type { Layer } from './layers'
+import { getPageClip, onPageClip } from './pageClipboard'
 import { useEffect, useRef, useState } from 'react'
 import type { AttachmentInfo, OutlineNode, PageSize, PdfClient } from './pdfClient'
 
@@ -15,6 +16,10 @@ export type PageOp =
   | { kind: 'insert'; at: number }
   | { kind: 'extract' }
   | { kind: 'split' }
+  | { kind: 'copy' }
+  | { kind: 'paste'; at: number }
+  | { kind: 'duplicate' }
+  | { kind: 'replace' }
 
 interface Props {
   client: PdfClient
@@ -161,6 +166,8 @@ function Thumbnails({
   labels: string[] | null
 }) {
   const list = useRef<HTMLDivElement>(null)
+  const [hasClip, setHasClip] = useState(() => getPageClip() !== null)
+  useEffect(() => onPageClip(() => setHasClip(getPageClip() !== null)), [])
   const [sel, setSel] = useState<number[]>([])
   const anchor = useRef(0)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -221,6 +228,13 @@ function Thumbnails({
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === 'Delete' && sel.length) run({ kind: 'delete' }, sel)
+        else if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault()
+          run({ kind: 'copy' })
+        } else if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault()
+          run({ kind: 'paste', at: Math.max(...target) + 1 })
+        }
         else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
           e.preventDefault()
           setSel(pages.map((_, i) => i))
@@ -294,6 +308,12 @@ function Thumbnails({
             Delete {target.length > 1 ? `${target.length} pages` : 'page'}
           </button>
           <button role="menuitem" onClick={() => run({ kind: 'extract' })}>Extract pages…</button>
+          <button role="menuitem" onClick={() => run({ kind: 'copy' })}>Copy {target.length > 1 ? `${target.length} pages` : 'page'}</button>
+          <button role="menuitem" onClick={() => run({ kind: 'paste', at: Math.max(...target) + 1 })} disabled={!hasClip}>
+            Paste pages after
+          </button>
+          <button role="menuitem" onClick={() => run({ kind: 'duplicate' })}>Duplicate</button>
+          <button role="menuitem" onClick={() => run({ kind: 'replace' })}>Replace with pages from file…</button>
           <hr />
           <button role="menuitem" onClick={() => run({ kind: 'insert', at: Math.min(...target) })}>Insert pages from file before…</button>
           <button role="menuitem" onClick={() => run({ kind: 'insert', at: Math.max(...target) + 1 })}>Insert pages from file after…</button>
