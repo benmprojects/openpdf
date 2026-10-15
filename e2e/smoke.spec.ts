@@ -37,6 +37,7 @@ test('opens, finds, rotates the view and prints', async () => {
     await expect(win.locator('.search-status')).toHaveText(/of 24/)
 
     // Rotate the view clockwise: page 0 becomes landscape.
+    await win.getByRole('tab', { name: 'View' }).click()
     await win.getByRole('button', { name: 'Rotate view clockwise' }).click()
     await expect
       .poll(async () => {

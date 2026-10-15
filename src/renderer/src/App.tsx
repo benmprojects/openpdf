@@ -329,6 +329,8 @@ export function App() {
             autosaveMinutes={settings?.autosaveMinutes ?? 0}
             sidebarWidth={settings?.sidebarWidth ?? 220}
             onSidebarWidth={setSidebarWidth}
+            onOpen={open}
+            onCloseDoc={() => close(t.id)}
           />
         ))}
         {!tabs.length && (

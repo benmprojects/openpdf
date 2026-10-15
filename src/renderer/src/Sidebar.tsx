@@ -25,9 +25,11 @@ interface Props {
   onPageOp: (op: PageOp, pages: number[]) => void
   busy: boolean
   width: number
+  /** Reports the selected thumbnails (0-based, sorted) whenever they change. */
+  onSelectionChange?: (pages: number[]) => void
 }
 
-export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy, width }: Props) {
+export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy, width, onSelectionChange }: Props) {
   return (
     <aside className="sidebar" style={{ width }}>
       <div className="sidebar-tabs" role="tablist">
@@ -39,7 +41,7 @@ export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoT
         </button>
       </div>
       {tab === 'pages' ? (
-        <Thumbnails client={client} pages={pages} currentPage={currentPage} onGoTo={onGoTo} onPageOp={onPageOp} busy={busy} />
+        <Thumbnails client={client} pages={pages} currentPage={currentPage} onGoTo={onGoTo} onPageOp={onPageOp} busy={busy} onSelectionChange={onSelectionChange} />
       ) : (
         <Bookmarks outline={outline} onGoTo={onGoTo} />
       )}
@@ -53,7 +55,8 @@ function Thumbnails({
   currentPage,
   onGoTo,
   onPageOp,
-  busy
+  busy,
+  onSelectionChange
 }: {
   client: PdfClient
   pages: PageSize[]
@@ -61,6 +64,7 @@ function Thumbnails({
   onGoTo: (p: number) => void
   onPageOp: (op: PageOp, pages: number[]) => void
   busy: boolean
+  onSelectionChange?: (pages: number[]) => void
 }) {
   const list = useRef<HTMLDivElement>(null)
   const [sel, setSel] = useState<number[]>([])
@@ -77,6 +81,8 @@ function Thumbnails({
 
   // The page list changes after every edit, so a stale selection would point at the wrong pages.
   useEffect(() => setSel([]), [pages])
+  useEffect(() => onSelectionChange?.(sel), [sel, onSelectionChange])
+  useEffect(() => () => onSelectionChange?.([]), [onSelectionChange])
 
   useEffect(() => {
     if (!menu) return

@@ -54,7 +54,8 @@ function createWindow(): void {
   })
   // The renderer blocks unload while a tab has unsaved annotations; ask before discarding them.
   win.webContents.on('will-prevent-unload', (e) => {
-    const choice = dialog.showMessageBoxSync(win, {
+    // Test hook: OPENPDF_E2E_DISCARD=1 answers "Close and discard" so tests can close a window with unsaved work.
+    const choice = e2e && process.env.OPENPDF_E2E_DISCARD === '1' ? 0 : dialog.showMessageBoxSync(win, {
       type: 'question',
       buttons: ['Close and discard', 'Keep open'],
       defaultId: 1,

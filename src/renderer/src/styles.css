@@ -331,6 +331,72 @@ select:focus-visible {
   background: var(--border);
 }
 
+/* Ribbon: a row of tabs, each showing labelled groups of controls */
+.ribbon {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.ribbon-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px 8px 0;
+  background: var(--panel-2);
+}
+.rtab {
+  padding: 4px 14px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.rtab:hover {
+  color: var(--text);
+}
+.rtab.on {
+  color: var(--text);
+  background: var(--panel);
+  border-bottom-color: var(--accent);
+}
+.toolbar.ribbon-body {
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 4px 6px 2px;
+  min-height: 62px;
+  border-bottom: none;
+}
+.rgroup {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0 8px;
+  border-right: 1px solid var(--border);
+}
+.rgroup:last-child {
+  border-right: none;
+}
+.rgroup-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+}
+.rgroup-label {
+  padding-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+}
+.toolbar.statusbar {
+  gap: 6px;
+  padding: 3px 10px;
+  border-top: 1px solid var(--border);
+  border-bottom: none;
+}
+
 /* Layout */
 .content {
   position: relative;

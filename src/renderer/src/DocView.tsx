@@ -63,6 +63,27 @@ interface Props {
   sidebarWidth: number
   /** Called when the user finishes dragging the side pane's edge. */
   onSidebarWidth: (w: number) => void
+  onOpen: () => void
+  onCloseDoc: () => void
+}
+
+type RibbonTab = 'file' | 'home' | 'comment' | 'organise' | 'view'
+const RIBBON_TABS: [RibbonTab, string][] = [
+  ['file', 'File'],
+  ['home', 'Home'],
+  ['comment', 'Comment'],
+  ['organise', 'Organise'],
+  ['view', 'View']
+]
+
+/** A labelled cluster of ribbon controls. */
+function RGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="rgroup" role="group" aria-label={label}>
+      <div className="rgroup-items">{children}</div>
+      <div className="rgroup-label">{label}</div>
+    </div>
+  )
 }
 
 /** Tells this window's recovery snapshots apart from those left by an earlier run. */
@@ -80,7 +101,10 @@ function compactRanges(pages: number[]): string {
   return out.join(', ')
 }
 
-export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth }: Props) {
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, onOpen, onCloseDoc }: Props) {
+  const [ribbon, setRibbon] = useState<RibbonTab>('home')
+  // Pages selected in the thumbnail pane; the Organise tab acts on them, or on the current page if none are.
+  const [pageSel, setPageSel] = useState<number[]>([])
   const [paneWidth, setPaneWidth] = useState(sidebarWidth)
   useEffect(() => setPaneWidth(sidebarWidth), [sidebarWidth])
   const onMeta = useCallback((meta: DocMeta) => reportMeta(docId, meta), [docId, reportMeta])
@@ -789,201 +813,240 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }
 
   const zoomValue = typeof mode === 'number' ? (ZOOM_STEPS.includes(mode) ? String(mode) : 'custom') : mode
+  const opPages = pageSel.length ? pageSel : [Math.min(currentPage, Math.max(0, pages.length - 1))]
+  const undoButtons = (
+    <>
+      <button
+        onClick={history.canUndo || !pageUndo.length ? history.undo : undoPageEdit}
+        disabled={!history.canUndo && !pageUndo.length}
+        title="Undo (Ctrl+Z)"
+      >
+        Undo
+      </button>
+      <button
+        onClick={history.canRedo || !pageRedo.length ? history.redo : redoPageEdit}
+        disabled={!history.canRedo && !pageRedo.length}
+        title="Redo (Ctrl+Y)"
+      >
+        Redo
+      </button>
+    </>
+  )
 
   return (
     <div className="docview" style={{ display: active ? 'flex' : 'none' }}>
-      <div className="toolbar" role="toolbar" aria-label="Document">
-        <button
-          onClick={() => setSidebar(sidebar ? null : 'pages')}
-          aria-pressed={sidebar !== null}
-          title="Show or hide the side panel"
-        >
-          ☰
-        </button>
-        <span className="sep" />
-        <button onClick={() => goTo(currentPage - 1)} disabled={currentPage <= 0} title="Previous page" aria-label="Previous page">
-          ▲
-        </button>
-        <input
-          className="page-input"
-          value={pageText}
-          aria-label="Page number"
-          onFocus={(e) => {
-            setEditingPage(true)
-            e.currentTarget.select()
-          }}
-          onChange={(e) => setPageText(e.target.value)}
-          onBlur={commitPage}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur()
-            if (e.key === 'Escape') {
-              setEditingPage(false)
-              setPageText(String(currentPage + 1))
-              e.currentTarget.blur()
-            }
-          }}
-        />
-        <span className="muted">/ {pages.length || '–'}</span>
-        <button
-          onClick={() => goTo(currentPage + 1)}
-          disabled={currentPage >= pages.length - 1}
-          title="Next page"
-          aria-label="Next page"
-        >
-          ▼
-        </button>
-        <span className="sep" />
-        <button onClick={() => stepZoom(-1)} disabled={!pages.length} title="Zoom out (Ctrl+−)" aria-label="Zoom out">
-          −
-        </button>
-        <select
-          value={zoomValue}
-          disabled={!pages.length}
-          aria-label="Zoom"
-          onChange={(e) => {
-            const v = e.target.value
-            if (v === 'fit-width' || v === 'fit-page') setMode(v)
-            else if (v !== 'custom') setMode(Number(v))
-          }}
-        >
-          <option value="fit-width">Fit width</option>
-          <option value="fit-page">Fit page</option>
-          {zoomValue === 'custom' && <option value="custom">{Math.round(zoom * 100)}%</option>}
-          {ZOOM_STEPS.map((s) => (
-            <option key={s} value={s}>
-              {Math.round(s * 100)}%
-            </option>
+      <div className="ribbon">
+        <div className="ribbon-tabs" role="tablist" aria-label="Ribbon">
+          {RIBBON_TABS.map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={ribbon === k} className={ribbon === k ? 'rtab on' : 'rtab'} onClick={() => setRibbon(k)}>
+              {label}
+            </button>
           ))}
-        </select>
-        <span className="muted zoom-now" title="Current zoom">
-          {Math.round(zoom * 100)}%
-        </span>
-        <button onClick={() => stepZoom(1)} disabled={!pages.length} title="Zoom in (Ctrl++)" aria-label="Zoom in">
-          +
-        </button>
-        <span className="sep" />
-        <button onClick={() => rotateView(-1)} disabled={!pages.length} title="Rotate view anticlockwise (Ctrl+Shift+−). The file is not changed" aria-label="Rotate view anticlockwise">
-          ⟲
-        </button>
-        <button onClick={() => rotateView(1)} disabled={!pages.length} title="Rotate view clockwise (Ctrl+Shift++). The file is not changed" aria-label="Rotate view clockwise">
-          ⟳
-        </button>
-        <span className="sep" />
-        <button onClick={openSearch} disabled={!pages.length} aria-pressed={searchOpen} title="Find (Ctrl+F)">
-          Find
-        </button>
-      </div>
-
-      <div className="toolbar annot-bar" role="toolbar" aria-label="Annotations">
-        <button onClick={() => setTool('select')} disabled={!pages.length} aria-pressed={tool === 'select'} title="Select text and annotations">
-          Select
-        </button>
-        <button onClick={() => setTool('hand')} disabled={!pages.length} aria-pressed={tool === 'hand'} title="Hand tool: drag to pan">
-          Hand
-        </button>
-        <span className="sep" />
-        {(['highlight', 'underline', 'strikeout'] as const).map((k) => (
-          <button key={k} onClick={() => void markSelection(k)} disabled={!hasTextSelection} title={`${annotLabel(k)} the selected text`}>
-            {annotLabel(k)}
-          </button>
-        ))}
-        <span className="sep" />
-        <button
-          onClick={() => setTool(tool === 'note' ? 'select' : 'note')}
-          disabled={!pages.length}
-          aria-pressed={tool === 'note'}
-          title="Add a sticky note: click on the page"
-        >
-          Note
-        </button>
-        <button
-          onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')}
-          disabled={!pages.length}
-          aria-pressed={tool === 'textbox'}
-          title="Add a text box: click on the page"
-        >
-          Text box
-        </button>
-        <span className="sep" />
-        {(
-          [
-            ['line', 'Line', 'Draw a line: drag. Hold Shift for 45 degree steps'],
-            ['arrow', 'Arrow', 'Draw an arrow: drag. Hold Shift for 45 degree steps'],
-            ['rectangle', 'Rectangle', 'Draw a rectangle: drag. Hold Shift for a square'],
-            ['ellipse', 'Ellipse', 'Draw an ellipse: drag. Hold Shift for a circle'],
-            ['ink', 'Pencil', 'Draw freehand: drag']
-          ] as const
-        ).map(([k, label, hint]) => (
-          <button key={k} onClick={() => setTool(tool === k ? 'select' : k)} disabled={!pages.length} aria-pressed={tool === k} title={hint}>
-            {label}
-          </button>
-        ))}
-        <button onClick={() => setTool(tool === 'stamp' ? 'select' : 'stamp')} disabled={!pages.length} aria-pressed={tool === 'stamp'} title="Place a stamp: click on the page">
-          Stamp
-        </button>
-        {swatchKind === 'stamp' && (
-          <select value={selected?.kind === 'stamp' ? selected.text : stampLabel} onChange={(e) => pickStamp(e.target.value)} aria-label="Stamp text">
-            {STAMP_LABELS.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-        )}
-        {showWidth && (
-          <select value={activeWidth} onChange={(e) => pickWidth(Number(e.target.value))} aria-label="Line width" title="Line width">
-            {(LINE_WIDTHS.includes(activeWidth) ? LINE_WIDTHS : [...LINE_WIDTHS, activeWidth].sort((a, b) => a - b)).map((w) => (
-              <option key={w} value={w}>
-                {w} pt
-              </option>
-            ))}
-          </select>
-        )}
-        <span className="sep" />
-        <span className="swatches" role="group" aria-label={`${annotLabel(swatchKind)} colour`}>
-          {colorChoices(swatchKind).map((c) => (
-            <button
-              key={c}
-              className={c === activeColor ? 'swatch on' : 'swatch'}
-              style={{ background: c }}
-              onClick={() => pickColor(c)}
-              aria-label={`Colour ${c}`}
-              aria-pressed={c === activeColor}
-            />
-          ))}
-        </span>
-        <button onClick={() => selected && removeAnnot(selected.id)} disabled={!selected} title="Delete the selected annotation (Delete)">
-          Delete
-        </button>
-        <span className="sep" />
-        <button
-          onClick={history.canUndo || !pageUndo.length ? history.undo : undoPageEdit}
-          disabled={!history.canUndo && !pageUndo.length}
-          title="Undo (Ctrl+Z)"
-        >
-          Undo
-        </button>
-        <button
-          onClick={history.canRedo || !pageRedo.length ? history.redo : redoPageEdit}
-          disabled={!history.canRedo && !pageRedo.length}
-          title="Redo (Ctrl+Y)"
-        >
-          Redo
-        </button>
-        <span className="sep" />
-        <button onClick={mergeFiles} disabled={!pages.length || busy} title="Merge: add the pages of other PDFs to the end">
-          Merge…
-        </button>
-        <button onClick={openPrint} disabled={!pages.length || !!printing} title="Print (Ctrl+P)">
-          Print…
-        </button>
-        <span className="sep" />
-        <button onClick={() => void save(false)} disabled={saving || !pages.length} title="Save (Ctrl+S)">
-          {saving ? 'Saving…' : dirty ? 'Save •' : 'Save'}
-        </button>
-        <button onClick={() => void save(true)} disabled={saving || !pages.length} title="Save a copy (Ctrl+Shift+S)">
-          Save as…
-        </button>
+        </div>
+        <div className="ribbon-body toolbar" role="tabpanel" aria-label={RIBBON_TABS.find(([k]) => k === ribbon)?.[1]}>
+          {ribbon === 'file' && (
+            <>
+              <RGroup label="Document">
+                <button onClick={onOpen} title="Open (Ctrl+O)">
+                  Open…
+                </button>
+                <button onClick={() => void save(false)} disabled={saving || !pages.length} title="Save (Ctrl+S)">
+                  {saving ? 'Saving…' : dirty ? 'Save •' : 'Save'}
+                </button>
+                <button onClick={() => void save(true)} disabled={saving || !pages.length} title="Save a copy (Ctrl+Shift+S)">
+                  Save as…
+                </button>
+                <button onClick={onCloseDoc} title="Close this document (Ctrl+W)">
+                  Close
+                </button>
+              </RGroup>
+              <RGroup label="Output">
+                <button onClick={openPrint} disabled={!pages.length || !!printing} title="Print (Ctrl+P)">
+                  Print…
+                </button>
+              </RGroup>
+            </>
+          )}
+          {ribbon === 'home' && (
+            <>
+              <RGroup label="Tools">
+                <button onClick={() => setTool('select')} disabled={!pages.length} aria-pressed={tool === 'select'} title="Select text and annotations">
+                  Select
+                </button>
+                <button onClick={() => setTool('hand')} disabled={!pages.length} aria-pressed={tool === 'hand'} title="Hand tool: drag to pan">
+                  Hand
+                </button>
+              </RGroup>
+              <RGroup label="Edit">
+                <button onClick={() => void viewer.current?.copySelection()} disabled={!hasTextSelection} title="Copy the selected text (Ctrl+C)">
+                  Copy
+                </button>
+                {undoButtons}
+              </RGroup>
+              <RGroup label="Find">
+                <button onClick={openSearch} disabled={!pages.length} aria-pressed={searchOpen} title="Find (Ctrl+F)">
+                  Find
+                </button>
+              </RGroup>
+              <RGroup label="Document">
+                <button onClick={() => void save(false)} disabled={saving || !pages.length} title="Save (Ctrl+S)">
+                  {saving ? 'Saving…' : dirty ? 'Save •' : 'Save'}
+                </button>
+                <button onClick={openPrint} disabled={!pages.length || !!printing} title="Print (Ctrl+P)">
+                  Print…
+                </button>
+              </RGroup>
+            </>
+          )}
+          {ribbon === 'comment' && (
+            <>
+              <RGroup label="Text markup">
+                {(['highlight', 'underline', 'strikeout'] as const).map((k) => (
+                  <button key={k} onClick={() => void markSelection(k)} disabled={!hasTextSelection} title={`${annotLabel(k)} the selected text`}>
+                    {annotLabel(k)}
+                  </button>
+                ))}
+              </RGroup>
+              <RGroup label="Notes">
+                <button
+                  onClick={() => setTool(tool === 'note' ? 'select' : 'note')}
+                  disabled={!pages.length}
+                  aria-pressed={tool === 'note'}
+                  title="Add a sticky note: click on the page"
+                >
+                  Note
+                </button>
+                <button
+                  onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')}
+                  disabled={!pages.length}
+                  aria-pressed={tool === 'textbox'}
+                  title="Add a text box: click on the page"
+                >
+                  Text box
+                </button>
+              </RGroup>
+              <RGroup label="Drawing">
+                {(
+                  [
+                    ['line', 'Line', 'Draw a line: drag. Hold Shift for 45 degree steps'],
+                    ['arrow', 'Arrow', 'Draw an arrow: drag. Hold Shift for 45 degree steps'],
+                    ['rectangle', 'Rectangle', 'Draw a rectangle: drag. Hold Shift for a square'],
+                    ['ellipse', 'Ellipse', 'Draw an ellipse: drag. Hold Shift for a circle'],
+                    ['ink', 'Pencil', 'Draw freehand: drag']
+                  ] as const
+                ).map(([k, label, hint]) => (
+                  <button key={k} onClick={() => setTool(tool === k ? 'select' : k)} disabled={!pages.length} aria-pressed={tool === k} title={hint}>
+                    {label}
+                  </button>
+                ))}
+              </RGroup>
+              <RGroup label="Stamp">
+                <button onClick={() => setTool(tool === 'stamp' ? 'select' : 'stamp')} disabled={!pages.length} aria-pressed={tool === 'stamp'} title="Place a stamp: click on the page">
+                  Stamp
+                </button>
+                <select value={selected?.kind === 'stamp' ? selected.text : stampLabel} onChange={(e) => pickStamp(e.target.value)} aria-label="Stamp text">
+                  {STAMP_LABELS.map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </RGroup>
+              <RGroup label={`${annotLabel(swatchKind)} style`}>
+                <span className="swatches" role="group" aria-label={`${annotLabel(swatchKind)} colour`}>
+                  {colorChoices(swatchKind).map((c) => (
+                    <button
+                      key={c}
+                      className={c === activeColor ? 'swatch on' : 'swatch'}
+                      style={{ background: c }}
+                      onClick={() => pickColor(c)}
+                      aria-label={`Colour ${c}`}
+                      aria-pressed={c === activeColor}
+                    />
+                  ))}
+                </span>
+                {showWidth && (
+                  <select value={activeWidth} onChange={(e) => pickWidth(Number(e.target.value))} aria-label="Line width" title="Line width">
+                    {(LINE_WIDTHS.includes(activeWidth) ? LINE_WIDTHS : [...LINE_WIDTHS, activeWidth].sort((a, b) => a - b)).map((w) => (
+                      <option key={w} value={w}>
+                        {w} pt
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </RGroup>
+              <RGroup label="Edit">
+                <button onClick={() => selected && removeAnnot(selected.id)} disabled={!selected} title="Delete the selected annotation (Delete)">
+                  Delete
+                </button>
+                {undoButtons}
+              </RGroup>
+            </>
+          )}
+          {ribbon === 'organise' && (
+            <>
+              <RGroup label={pageSel.length > 1 ? `Pages (${pageSel.length} selected)` : `Page ${opPages[0] + 1}`}>
+                <button onClick={() => void runPageOp({ kind: 'rotate', delta: -90 }, opPages)} disabled={!pages.length || busy} title="Rotate the selected pages anticlockwise (changes the file)">
+                  Rotate left
+                </button>
+                <button onClick={() => void runPageOp({ kind: 'rotate', delta: 90 }, opPages)} disabled={!pages.length || busy} title="Rotate the selected pages clockwise (changes the file)">
+                  Rotate right
+                </button>
+                <button onClick={() => void runPageOp({ kind: 'delete' }, opPages)} disabled={!pages.length || busy || opPages.length >= pages.length} title="Delete the selected pages">
+                  Delete
+                </button>
+              </RGroup>
+              <RGroup label="Insert and extract">
+                <button onClick={() => void runPageOp({ kind: 'insert', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy} title="Insert pages from another PDF after the selected pages">
+                  Insert…
+                </button>
+                <button onClick={() => void runPageOp({ kind: 'extract' }, opPages)} disabled={!pages.length || busy} title="Save the selected pages as a new PDF">
+                  Extract…
+                </button>
+              </RGroup>
+              <RGroup label="Documents">
+                <button onClick={mergeFiles} disabled={!pages.length || busy} title="Merge: add the pages of other PDFs to the end">
+                  Merge…
+                </button>
+                <button onClick={() => void runPageOp({ kind: 'split' }, opPages)} disabled={!pages.length || busy} title="Split into files of a set number of pages">
+                  Split…
+                </button>
+              </RGroup>
+              <RGroup label="Edit">{undoButtons}</RGroup>
+            </>
+          )}
+          {ribbon === 'view' && (
+            <>
+              <RGroup label="Panes">
+                <button onClick={() => setSidebar(sidebar === 'pages' ? null : 'pages')} aria-pressed={sidebar === 'pages'} title="Show or hide page thumbnails">
+                  Pages
+                </button>
+                <button onClick={() => setSidebar(sidebar === 'bookmarks' ? null : 'bookmarks')} aria-pressed={sidebar === 'bookmarks'} title="Show or hide bookmarks">
+                  Bookmarks
+                </button>
+              </RGroup>
+              <RGroup label="Zoom">
+                <button onClick={() => setMode('fit-width')} disabled={!pages.length} aria-pressed={mode === 'fit-width'} title="Fit width (Ctrl+0)">
+                  Fit width
+                </button>
+                <button onClick={() => setMode('fit-page')} disabled={!pages.length} aria-pressed={mode === 'fit-page'} title="Fit page">
+                  Fit page
+                </button>
+                <button onClick={() => setMode(1)} disabled={!pages.length} aria-pressed={mode === 1} title="Actual size (Ctrl+1)">
+                  Actual size
+                </button>
+              </RGroup>
+              <RGroup label="Rotate view">
+                <button onClick={() => rotateView(-1)} disabled={!pages.length} title="Rotate view anticlockwise (Ctrl+Shift+−). The file is not changed" aria-label="Rotate view anticlockwise">
+                  ⟲ Left
+                </button>
+                <button onClick={() => rotateView(1)} disabled={!pages.length} title="Rotate view clockwise (Ctrl+Shift++). The file is not changed" aria-label="Rotate view clockwise">
+                  ⟳ Right
+                </button>
+              </RGroup>
+            </>
+          )}
+        </div>
       </div>
 
       {notice && (
@@ -1168,6 +1231,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onPageOp={(op, sel) => void runPageOp(op, sel)}
                 busy={busy}
                 width={paneWidth}
+                onSelectionChange={setPageSel}
               />
             )}
             {sidebar && (
@@ -1225,6 +1289,72 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             />
           </>
         )}
+      </div>
+      <div className="statusbar toolbar" role="toolbar" aria-label="Page and zoom">
+        <button onClick={() => setSidebar(sidebar ? null : 'pages')} aria-pressed={sidebar !== null} title="Show or hide the side panel" aria-label="Side panel">
+          ☰
+        </button>
+        <span className="sep" />
+        <button onClick={() => goTo(currentPage - 1)} disabled={currentPage <= 0} title="Previous page" aria-label="Previous page">
+          ▲
+        </button>
+        <input
+          className="page-input"
+          value={pageText}
+          aria-label="Page number"
+          onFocus={(e) => {
+            setEditingPage(true)
+            e.currentTarget.select()
+          }}
+          onChange={(e) => setPageText(e.target.value)}
+          onBlur={commitPage}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            if (e.key === 'Escape') {
+              setEditingPage(false)
+              setPageText(String(currentPage + 1))
+              e.currentTarget.blur()
+            }
+          }}
+        />
+        <span className="muted">/ {pages.length || '–'}</span>
+        <button
+          onClick={() => goTo(currentPage + 1)}
+          disabled={currentPage >= pages.length - 1}
+          title="Next page"
+          aria-label="Next page"
+        >
+          ▼
+        </button>
+        <span className="sep" />
+        <button onClick={() => stepZoom(-1)} disabled={!pages.length} title="Zoom out (Ctrl+−)" aria-label="Zoom out">
+          −
+        </button>
+        <select
+          value={zoomValue}
+          disabled={!pages.length}
+          aria-label="Zoom"
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === 'fit-width' || v === 'fit-page') setMode(v)
+            else if (v !== 'custom') setMode(Number(v))
+          }}
+        >
+          <option value="fit-width">Fit width</option>
+          <option value="fit-page">Fit page</option>
+          {zoomValue === 'custom' && <option value="custom">{Math.round(zoom * 100)}%</option>}
+          {ZOOM_STEPS.map((s) => (
+            <option key={s} value={s}>
+              {Math.round(s * 100)}%
+            </option>
+          ))}
+        </select>
+        <span className="muted zoom-now" title="Current zoom">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button onClick={() => stepZoom(1)} disabled={!pages.length} title="Zoom in (Ctrl++)" aria-label="Zoom in">
+          +
+        </button>
       </div>
     </div>
   )
