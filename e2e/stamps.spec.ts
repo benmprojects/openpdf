@@ -58,12 +58,16 @@ out = []
 for a in d[0].annots():
     ap = d.xref_get_key(a.xref, "AP/N")
     xo = d.xref_get_key(int(ap[1].split()[0]), "Resources/XObject") if ap[0] == "xref" else ("null", "")
-    out.append({"type": a.type[1], "content": a.info.get("content", ""), "image": xo[0] != "null"})
+    out.append({"type": a.type[1], "content": a.info.get("content", ""), "label": d.xref_get_key(a.xref, "OPLabel")[1], "info": d.xref_get_key(a.xref, "OPInfo")[1], "image": xo[0] != "null"})
 print(json.dumps(out))
 `
-    const saved: { type: string; content: string; image: boolean }[] = JSON.parse(execFileSync('python', ['-c', py, pdfPath]).toString())
+    const saved: { type: string; content: string; label: string; info: string; image: boolean }[] = JSON.parse(execFileSync('python', ['-c', py, pdfPath]).toString())
     expect(saved.map((s) => s.type)).toEqual(['Stamp', 'Stamp'])
-    expect(saved[0].content).toMatch(/^APPROVED\n.*\d\d\/\d\d\/\d{4} \d\d:\d\d$/)
+    // The label and date are the stamp's own; no comment text, or other viewers show a speech bubble beside it.
+    expect(saved[0].content).toBe('')
+    expect(saved[0].label).toContain('APPROVED')
+    expect(saved[0].info).toMatch(/[0-9]{2}.[0-9]{2}.[0-9]{4} [0-9]{2}:[0-9]{2}/)
+    expect(saved[1].content).toBe('')
     expect(saved[1].image).toBe(true)
     expect(problems).toEqual([])
     await app.close()

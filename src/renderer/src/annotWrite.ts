@@ -568,7 +568,6 @@ export async function writeAnnotations(
         Subtype: 'Stamp',
         Name: 'OpenPDFImageStamp',
         Subj: PDFHexString.fromText('Image stamp'),
-        Contents: PDFHexString.fromText(a.text),
         AP: { N: ap }
       }
     } else if (a.kind === 'stamp') {
@@ -601,7 +600,7 @@ export async function writeAnnotations(
         ...base,
         Subtype: 'Stamp',
         Name: 'OpenPDFStamp',
-        Contents: PDFHexString.fromText(info ? `${label}\n${info}` : label),
+        // No /Contents: other viewers show a comment bubble beside any annotation that has comment text.
         OPLabel: PDFHexString.fromText(label),
         ...(info ? { OPInfo: PDFHexString.fromText(info) } : {}),
         AP: { N: ap }
