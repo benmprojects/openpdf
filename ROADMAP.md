@@ -49,8 +49,10 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [ ] Review: compare annotation sets across files
 
 ## Phase 3: Page and document organisation (P0)
-- [ ] Rotate, delete, move, copy, extract, replace and insert pages
-- [ ] Merge, split (by page count, bookmark, size), combine from multiple files
+- [x] Rotate, delete and reorder pages (thumbnail pane: select, right-click menu, drag; undo/redo; verified in the app)
+- [ ] Extract and insert pages: built, and the pdf-lib operations pass `scripts/pageops-check.mts`, but the native file dialogs and saved output have not been hand-tested
+- [ ] Merge and split by page count: built, same caveat as above (native dialogs, folder writing)
+- [ ] Copy and replace pages; split by bookmark or size
 - [ ] Crop, resize, headers and footers, Bates numbering, page numbers
 - [ ] Watermarks and backgrounds
 - [ ] Bookmarks, page labels and link editing
