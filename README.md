@@ -15,6 +15,14 @@ npm run typecheck
 
 Pass a PDF on the command line to open it at start: `npx electron . file.pdf`.
 
+## Building an installer
+
+```bash
+npm run dist
+```
+
+This builds the app and produces a Windows (x64) NSIS installer in `dist/` (configuration in `electron-builder.yml`). The installer lets you choose the folder, installs per user by default and registers OpenPDF as an editor for `.pdf` files without making it the default. It is not code signed, so Windows SmartScreen may warn. `npm run licences` regenerates `THIRD_PARTY_NOTICES.md`, which ships with the app. See [CONTRIBUTING.md](CONTRIBUTING.md) for the project rules.
+
 ## Status
 
 Phase 0 and most of Phase 1 are in: tabs, drag and drop, command-line open, continuous scroll with lazy rendering, fit-width/fit-page/preset zoom, thumbnails, bookmarks, find (match case, whole word, highlight all), and text selection with copy. PDFium runs in a Web Worker.

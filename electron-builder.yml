@@ -1,0 +1,31 @@
+# Placeholder identifier: replace with a reverse-DNS id the project controls before a public release.
+appId: org.openpdf.app
+productName: OpenPDF
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # No code signing is configured. Add a certificate (CSC_LINK / CSC_KEY_PASSWORD or
+  # Azure Trusted Signing) before distributing, otherwise Windows SmartScreen will warn.
+  signExecutable: false
+  fileAssociations:
+    - ext: pdf
+      name: PDF document
+      description: PDF document
+      role: Editor
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-Setup-${version}.${ext}

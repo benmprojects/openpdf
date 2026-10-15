@@ -13,7 +13,9 @@
     "start": "electron-vite preview",
     "test": "vitest run",
     "e2e": "playwright test",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "dist": "npm run build && electron-builder --win",
+    "licences": "node scripts/licences.mjs"
   },
   "dependencies": {
     "@hyzyla/pdfium": "^3.0.0",
@@ -30,6 +32,7 @@
     "@typescript/typescript6": "^6.0.2",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^6.0.0",
     "eslint": "^10.12.0",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -39,5 +42,8 @@
     "typescript-eslint": "^8.71.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.4"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }
