@@ -66,7 +66,7 @@ import { readLabelRanges, writeLabelRanges, writeOutline, type BookmarkNode, typ
 import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
-import { replaceText } from './textEdit'
+import { replaceText, weightAndSlant } from './textEdit'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
@@ -2651,7 +2651,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onEditText={(page, obj, total, text) => {
                 let hidden = false
                 void applyPageEdit(async (b) => {
-                  const r = await replaceText(b, { page, ordinal: obj.ordinal, total }, text, { font: obj.font, flags: obj.flags, weight: obj.weight, italic: obj.italic, size: obj.size, color: obj.color, matrix: obj.matrix })
+                  const style = { font: obj.font, flags: obj.flags, weight: obj.weight, italic: obj.italic, size: obj.size, color: obj.color, matrix: obj.matrix }
+                  const { bold, italic } = weightAndSlant(style)
+                  const installed = text ? await window.openpdf.findFont(obj.font, bold, italic).catch(() => null) : null
+                  const r = await replaceText(b, { page, ordinal: obj.ordinal, total }, text, style, installed?.data)
                   hidden = r.hiddenOriginal
                   return r.bytes
                 }, text ? 'Text updated' : 'Text deleted').then(() => {

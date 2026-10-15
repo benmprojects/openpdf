@@ -3,6 +3,7 @@
  * k-th non-empty text-showing operator of its content stream). Here the operator is taken out of the stream and the
  * new text is drawn with pdf-lib in the same place, size and colour, in a standard font chosen to match.
  */
+import fontkit from '@pdf-lib/fontkit'
 import { PDFArray, PDFDocument, PDFName, PDFRawStream, PDFStream, StandardFonts, decodePDFRawStream, degrees, rgb, type PDFPage } from 'pdf-lib'
 import { bytesToString, isShow, num, parseContent, removeOps, showBytes, showOrigins, stringToBytes, type Op } from './content'
 
@@ -31,6 +32,11 @@ const BOLD = /bold|black|heavy|semibold|demi|extrabold/i
 const ITALIC = /italic|oblique|slanted/i
 const MONO = /courier|consolas|mono|lucida console|menlo|typewriter/i
 const SERIF = /times|georgia|garamond|palatino|cambria|serif|roman|book|minion|century/i
+
+/** Whether the font is bold and italic, from its name, weight and descriptor flags. */
+export function weightAndSlant(s: Pick<TextStyle, 'font' | 'flags' | 'weight' | 'italic'>): { bold: boolean; italic: boolean } {
+  return { bold: BOLD.test(s.font) || s.weight >= 600 || (s.flags & 0x40000) !== 0, italic: s.italic || ITALIC.test(s.font) }
+}
 
 /** The standard font closest to a font's name and descriptor. */
 export function pickStandardFont(s: Pick<TextStyle, 'font' | 'flags' | 'weight' | 'italic'>): StandardFonts {
@@ -90,7 +96,14 @@ function hexRgb(hex: string): ReturnType<typeof rgb> {
 }
 
 /** Replaces the text of one text object. An empty `text` deletes it. Returns the new file. */
-export async function replaceText(bytes: Uint8Array, target: TextEditTarget, text: string, style: TextStyle): Promise<{ bytes: Uint8Array; hiddenOriginal: boolean }> {
+export async function replaceText(
+  bytes: Uint8Array,
+  target: TextEditTarget,
+  text: string,
+  style: TextStyle,
+  /** An installed font with the original's family: used when it may be embedded and has every character. */
+  installed?: Uint8Array | null
+): Promise<{ bytes: Uint8Array; hiddenOriginal: boolean; fontUsed: string }> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
   const page = doc.getPage(target.page)
   const src = pageContent(page)
@@ -124,8 +137,15 @@ export async function replaceText(bytes: Uint8Array, target: TextEditTarget, tex
   const ctx = doc.context
   page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(stringToBytes(out))))
 
+  let fontUsed = 'standard'
   if (text) {
-    const font = await doc.embedFont(pickStandardFont(style))
+    let font: Awaited<ReturnType<PDFDocument['embedFont']>> | null = null
+    if (installed && embeddable(installed, text)) {
+      doc.registerFontkit(fontkit)
+      font = await doc.embedFont(installed, { subset: true })
+      fontUsed = 'installed'
+    }
+    font ??= await doc.embedFont(pickStandardFont(style))
     const [a, b] = style.matrix
     const scale = Math.hypot(a, b) || 1
     try {
@@ -135,5 +155,18 @@ export async function replaceText(bytes: Uint8Array, target: TextEditTarget, tex
     }
     page.drawText(text, { x: style.matrix[4], y: style.matrix[5], font, size: style.size * (scale === 1 ? 1 : scale), color: hexRgb(style.color), rotate: degrees((Math.atan2(b, a) * 180) / Math.PI) })
   }
-  return { bytes: await doc.save(), hiddenOriginal }
+  return { bytes: await doc.save(), hiddenOriginal, fontUsed }
+}
+
+/** Whether a font file may be embedded (OS/2 fsType: not restricted) and has a glyph for every character of `text`. */
+export function embeddable(data: Uint8Array, text: string): boolean {
+  try {
+    const f = fontkit.create(data as never) as unknown as { hasGlyphForCodePoint(cp: number): boolean; 'OS/2'?: { fsType?: number } }
+    const fsType = f['OS/2']?.fsType ?? 0
+    if (fsType & 0x0002) return false
+    for (const ch of text) if (ch !== '\n' && !f.hasGlyphForCodePoint(ch.codePointAt(0)!)) return false
+    return true
+  } catch {
+    return false
+  }
 }

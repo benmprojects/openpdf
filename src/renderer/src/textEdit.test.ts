@@ -1,7 +1,8 @@
 import { PDFArray, PDFDocument, PDFName, PDFRawStream, StandardFonts, decodePDFRawStream } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { bytesToString, isShow, parseContent, showBytes, showOrigins } from './content'
-import { pickStandardFont, removalKeepsLayout, replaceText, type TextStyle } from './textEdit'
+import { existsSync, readFileSync } from 'node:fs'
+import { embeddable, pickStandardFont, removalKeepsLayout, replaceText, type TextStyle } from './textEdit'
 
 /** Style of the i-th line made by makePdf (lines sit at x 20, y 250, 230, 210). */
 const at = (i: number): TextStyle => ({ font: 'Helvetica', flags: 32, weight: 0, italic: false, size: 12, color: '#336699', matrix: [1, 0, 0, 1, 20, 250 - i * 20] })
@@ -81,5 +82,23 @@ describe('showOrigins', () => {
     expect(o[2]).toEqual({ x: 20, y: 32 - 28 })
     expect(o[3]).toEqual({ x: 26, y: 32 - 28 + 8 })
     expect(o[4]).toEqual({ x: 7, y: 8 })
+  })
+})
+
+const ARIAL = 'C:/Windows/Fonts/arial.ttf'
+describe.skipIf(!existsSync(ARIAL))('installed fonts', () => {
+  it('embeds an installed font when it has every character, and says so', async () => {
+    const font = new Uint8Array(readFileSync(ARIAL))
+    expect(embeddable(font, 'Plans and specs 2026')).toBe(true)
+    expect(embeddable(font, '日本語')).toBe(false)
+    const out = await replaceText(await makePdf(), { page: 0, ordinal: 1, total: 3 }, 'Beta in Arial', at(1), font)
+    expect(out.fontUsed).toBe('installed')
+    expect((await shows(out.bytes)).length).toBe(3)
+  })
+
+  it('falls back to a standard font when the installed one lacks a character', async () => {
+    const font = new Uint8Array(readFileSync(ARIAL))
+    const out = await replaceText(await makePdf(), { page: 0, ordinal: 1, total: 3 }, 'Beta → next', at(1), font)
+    expect(out.fontUsed).toBe(embeddable(font, '→') ? 'installed' : 'standard')
   })
 })

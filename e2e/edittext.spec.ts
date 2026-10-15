@@ -1,6 +1,6 @@
 import { _electron as electron, expect, test } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -72,6 +72,46 @@ test('edit text: change one line, delete another, keep size and colour, leave th
     expect(edited.color).toBe(0x1a3399)
     expect(out.find((s) => s.text === 'Untouched footer text')!.size).toBeCloseTo(10, 0)
     expect(problems).toEqual([])
+  } finally {
+    await app.close()
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+  }
+})
+
+const ARIAL = 'C:/Windows/Fonts/arial.ttf'
+test('edit text: an installed font of the same family is used for the new text', async () => {
+  test.skip(!existsSync(ARIAL), 'Arial is not installed')
+  const dir = mkdtempSync(join(tmpdir(), 'openpdf-e2e-'))
+  const pdfPath = join(dir, 'arial.pdf')
+  const make = `
+import sys, pymupdf
+doc = pymupdf.open()
+p = doc.new_page(width=595, height=842)
+p.insert_text((72, 120), "Quantities schedule", fontsize=14, fontname="arl", fontfile=r"${ARIAL}")
+doc.save(sys.argv[1])
+`
+  execFileSync('python', ['-c', make, pdfPath])
+  const app = await electron.launch({ args: ['.', pdfPath], cwd: root, env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_USERDATA: join(dir, 'ud'), OPENPDF_E2E_DISCARD: '1' } })
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('.page')).toHaveCount(1)
+    await win.getByRole('tab', { name: 'Edit', exact: true }).click()
+    await win.getByRole('button', { name: 'Edit text' }).click()
+    await win.getByRole('button', { name: 'Edit text: Quantities schedule' }).click()
+    const box = win.getByRole('textbox', { name: 'Edit text' })
+    await box.fill('Quantities schedule (revised)')
+    await box.press('Enter')
+    await expect(win.getByText('Text updated')).toBeVisible()
+    await win.keyboard.press('Control+s')
+    await expect(win.locator('.tab-dirty')).toHaveCount(0)
+    const py = `
+import sys, json, pymupdf
+d = pymupdf.open(sys.argv[1])
+print(json.dumps([[s["text"], s["font"]] for b in d[0].get_text("dict")["blocks"] for l in b.get("lines", []) for s in l["spans"]]))
+`
+    const spans: [string, string][] = JSON.parse(execFileSync('python', ['-c', py, pdfPath]).toString())
+    const edited = spans.find(([t]) => t.includes('revised'))!
+    expect(edited[1].toLowerCase()).toContain('arial')
   } finally {
     await app.close()
     rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })

@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
+import { findFont } from './fonts'
 import { runQpdf } from './qpdf'
 import { addStamps, listStamps, removeStamp } from './stamps'
 import {
@@ -303,6 +304,12 @@ ipcMain.handle('file:list-pdfs', async (_e, dir: string, recursive: boolean) => 
   }
   await walk(dir, 0)
   return out.sort((a, b) => a.localeCompare(b))
+})
+
+/** An installed font matching a PDF font name, for redrawing edited text in the same typeface. */
+ipcMain.handle('font:find', async (_e, name: unknown, bold: unknown, italic: unknown) => {
+  if (typeof name !== 'string' || name.length > 200) return null
+  return findFont(name, bold === true, italic === true)
 })
 
 /** Rewrites a PDF through qpdf (object streams, recompression, unused resources, linearising). */

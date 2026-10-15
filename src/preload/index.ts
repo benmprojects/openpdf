@@ -46,6 +46,8 @@ const api = {
   listPdfs: (dir: string, recursive: boolean): Promise<string[]> => ipcRenderer.invoke('file:list-pdfs', dir, recursive),
   /** Save As dialog for an embedded file; resolves to the written path, or null if cancelled. */
   saveAttachment: (name: string, data: Uint8Array): Promise<string | null> => ipcRenderer.invoke('file:save-attachment', name, data),
+  /** An installed font file matching a PDF font name (Windows), or null. */
+  findFont: (name: string, bold: boolean, italic: boolean): Promise<{ data: Uint8Array; family: string } | null> => ipcRenderer.invoke('font:find', name, bold, italic),
   /** Rewrites a PDF through qpdf in the main process. */
   qpdf: (data: Uint8Array, o: { objectStreams: boolean; recompress: boolean; removeUnusedResources: boolean; linearise: boolean }): Promise<Uint8Array> =>
     ipcRenderer.invoke('pdf:qpdf', data, o),
