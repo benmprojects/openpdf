@@ -1,11 +1,15 @@
 import { PDFiumLibrary, type PDFiumDocument } from '@hyzyla/pdfium'
 import wasmUrl from '@hyzyla/pdfium/pdfium.wasm?url'
 import {
+  readAttachmentData,
+  readAttachments,
   readOutline,
+  readPageLabels,
   readPageAnnots,
   readPageText,
   removePageAnnot,
   renderRegion,
+  type AttachmentInfo,
   type ImportedAnnot,
   type OutlineNode,
   type PageText
@@ -19,6 +23,9 @@ export type WorkerRequest =
   | { id: number; type: 'text'; page: number }
   | { id: number; type: 'annots' }
   | { id: number; type: 'hideAnnot'; page: number; index: number; subtype: number }
+  | { id: number; type: 'attachments' }
+  | { id: number; type: 'attachmentData'; index: number }
+  | { id: number; type: 'labels' }
   | { id: number; type: 'close' }
 
 export type WorkerResponse =
@@ -28,6 +35,9 @@ export type WorkerResponse =
   | ({ id: number; ok: true; type: 'text' } & PageText)
   | { id: number; ok: true; type: 'annots'; pages: { page: number; annots: ImportedAnnot[] }[] }
   | { id: number; ok: true; type: 'hideAnnot'; hidden: boolean }
+  | { id: number; ok: true; type: 'attachments'; attachments: AttachmentInfo[] }
+  | { id: number; ok: true; type: 'attachmentData'; data: Uint8Array }
+  | { id: number; ok: true; type: 'labels'; labels: string[] }
   | { id: number; ok: true; type: 'close' }
   | { id: number; ok: false; error: string }
 
@@ -80,6 +90,16 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const data = renderRegion(library, doc, page, msg.scale, msg.x, msg.y, msg.w, msg.h)
       page.close()
       reply({ id: msg.id, ok: true, type: 'render', width: msg.w, height: msg.h, data }, [data.buffer as ArrayBuffer])
+    } else if (msg.type === 'attachments') {
+      if (!doc || !library) throw new Error('No document loaded')
+      reply({ id: msg.id, ok: true, type: 'attachments', attachments: readAttachments(library, doc) })
+    } else if (msg.type === 'attachmentData') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const data = readAttachmentData(library, doc, msg.index)
+      reply({ id: msg.id, ok: true, type: 'attachmentData', data }, [data.buffer as ArrayBuffer])
+    } else if (msg.type === 'labels') {
+      if (!doc || !library) throw new Error('No document loaded')
+      reply({ id: msg.id, ok: true, type: 'labels', labels: readPageLabels(library, doc) })
     } else if (msg.type === 'outline') {
       if (!doc || !library) throw new Error('No document loaded')
       reply({ id: msg.id, ok: true, type: 'outline', outline: readOutline(library, doc) })

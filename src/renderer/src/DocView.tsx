@@ -19,13 +19,14 @@ import {
 } from './annotations'
 import { writeAnnotations, type DeletedAnnot } from './annotWrite'
 import { deletePages, extractPages, insertPagesFrom, movePages, parsePageRanges, rotatePages, splitEvery } from './pageOps'
-import { PdfClient, type OutlineNode, type PageSize } from './pdfClient'
+import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, type Match } from './textLogic'
 import { useHistory } from './useHistory'
 import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout'
 import { GAP, PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
 import { printDocument } from './print'
+import { readLayers, withHiddenLayers, type Layer } from './layers'
 import {
   ArrowLeftRight,
   BookOpen,
@@ -182,10 +183,69 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [sidebar, setSidebar] = useState<SidebarTab | null>('pages')
   const viewer = useRef<ViewerHandle>(null)
 
+  // ---- Layers ---------------------------------------------------------------------------------------
+  // Hiding a layer is view-only: the viewer loads a copy whose default layer state is rewritten. Such a reload
+  // keeps the annotation edit state (viewOnlyReload).
+  const [layers, setLayers] = useState<Layer[]>([])
+  const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string> | null>(null)
+  const [viewBytes, setViewBytes] = useState(bytes)
+  const viewOnlyReload = useRef(false)
+  const lastBytes = useRef(bytes)
+  useEffect(() => {
+    let cancelled = false
+    if (bytes !== lastBytes.current) {
+      // New file contents (save, page edit): layer choices start again from the document's defaults.
+      lastBytes.current = bytes
+      setHiddenLayers(null)
+      setViewBytes(bytes)
+      return
+    }
+    if (!hiddenLayers) {
+      setViewBytes(bytes)
+      return
+    }
+    withHiddenLayers(bytes, hiddenLayers)
+      .then((copy) => {
+        if (cancelled) return
+        viewOnlyReload.current = true
+        setViewBytes(copy)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [bytes, hiddenLayers])
+  useEffect(() => {
+    let cancelled = false
+    readLayers(bytes).then((l) => !cancelled && setLayers(l))
+    return () => {
+      cancelled = true
+    }
+  }, [bytes])
+  const toggleLayer = (key: string) => {
+    const now = hiddenLayers ?? new Set(layers.filter((l) => !l.defaultOn).map((l) => l.key))
+    const next = new Set(now)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    setHiddenLayers(next)
+  }
+
+  const [attachments, setAttachments] = useState<AttachmentInfo[]>([])
+  const saveAttachment = async (a: AttachmentInfo) => {
+    try {
+      const data = await clientRef.current!.attachmentData(a.index)
+      const saved = await window.openpdf.saveAttachment(a.name, data)
+      if (saved) setNotice({ kind: 'info', text: `Saved ${saved}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not save the attachment: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  const [pageLabels, setPageLabels] = useState<string[] | null>(null)
+
   useEffect(() => {
     const c = new PdfClient()
     let cancelled = false
-    c.load(bytes, password)
+    c.load(viewBytes, password)
       .then((p) => {
         if (cancelled) return
         setPasswordIssue(null)
@@ -194,6 +254,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         c.outline()
           .then((o) => !cancelled && setOutline(o))
           .catch(() => !cancelled && setOutline([]))
+        c.attachments()
+          .then((a) => !cancelled && setAttachments(a))
+          .catch(() => !cancelled && setAttachments([]))
+        c.pageLabels()
+          .then((l) => !cancelled && setPageLabels(l.some((x) => x) ? l : null))
+          .catch(() => !cancelled && setPageLabels(null))
       })
       .catch((e: Error) => {
         if (cancelled) return
@@ -204,7 +270,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       cancelled = true
       c.dispose()
     }
-  }, [bytes, password])
+  }, [viewBytes, password])
 
   const onSize = useCallback((w: number, h: number) => setSize((s) => (s.w === w && s.h === h ? s : { w, h })), [])
 
@@ -264,6 +330,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   useEffect(() => {
     if (!client) return
     let cancelled = false
+    if (viewOnlyReload.current) {
+      viewOnlyReload.current = false
+      const hides = [...touchedRef.current].flatMap((id) => {
+        const b = baseline.current.get(id)
+        return b ? [client.hideAnnot(b.page, b.origin.index, b.origin.subtype)] : []
+      })
+      Promise.all(hides)
+        .then(() => !cancelled && setEpoch((e) => e + 1))
+        .catch(() => {})
+      return () => {
+        cancelled = true
+      }
+    }
     client
       .annots()
       .then((pages) => {
@@ -693,6 +772,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       let src = bytes
       if (annotsDirty && password) setNotice({ kind: 'info', text: 'Unsaved annotation changes are not printed for password-protected PDFs.' })
       else if (annotsDirty) src = await writeAnnotations(bytes, annots.filter(changed), deleted)
+      // Print what is on screen: layers hidden in the view are hidden on paper too.
+      if (hiddenLayers && !password) src = await withHiddenLayers(src, hiddenLayers)
       const res = await printDocument(
         src,
         password,
@@ -846,15 +927,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // ---- Page box -------------------------------------------------------------------------------------
   const [pageText, setPageText] = useState('1')
   const [editingPage, setEditingPage] = useState(false)
+  const pageName = (i: number) => pageLabels?.[i] || String(i + 1)
   useEffect(() => {
-    if (!editingPage) setPageText(String(currentPage + 1))
-  }, [currentPage, editingPage])
+    if (!editingPage) setPageText(pageName(currentPage))
+  }, [currentPage, editingPage, pageLabels]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** A page label (as printed on the page, for example "iv") wins over a plain page number. */
   const commitPage = () => {
     setEditingPage(false)
-    const n = parseInt(pageText, 10)
-    if (Number.isFinite(n)) goTo(Math.min(pages.length, Math.max(1, n)) - 1)
-    else setPageText(String(currentPage + 1))
+    const t = pageText.trim()
+    const byLabel = pageLabels ? pageLabels.findIndex((l) => l && l.toLowerCase() === t.toLowerCase()) : -1
+    const n = parseInt(t, 10)
+    if (byLabel >= 0) goTo(byLabel)
+    else if (/^\d+$/.test(t) && Number.isFinite(n)) goTo(Math.min(pages.length, Math.max(1, n)) - 1)
+    else setPageText(pageName(currentPage))
   }
 
   const zoomValue = typeof mode === 'number' ? (ZOOM_STEPS.includes(mode) ? String(mode) : 'custom') : mode
@@ -1228,6 +1314,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 busy={busy}
                 width={paneWidth}
                 onSelectionChange={setPageSel}
+                labels={pageLabels}
+                attachments={attachments}
+                onSaveAttachment={(a) => void saveAttachment(a)}
+                layers={layers}
+                isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
+                onToggleLayer={toggleLayer}
               />
             )}
             {sidebar && (
@@ -1307,12 +1399,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             if (e.key === 'Enter') e.currentTarget.blur()
             if (e.key === 'Escape') {
               setEditingPage(false)
-              setPageText(String(currentPage + 1))
+              setPageText(pageName(currentPage))
               e.currentTarget.blur()
             }
           }}
         />
-        <span className="muted">/ {pages.length || '–'}</span>
+        <span className="muted">{pageLabels ? `(${currentPage + 1} of ${pages.length})` : `/ ${pages.length || '–'}`}</span>
         <IconButton icon={ChevronDown} label="Next page" onClick={() => goTo(currentPage + 1)} disabled={currentPage >= pages.length - 1} />
         <span className="status-fill" />
         <IconButton icon={ZoomOut} label="Zoom out" title="Zoom out (Ctrl+−)" onClick={() => stepZoom(-1)} disabled={!pages.length} />

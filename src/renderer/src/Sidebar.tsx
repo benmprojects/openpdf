@@ -1,10 +1,11 @@
-import { Bookmark, LayoutGrid } from 'lucide-react'
+import { Bookmark, Download, Eye, EyeOff, File as FileIcon, Layers, LayoutGrid, Paperclip, type LucideIcon } from 'lucide-react'
+import type { Layer } from './layers'
 import { useEffect, useRef, useState } from 'react'
-import type { OutlineNode, PageSize, PdfClient } from './pdfClient'
+import type { AttachmentInfo, OutlineNode, PageSize, PdfClient } from './pdfClient'
 
 const THUMB_WIDTH = 132
 
-export type SidebarTab = 'pages' | 'bookmarks'
+export type SidebarTab = 'pages' | 'bookmarks' | 'attachments' | 'layers'
 
 /** A page edit requested from the thumbnail pane. `move.before` is an index in the current order (page count = end). */
 export type PageOp =
@@ -28,27 +29,107 @@ interface Props {
   width: number
   /** Reports the selected thumbnails (0-based, sorted) whenever they change. */
   onSelectionChange?: (pages: number[]) => void
+  /** Page labels (one per page), or null when the document has none. */
+  labels: string[] | null
+  attachments: AttachmentInfo[]
+  onSaveAttachment: (a: AttachmentInfo) => void
+  layers: Layer[]
+  isLayerVisible: (key: string) => boolean
+  onToggleLayer: (key: string) => void
 }
 
-export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy, width, onSelectionChange }: Props) {
+const TABS: [SidebarTab, string, LucideIcon][] = [
+  ['pages', 'Pages', LayoutGrid],
+  ['bookmarks', 'Bookmarks', Bookmark],
+  ['attachments', 'Attachments', Paperclip],
+  ['layers', 'Layers', Layers]
+]
+
+export function Sidebar(props: Props) {
+  const { client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy, width, onSelectionChange, labels } = props
   return (
     <aside className="sidebar" style={{ width }}>
-      <div className="sidebar-tabs" role="tablist">
-        <button role="tab" aria-selected={tab === 'pages'} onClick={() => onTab('pages')}>
-          <LayoutGrid size={14} strokeWidth={1.8} aria-hidden />
-          Pages
-        </button>
-        <button role="tab" aria-selected={tab === 'bookmarks'} onClick={() => onTab('bookmarks')}>
-          <Bookmark size={14} strokeWidth={1.8} aria-hidden />
-          Bookmarks
-        </button>
+      <div className="sidebar-tabs" role="tablist" aria-label="Side pane">
+        {TABS.map(([k, label, Icon]) => (
+          <button key={k} role="tab" aria-selected={tab === k} aria-label={label} title={label} onClick={() => onTab(k)}>
+            <Icon size={15} strokeWidth={1.8} aria-hidden />
+            {tab === k && <span>{label}</span>}
+          </button>
+        ))}
       </div>
       {tab === 'pages' ? (
-        <Thumbnails client={client} pages={pages} currentPage={currentPage} onGoTo={onGoTo} onPageOp={onPageOp} busy={busy} onSelectionChange={onSelectionChange} />
-      ) : (
+        <Thumbnails
+          client={client}
+          pages={pages}
+          currentPage={currentPage}
+          onGoTo={onGoTo}
+          onPageOp={onPageOp}
+          busy={busy}
+          onSelectionChange={onSelectionChange}
+          labels={labels}
+        />
+      ) : tab === 'bookmarks' ? (
         <Bookmarks outline={outline} onGoTo={onGoTo} />
+      ) : tab === 'attachments' ? (
+        <Attachments list={props.attachments} onSave={props.onSaveAttachment} />
+      ) : (
+        <LayerList layers={props.layers} isVisible={props.isLayerVisible} onToggle={props.onToggleLayer} />
       )}
     </aside>
+  )
+}
+
+function formatSize(n: number): string {
+  if (n < 0) return 'size unknown'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+function Attachments({ list, onSave }: { list: AttachmentInfo[]; onSave: (a: AttachmentInfo) => void }) {
+  if (!list.length) return <div className="side-empty">This document has no attached files.</div>
+  return (
+    <ul className="side-list" aria-label="Attached files">
+      {list.map((a) => (
+        <li key={a.index}>
+          <FileIcon className="side-list-icon" size={18} strokeWidth={1.6} aria-hidden />
+          <span className="side-list-text">
+            <span className="side-list-name" title={a.name}>
+              {a.name}
+            </span>
+            <span className="muted small">{formatSize(a.size)}</span>
+          </span>
+          <button className="icon-btn" onClick={() => onSave(a)} aria-label={`Save ${a.name}`} title="Save a copy of this file…">
+            <Download size={16} strokeWidth={1.8} aria-hidden />
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function LayerList({ layers, isVisible, onToggle }: { layers: Layer[]; isVisible: (key: string) => boolean; onToggle: (key: string) => void }) {
+  if (!layers.length) return <div className="side-empty">This document has no layers.</div>
+  return (
+    <ul className="side-list" aria-label="Layers">
+      {layers.map((l) => {
+        const on = isVisible(l.key)
+        return (
+          <li key={l.key}>
+            <button
+              className="icon-btn"
+              onClick={() => onToggle(l.key)}
+              aria-pressed={on}
+              aria-label={`${on ? 'Hide' : 'Show'} ${l.name}`}
+              title={on ? 'Hide this layer (view only; the file is not changed)' : 'Show this layer'}
+            >
+              {on ? <Eye size={16} strokeWidth={1.8} aria-hidden /> : <EyeOff size={16} strokeWidth={1.8} aria-hidden />}
+            </button>
+            <span className={on ? 'side-list-name' : 'side-list-name muted'}>{l.name}</span>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -59,7 +140,8 @@ function Thumbnails({
   onGoTo,
   onPageOp,
   busy,
-  onSelectionChange
+  onSelectionChange,
+  labels
 }: {
   client: PdfClient
   pages: PageSize[]
@@ -68,6 +150,7 @@ function Thumbnails({
   onPageOp: (op: PageOp, pages: number[]) => void
   busy: boolean
   onSelectionChange?: (pages: number[]) => void
+  labels: string[] | null
 }) {
   const list = useRef<HTMLDivElement>(null)
   const [sel, setSel] = useState<number[]>([])
@@ -139,6 +222,7 @@ function Thumbnails({
       {pages.map((size, i) => (
         <Thumb
           key={i}
+          label={labels?.[i] || String(i + 1)}
           client={client}
           index={i}
           size={size}
@@ -213,6 +297,7 @@ function Thumbnails({
 }
 
 function Thumb({
+  label,
   client,
   index,
   size,
@@ -226,6 +311,7 @@ function Thumb({
   onDrop,
   onDragEnd
 }: {
+  label: string
   client: PdfClient
   index: number
   size: PageSize
@@ -286,7 +372,7 @@ function Thumb({
       aria-current={current ? 'page' : undefined}
     >
       <canvas ref={canvas} style={{ width: THUMB_WIDTH, height: cssH }} />
-      <span>{index + 1}</span>
+      <span title={label !== String(index + 1) ? `Page ${index + 1}` : undefined}>{label}</span>
     </button>
   )
 }

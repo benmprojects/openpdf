@@ -164,6 +164,26 @@ ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array
   return writeDocument(res.filePath, data)
 })
 
+/** Saves an embedded file under a name the user picks. Any file type; nothing is opened or run. */
+ipcMain.handle('file:save-attachment', async (e, name: string, data: Uint8Array) => {
+  // Characters Windows does not allow in file names, including control characters.
+  // eslint-disable-next-line no-control-regex
+  const safe = basename(name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') || 'attachment'
+  let target: string | undefined
+  if (e2e && process.env.OPENPDF_E2E_DIR) target = join(process.env.OPENPDF_E2E_DIR, safe)
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { defaultPath: safe }
+    const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+    if (res.canceled || !res.filePath) return null
+    target = res.filePath
+  }
+  const tmp = `${target}.openpdf-tmp`
+  await writeFile(tmp, data)
+  await rename(tmp, target)
+  return target
+})
+
 /** Asks for a folder, then writes each file into it without overwriting: a clash gets " (2)" and so on. */
 ipcMain.handle('file:save-many', async (e, files: { name: string; data: Uint8Array }[]) => {
   let dir = e2e ? process.env.OPENPDF_E2E_DIR : undefined

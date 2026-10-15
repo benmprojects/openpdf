@@ -1,7 +1,7 @@
 import type { WorkerRequest, WorkerResponse } from './pdf.worker'
-import type { ImportedAnnot, OutlineNode, PageText } from './pdfiumRaw'
+import type { AttachmentInfo, ImportedAnnot, OutlineNode, PageText } from './pdfiumRaw'
 
-export type { ImportedAnnot, OutlineNode, PageText }
+export type { AttachmentInfo, ImportedAnnot, OutlineNode, PageText }
 
 export interface PageSize {
   width: number
@@ -113,6 +113,25 @@ export class PdfClient {
           this.pump()
         })
     }
+  }
+
+  async attachments(): Promise<AttachmentInfo[]> {
+    const res = await this.call({ type: 'attachments' })
+    if (res.ok && res.type === 'attachments') return res.attachments
+    throw new Error('Unexpected response')
+  }
+
+  async attachmentData(index: number): Promise<Uint8Array> {
+    const res = await this.call({ type: 'attachmentData', index })
+    if (res.ok && res.type === 'attachmentData') return res.data
+    throw new Error('Unexpected response')
+  }
+
+  /** One label per page; all empty when the document has no page labels. */
+  async pageLabels(): Promise<string[]> {
+    const res = await this.call({ type: 'labels' })
+    if (res.ok && res.type === 'labels') return res.labels
+    throw new Error('Unexpected response')
   }
 
   async outline(): Promise<OutlineNode[]> {

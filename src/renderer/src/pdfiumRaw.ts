@@ -395,3 +395,64 @@ export function renderRegion(
     m.wasmExports.free(ptr)
   }
 }
+
+export interface AttachmentInfo {
+  index: number
+  name: string
+  /** Size in bytes, or -1 if the file data cannot be read. */
+  size: number
+}
+
+/** Files embedded in the document (the EmbeddedFiles name tree). */
+export function readAttachments(lib: PDFiumLibrary, doc: PDFiumDocument): AttachmentInfo[] {
+  const m = raw(lib)
+  const d = docHandle(doc)
+  const out: AttachmentInfo[] = []
+  const count = Math.min(m._FPDFDoc_GetAttachmentCount(d), 10000)
+  const lenPtr = m.wasmExports.malloc(4)
+  try {
+    for (let i = 0; i < count; i++) {
+      const att = m._FPDFDoc_GetAttachment(d, i)
+      if (!att) continue
+      const name = readUtf16(m, (buf, len) => m._FPDFAttachment_GetName(att, buf, len)) || `Attachment ${i + 1}`
+      const ok = m._FPDFAttachment_GetFile(att, 0, 0, lenPtr)
+      const size = ok ? new Uint32Array(m.HEAPU8.buffer, lenPtr, 1)[0] : -1
+      out.push({ index: i, name, size })
+    }
+  } finally {
+    m.wasmExports.free(lenPtr)
+  }
+  return out
+}
+
+/** The bytes of one embedded file. */
+export function readAttachmentData(lib: PDFiumLibrary, doc: PDFiumDocument, index: number): Uint8Array {
+  const m = raw(lib)
+  const att = m._FPDFDoc_GetAttachment(docHandle(doc), index)
+  if (!att) throw new Error('No such attachment')
+  const lenPtr = m.wasmExports.malloc(4)
+  try {
+    if (!m._FPDFAttachment_GetFile(att, 0, 0, lenPtr)) throw new Error('The attachment has no readable data')
+    const len = new Uint32Array(m.HEAPU8.buffer, lenPtr, 1)[0]
+    if (len > 512 * 1024 * 1024) throw new Error('The attachment is too large')
+    const buf = m.wasmExports.malloc(Math.max(1, len))
+    try {
+      m._FPDFAttachment_GetFile(att, buf, len, lenPtr)
+      return m.HEAPU8.slice(buf, buf + len)
+    } finally {
+      m.wasmExports.free(buf)
+    }
+  } finally {
+    m.wasmExports.free(lenPtr)
+  }
+}
+
+/** Page labels (for example "iv" or "A-3"), one per page; empty strings when the document defines none. */
+export function readPageLabels(lib: PDFiumLibrary, doc: PDFiumDocument): string[] {
+  const m = raw(lib)
+  const d = docHandle(doc)
+  const n = doc.getPageCount()
+  const out: string[] = []
+  for (let i = 0; i < n; i++) out.push(readUtf16(m, (buf, len) => m._FPDF_GetPageLabel(d, i, buf, len)))
+  return out
+}
