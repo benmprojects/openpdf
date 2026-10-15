@@ -16,7 +16,7 @@ HKEY_CURRENT_USER\Software\SyncEngines\Providers\OneDrive\03faf
     WebUrl    REG_SZ    https://contoso.sharepoint.com/sites/Tenders
 
 HKEY_CURRENT_USER\Software\SyncEngines\Providers\OneDrive\abc
-    MountPoint    REG_SZ    C:\Users\sam\OneDrive - Example Constructions
+    MountPoint    REG_SZ    C:\Users\sam\OneDrive - Contoso Constructions
     UrlNamespace    REG_SZ    https://contoso-my.sharepoint.com/personal/sam_contoso_com_au/Documents
     LibraryType    REG_SZ    business1
 `
@@ -25,7 +25,7 @@ describe('parseSyncEngines', () => {
   it('finds synced SharePoint libraries and OneDrive folders, and skips entries with no web address', () => {
     expect(parseSyncEngines(REG)).toEqual([
       { kind: 'sharepoint', label: 'Tenders - Documents (SharePoint: Tenders)', path: 'C:\\Users\\sam\\Contoso1\\Tenders - Documents' },
-      { kind: 'onedrive', label: 'OneDrive - Example Constructions (OneDrive)', path: 'C:\\Users\\sam\\OneDrive - Example Constructions' }
+      { kind: 'onedrive', label: 'OneDrive - Contoso Constructions (OneDrive)', path: 'C:\\Users\\sam\\OneDrive - Contoso Constructions' }
     ])
   })
   it('returns nothing for empty or unrelated text', () => {
