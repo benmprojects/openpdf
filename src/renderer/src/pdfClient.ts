@@ -161,9 +161,9 @@ export class PdfClient {
   }
 
   /** The text objects a page draws itself, in content-stream order, and how many there are in all. */
-  async textObjects(page: number): Promise<{ objects: TextObject[]; total: number }> {
+  async textObjects(page: number): Promise<{ objects: TextObject[]; total: number; rotation: number }> {
     const res = await this.call({ type: 'textObjects', page })
-    if (res.ok && res.type === 'textObjects') return { objects: res.objects, total: res.total }
+    if (res.ok && res.type === 'textObjects') return { objects: res.objects, total: res.total, rotation: res.rotation }
     throw new Error('Unexpected response')
   }
 

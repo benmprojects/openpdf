@@ -727,7 +727,7 @@ export interface TextObject {
 }
 
 /** Text objects drawn directly by the page (not inside form XObjects), in content-stream order. */
-export function readTextObjects(lib: PDFiumLibrary, page: PDFiumPage): { objects: TextObject[]; total: number } {
+export function readTextObjects(lib: PDFiumLibrary, page: PDFiumPage): { objects: TextObject[]; total: number; rotation: number } {
   const m = raw(lib)
   const p = pageHandle(page)
   const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
@@ -800,7 +800,7 @@ export function readTextObjects(lib: PDFiumLibrary, page: PDFiumPage): { objects
         matrix
       })
     }
-    return { objects, total: ordinal }
+    return { objects, total: ordinal, rotation: m._FPDFPage_GetRotation(p) * 90 }
   } finally {
     m.wasmExports.free(scratch)
     m._FPDFText_ClosePage(tp)

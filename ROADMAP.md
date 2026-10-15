@@ -64,7 +64,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Document properties and metadata editing, XMP
 
 ## Phase 4: Content editing (P0/P1)
-- [ ] Edit existing text (font match, reflow within a text box). Done so far: edit one text run in place (Edit tab > Edit text), redrawn in the installed font of the same family (Windows registry lookup, licence and glyph checks) or else a matching standard font. Still to do: reflow a paragraph
+- [x] Edit existing text (font match, reflow within a text box): Edit tab > Edit text. A run, or a paragraph of several lines (rewrapped to its original width), is edited in place; redrawn in the installed font of the same family (Windows registry lookup, licence and glyph checks) or else a matching standard font
 - [x] Edit, move, resize and replace images (Edit tab > Edit image: drag to move, corner to resize, Replace, Delete; page-level images only, not those inside form XObjects)
 - [x] Add and edit shapes and paths; object selection, align, distribute, z-order (annotation shapes: Draw tab; Shift-click multi-select, align, distribute and stacking order of annotations: Edit tab; vector paths that are part of the page: Edit > Edit shape moves, resizes or deletes them)
 - [x] Add and edit links; add text and images (links: Phase 3; text: Typewriter, Text box and callout tools, and Edit text for existing text; images: Edit > Add image places a PNG or JPEG as page content)

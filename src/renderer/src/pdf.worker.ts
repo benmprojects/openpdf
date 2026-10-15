@@ -55,7 +55,7 @@ export type WorkerResponse =
   | { id: number; ok: true; type: 'attachmentData'; data: Uint8Array }
   | { id: number; ok: true; type: 'labels'; labels: string[] }
   | { id: number; ok: true; type: 'links'; links: PageLink[] }
-  | { id: number; ok: true; type: 'textObjects'; objects: TextObject[]; total: number }
+  | { id: number; ok: true; type: 'textObjects'; objects: TextObject[]; total: number; rotation: number }
   | { id: number; ok: true; type: 'imageObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
   | { id: number; ok: true; type: 'pathObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
   | { id: number; ok: true; type: 'close' }
@@ -130,9 +130,9 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (msg.type === 'textObjects') {
       if (!doc || !library) throw new Error('No document loaded')
       const page = doc.getPage(msg.page)
-      const { objects, total } = readTextObjects(library, page)
+      const { objects, total, rotation } = readTextObjects(library, page)
       page.close()
-      reply({ id: msg.id, ok: true, type: 'textObjects', objects, total })
+      reply({ id: msg.id, ok: true, type: 'textObjects', objects, total, rotation })
     } else if (msg.type === 'imageObjects') {
       if (!doc || !library) throw new Error('No document loaded')
       const page = doc.getPage(msg.page)

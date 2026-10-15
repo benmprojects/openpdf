@@ -6,7 +6,7 @@
 import fontkit from '@pdf-lib/fontkit'
 import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib'
 import { pageContent } from './pageContent'
-import { isShow, num, parseContent, removeOps, showBytes, showOrigins, stringToBytes, type Op } from './content'
+import { isShow, num, parseContent, showBytes, showOrigins, stringToBytes, type Op } from './content'
 
 export interface TextEditTarget {
   /** Zero-based page. */
@@ -84,14 +84,80 @@ function hexRgb(hex: string): ReturnType<typeof rgb> {
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255)
 }
 
-/** Replaces the text of one text object. An empty `text` deletes it. Returns the new file. */
-export async function replaceText(
+export interface BlockTarget {
+  /** Zero-based page. */
+  page: number
+  /** The text objects being replaced (as PDFium counts them), in content order. */
+  ordinals: number[]
+  /** How many text objects PDFium found on the page; must equal the content stream's count. */
+  total: number
+  /** Where PDFium puts the start of each of those objects in page space, to check the stream against. */
+  origins: { x: number; y: number }[]
+}
+
+/** Where a paragraph sits, so a reflowed one lines up with the original. All in page space. */
+export interface BlockLayout {
+  firstX: number
+  restX: number
+  baselineY: number
+  /** Distance between baselines; 0 for a single line, which is then not wrapped. */
+  leading: number
+  /** Width of the widest line. */
+  width: number
+}
+
+/**
+ * Greedy word wrap. Blank-line breaks in `text` (newlines) are kept. A word wider than the line is left on a line of
+ * its own. `widthOf` measures a string in points; the first line may have a different width (an indent).
+ */
+export function wrapText(text: string, widthOf: (s: string) => number, firstWidth: number, restWidth: number): string[] {
+  const out: string[] = []
+  for (const para of text.split('\n')) {
+    const words = para.split(/\s+/).filter(Boolean)
+    if (!words.length) {
+      out.push('')
+      continue
+    }
+    let line = ''
+    for (const w of words) {
+      const candidate = line ? `${line} ${w}` : w
+      if (!line || widthOf(candidate) <= (out.length === 0 ? firstWidth : restWidth)) line = candidate
+      else {
+        out.push(line)
+        line = w
+      }
+    }
+    out.push(line)
+  }
+  return out
+}
+
+/**
+ * Whether removing show operation `idx` leaves later text where it was, given that every operation in `removing` is
+ * being removed too (and `removable` says which of those, later in the stream, really can be).
+ */
+function nextKeepsLayout(ops: Op[], idx: number, removing: ReadonlySet<number>, removable: ReadonlyMap<number, boolean>): boolean {
+  for (let i = idx + 1; i < ops.length; i++) {
+    const op = ops[i].op
+    if (op === 'ET' || op === 'BT' || op === 'Td' || op === 'TD' || op === 'T*' || op === 'Tm' || op === "'" || op === '"') return true
+    if ((op === 'Tj' || op === 'TJ') && showBytes(ops[i]).length > 0) return removing.has(i) && removable.get(i) === true
+  }
+  return true
+}
+
+/**
+ * Replaces the text of one or more text objects with `text`. One object: drawn where it was (a longer text runs on).
+ * Several objects forming a paragraph (with a `layout` that has a line spacing): the text is wrapped to the
+ * paragraph's width and drawn line by line. An empty `text` deletes the objects. Returns the new file.
+ */
+export async function replaceBlock(
   bytes: Uint8Array,
-  target: TextEditTarget,
+  target: BlockTarget,
   text: string,
   style: TextStyle,
   /** An installed font with the original's family: used when it may be embedded and has every character. */
-  installed?: Uint8Array | null
+  installed?: Uint8Array | null,
+  layout?: BlockLayout | null
 ): Promise<{ bytes: Uint8Array; hiddenOriginal: boolean; fontUsed: string }> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
   const page = doc.getPage(target.page)
@@ -99,30 +165,44 @@ export async function replaceText(
   const ops = parseContent(src)
   const shows = ops.map((o, i) => (isShow(o) && showBytes(o).length > 0 ? i : -1)).filter((i) => i >= 0)
   if (shows.length !== target.total) throw new Error('The text on this page cannot be edited safely (its content did not match).')
-  const idx = shows[target.ordinal]
-  if (idx === undefined) throw new Error('That text could not be found in the page content.')
-  const op = ops[idx]
-  // The operator and PDFium's object must be the same text: compare where they start, when the stream says where.
+  const idxs = target.ordinals.map((o) => shows[o])
+  if (!idxs.length || idxs.some((i) => i === undefined)) throw new Error('That text could not be found in the page content.')
+  // Each operator and PDFium's object must be the same text: compare where they start, when the stream says where.
   const allShows = ops.map((o, i) => (isShow(o) ? i : -1)).filter((i) => i >= 0)
-  const origin = showOrigins(ops)[allShows.indexOf(idx)]
-  if (origin && Math.hypot(origin.x - style.matrix[4], origin.y - style.matrix[5]) > 1) throw new Error('The page changed under the edit; select the text again.')
+  const origins = showOrigins(ops)
+  idxs.forEach((idx, k) => {
+    const origin = origins[allShows.indexOf(idx)]
+    const want = target.origins[k]
+    if (origin && want && Math.hypot(origin.x - want.x, origin.y - want.y) > 1) throw new Error('The page changed under the edit; select the text again.')
+  })
 
-  // Take the original out, keeping what follows in place.
-  let out: string
+  // Take the originals out, keeping what follows in place; where that is not possible, make them invisible instead.
+  const removing = new Set(idxs)
+  const removable = new Map<number, boolean>()
+  for (const idx of [...idxs].sort((x, y) => y - x)) removable.set(idx, nextKeepsLayout(ops, idx, removing, removable))
+  const edits: { start: number; end: number; text: string }[] = []
   let hiddenOriginal = false
-  const safe = removalKeepsLayout(ops, idx)
-  if (safe) {
-    if (op.op === "'" || op.op === '"') {
-      // ' and " also move to the next line (and " sets word and character spacing): keep that part.
-      const spacing = op.op === '"' && op.operands.length >= 3 && op.operands[0].t === 'num' && op.operands[1].t === 'num' ? `${num(op.operands[0].v)} Tw ${num(op.operands[1].v)} Tc ` : ''
-      out = src.slice(0, op.start) + spacing + 'T*' + src.slice(op.end)
-    } else out = removeOps(src, ops, new Set([idx]))
-  } else {
-    // Later text on the line depends on this one's advance: keep the operation but make it invisible.
-    const prev = renderModeBefore(ops, idx)
-    out = `${src.slice(0, op.start)}3 Tr ${src.slice(op.start, op.end)} ${prev} Tr${src.slice(op.end)}`
-    hiddenOriginal = true
+  for (const idx of idxs) {
+    const op = ops[idx]
+    if (removable.get(idx)) {
+      if (op.op === "'" || op.op === '"') {
+        // ' and " also move to the next line (and " sets word and character spacing): keep that part.
+        const spacing = op.op === '"' && op.operands.length >= 3 && op.operands[0].t === 'num' && op.operands[1].t === 'num' ? `${num(op.operands[0].v)} Tw ${num(op.operands[1].v)} Tc ` : ''
+        edits.push({ start: op.start, end: op.end, text: spacing + 'T*' })
+      } else {
+        // Also drop the whitespace before it, so no double space is left behind.
+        let cut = op.start
+        while (cut > 0 && /\s/.test(src[cut - 1])) cut--
+        edits.push({ start: cut, end: op.end, text: '' })
+      }
+    } else {
+      // Later text on the line depends on this one's advance: keep the operation but make it invisible.
+      edits.push({ start: op.start, end: op.end, text: `3 Tr ${src.slice(op.start, op.end)} ${renderModeBefore(ops, idx)} Tr` })
+      hiddenOriginal = true
+    }
   }
+  let out = src
+  for (const e of edits.sort((x, y) => y.start - x.start)) out = out.slice(0, e.start) + e.text + out.slice(e.end)
   const ctx = doc.context
   page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(stringToBytes(out))))
 
@@ -137,14 +217,37 @@ export async function replaceText(
     font ??= await doc.embedFont(pickStandardFont(style))
     const [a, b] = style.matrix
     const scale = Math.hypot(a, b) || 1
+    const size = style.size * scale
+    const angle = (Math.atan2(b, a) * 180) / Math.PI
     try {
-      font.encodeText(text)
+      font.encodeText(text.replace(/\n/g, ' '))
     } catch {
       throw new Error('The replacement font cannot show some of those characters.')
     }
-    page.drawText(text, { x: style.matrix[4], y: style.matrix[5], font, size: style.size * (scale === 1 ? 1 : scale), color: hexRgb(style.color), rotate: degrees((Math.atan2(b, a) * 180) / Math.PI) })
+    const widthOf = (s: string) => font.widthOfTextAtSize(s, size)
+    const upright = Math.abs(angle) < 0.01
+    const wrap = !!layout && layout.leading > 0 && idxs.length > 1
+    const lines = upright ? (wrap ? wrapText(text, widthOf, layout!.width - (layout!.firstX - layout!.restX), layout!.width) : text.split('\n')) : [text.replace(/\n/g, ' ')]
+    const pitch = layout?.leading || size * 1.2
+    lines.forEach((line, i) => {
+      if (!line) return
+      const x = layout && wrap ? (i === 0 ? layout.firstX : layout.restX) : style.matrix[4]
+      const y = (layout && wrap ? layout.baselineY : style.matrix[5]) - i * pitch
+      page.drawText(line, { x, y, font, size, color: hexRgb(style.color), rotate: degrees(angle) })
+    })
   }
   return { bytes: await doc.save(), hiddenOriginal, fontUsed }
+}
+
+/** Replaces the text of one text object. An empty `text` deletes it. Returns the new file. */
+export function replaceText(
+  bytes: Uint8Array,
+  target: TextEditTarget,
+  text: string,
+  style: TextStyle,
+  installed?: Uint8Array | null
+): Promise<{ bytes: Uint8Array; hiddenOriginal: boolean; fontUsed: string }> {
+  return replaceBlock(bytes, { page: target.page, ordinals: [target.ordinal], total: target.total, origins: [{ x: style.matrix[4], y: style.matrix[5] }] }, text, style, installed, null)
 }
 
 /** Whether a font file may be embedded (OS/2 fsType: not restricted) and has a glyph for every character of `text`. */

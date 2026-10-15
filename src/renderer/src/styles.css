@@ -1679,6 +1679,9 @@ button.compare-item:hover {
   border-radius: 2px;
   cursor: text;
 }
+.textedit-box.block {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
 .textedit-box:hover,
 .textedit-box:focus-visible {
   border-color: var(--accent);

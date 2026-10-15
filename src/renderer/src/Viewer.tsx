@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { AnnotLayer } from './AnnotLayer'
 import { CALLOUT_DEFAULT, isMarkup, pointInRect, simplifyPath, withBounds, NOTE_SIZE, type Annot, type Pt } from './annotations'
-import type { ImageObject, PageLink, PageSize, PdfClient, TextObject } from './pdfClient'
+import type { ImageObject, PageLink, PageSize, PdfClient } from './pdfClient'
+import type { TextBlock } from './textBlocks'
 import { TextEditLayer } from './TextEditLayer'
 import { ObjectEditLayer } from './ObjectEditLayer'
 import type { Matrix6 } from './content'
@@ -141,8 +142,8 @@ interface Props {
   onLinkRect: (page: number, rect: Rect) => void
   /** A link was clicked: go to a page, or (after asking) open a web address. */
   onFollowLink: (link: PageLink) => void
-  /** Edit Text tool: a text run on a page was given new text. */
-  onEditText: (page: number, obj: TextObject, total: number, text: string) => void
+  /** Edit Text tool: a block of text on a page was given new text. */
+  onEditText: (page: number, block: TextBlock, total: number, text: string) => void
   /** Edit Image tool: an image was moved or resized (page-space change) or deleted (null). */
   onChangeImage: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
   onReplaceImage: (page: number, obj: ImageObject, total: number) => void
@@ -1147,7 +1148,7 @@ interface PageViewProps {
   grid: number | null
   guides: Guide[]
   links?: PageLink[]
-  onEditText: (page: number, obj: TextObject, total: number, text: string) => void
+  onEditText: (page: number, block: TextBlock, total: number, text: string) => void
   onChangeImage: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
   onReplaceImage: (page: number, obj: ImageObject, total: number) => void
   onChangePath: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void

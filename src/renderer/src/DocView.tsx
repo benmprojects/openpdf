@@ -66,7 +66,7 @@ import { readLabelRanges, writeLabelRanges, writeOutline, type BookmarkNode, typ
 import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
-import { replaceText, weightAndSlant } from './textEdit'
+import { replaceBlock, weightAndSlant } from './textEdit'
 import { addImage, replaceImage, transformImage } from './imageEdit'
 import { transformPath } from './pathEdit'
 import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
@@ -2806,13 +2806,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 await applyPageEdit((b) => replaceImage(b, { page, ordinal: obj.ordinal, total, matrix: obj.matrix }, { data: d, kind }), 'Image replaced')
               }}
               textEditReady={clientBytes === viewBytes && (hiddenLayers !== null || viewBytes === bytes) && !busy}
-              onEditText={(page, obj, total, text) => {
+              onEditText={(page, block, total, text) => {
                 let hidden = false
                 void applyPageEdit(async (b) => {
-                  const style = { font: obj.font, flags: obj.flags, weight: obj.weight, italic: obj.italic, size: obj.size, color: obj.color, matrix: obj.matrix }
+                  const style = { font: block.font, flags: block.flags, weight: block.weight, italic: block.italic, size: block.size, color: block.color, matrix: block.matrix }
                   const { bold, italic } = weightAndSlant(style)
-                  const installed = text ? await window.openpdf.findFont(obj.font, bold, italic).catch(() => null) : null
-                  const r = await replaceText(b, { page, ordinal: obj.ordinal, total }, text, style, installed?.data)
+                  const installed = text ? await window.openpdf.findFont(block.font, bold, italic).catch(() => null) : null
+                  const r = await replaceBlock(b, { page, ordinals: block.ordinals, total, origins: block.origins }, text, style, installed?.data, block.reflow ? block.layout : null)
                   hidden = r.hiddenOriginal
                   return r.bytes
                 }, text ? 'Text updated' : 'Text deleted').then(() => {
