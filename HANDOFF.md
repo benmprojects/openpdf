@@ -11,13 +11,17 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - The user asked for a professional look with icons, like a ribbon editor. Keep new UI consistent with the design system below.
 
 ## Current state
-- Phases 0 to 2 (most), Phase 3 first part, plus print and rotate view, all done earlier.
-- Phase 0 is now complete except dockable panes and a real installer/CI run (see ROADMAP).
-- New this session:
-  - Print and rotate view (`print.ts`, `viewRotation.ts`).
-  - Vitest, Playwright, ESLint and the e2e specs in `e2e/`.
-  - Settings, recent files, crash recovery, themes, single instance (`src/main/settings.ts`).
-  - Ribbon UI with Lucide icons (`Ribbon.tsx`), the redesign, tiled rendering at high zoom, and packaging/CI/notices (`electron-builder.yml`, `.github/workflows/ci.yml`, `scripts/licences.mjs`).
+- Phase 0 complete except a real installer/CI run. Phase 1 complete (see ROADMAP). Phase 2 (most) and the first part of Phase 3 were done in earlier sessions.
+- Phase 0 and 1 work this session:
+  - Print: N-up and booklet (`src/shared/printLayout.ts`).
+  - Rotate view; page display modes (`pageLayout.ts`); marquee zoom and snapshot tools.
+  - Attachments, layers (`layers.ts`) and page labels.
+  - Search in files (`multiSearch.ts`, `SearchPanel.tsx`).
+  - Presentation mode (`Presentation.tsx`).
+  - Read aloud (`readAloud.ts`), reading mode, page colours, screen-reader text layer.
+  - Rulers, grid and guides (`Rulers.tsx`, `GuideLayer.tsx`); measurement (`measure.ts`, `MeasureLayer.tsx`, Measure ribbon tab).
+  - Tests, settings, recovery, themes, ribbon UI, tiled rendering, packaging.
+- Fixtures: `python scripts/make-test-pdf.py` (6 pages, mixed orientation, "fox" 24 times). `npx tsx scripts/make-feature-pdf.mts` adds attachments, page labels (i, ii, 1, 2), two layers (one off) and a 1:100 viewport scale.
 
 ## Design system (keep to it)
 - Tokens at the top of `styles.css`: `--bg --panel --panel-2 --panel-3 --border --border-strong --text --muted --accent (OpenPDF red) --focus --pressed --sel --shadow-* --radius`. Light is the base; dark comes from `prefers-color-scheme`, which Electron's `nativeTheme.themeSource` drives from Settings. Never hard-code chrome colours.
@@ -61,8 +65,8 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - Lint: some react-hooks rules are relaxed to warnings (see CLAUDE.md).
 
 ## Next steps (strict phase order)
-1. (Done: side pane docks left or right.)
-2. Phase 1, in ROADMAP order:
+1. Phase 2 gaps in ROADMAP order. Polygon and polyline annotations come first among the unticked items' dependencies: measurements should then be savable as measurement annotations (Line /IT LineDimension, PolyLine /IT PolyLineDimension, Polygon /IT PolygonDimension, each with a /Measure dictionary).
+2. (Done this session) Phase 1, in ROADMAP order:
    - Marquee zoom; single and two-page modes.
    - Attachments, layers (optional content), page labels.
    - Find in multiple files.
