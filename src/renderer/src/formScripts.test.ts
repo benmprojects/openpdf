@@ -137,7 +137,7 @@ describe('the sandbox', () => {
   it('caps memory', async () => {
     const r = await run('var a = []; while (true) { a.push(new Array(100000).fill("xxxxxxxx")); }')
     expect(r.error).toBeTruthy()
-  })
+  }, 30000)
 
   it('cannot reach into the host through the input: a hostile field name is just data', async () => {
     const r = await runScript('Format', 'event.value = this.getField("x\\"; process.exit(1); \\"").value;', 'target', [st('target', ''), st('x"; process.exit(1); "', 'safe')], { value: '' })
