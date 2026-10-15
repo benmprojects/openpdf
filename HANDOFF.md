@@ -11,17 +11,25 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - The user asked for a professional look with icons, like a ribbon editor. Keep new UI consistent with the design system below.
 
 ## Current state
-- Phase 0 complete except a real installer/CI run. Phase 1 complete (see ROADMAP). Phase 2 (most) and the first part of Phase 3 were done in earlier sessions.
-- Phase 0 and 1 work this session:
-  - Print: N-up and booklet (`src/shared/printLayout.ts`).
-  - Rotate view; page display modes (`pageLayout.ts`); marquee zoom and snapshot tools.
-  - Attachments, layers (`layers.ts`) and page labels.
-  - Search in files (`multiSearch.ts`, `SearchPanel.tsx`).
-  - Presentation mode (`Presentation.tsx`).
-  - Read aloud (`readAloud.ts`), reading mode, page colours, screen-reader text layer.
-  - Rulers, grid and guides (`Rulers.tsx`, `GuideLayer.tsx`); measurement (`measure.ts`, `MeasureLayer.tsx`, Measure ribbon tab).
-  - Tests, settings, recovery, themes, ribbon UI, tiled rendering, packaging.
-- Fixtures: `python scripts/make-test-pdf.py` (6 pages, mixed orientation, "fox" 24 times). `npx tsx scripts/make-feature-pdf.mts` adds attachments, page labels (i, ii, 1, 2), two layers (one off) and a 1:100 viewport scale.
+- Phases 0, 1 and 2 complete (see ROADMAP). Phase 3 first part (page organisation) done earlier.
+- Phase 2 this session:
+  - New annotation kinds: squiggly, caret/replace text, typewriter, callout, polygon/polyline/cloud, image and dated stamps, file attachment, sound, link.
+  - Shape options: fill, dashes, opacity, fonts.
+  - Eraser; measurements saved as measurement annotations.
+  - Comment list with threads and review status, summary PDF and CSV export.
+  - Properties panel (Ctrl+E), tool defaults and presets (Settings).
+  - Other tools' annotations: arrows, dashes, callouts and measurements are editable via pdf-lib extras; anything else is "foreign" and can be moved, resized or deleted.
+  - Links can be followed and added.
+  - XFDF/FDF import and export; compare comments with another copy.
+- Annotation pipeline in short:
+  - Import: worker `readPageAnnots` (PDFium plus pdf-lib extras in `annotExtras.ts`), then `importMap.annotsFromImported`.
+  - Edit: model in `annotations.ts`.
+  - Save: `annotWrite.writeAnnotations(bytes, annots, deleted, rewrite)`. New replies are added without rewriting an unchanged parent.
+  - Foreign annotations stay drawn by PDFium; moves are applied with `setAnnotRect` in memory.
+- Fixtures:
+  - `scripts/make-test-pdf.py`: 6 pages, "fox" 24 times.
+  - `scripts/make-feature-pdf.mts`: attachments, labels, layers, 1:100 viewport.
+  - `scripts/make-foreign-pdf.py`: PyMuPDF-made annotations.
 
 ## Design system (keep to it)
 - Tokens at the top of `styles.css`: `--bg --panel --panel-2 --panel-3 --border --border-strong --text --muted --accent (OpenPDF red) --focus --pressed --sel --shadow-* --radius`. Light is the base; dark comes from `prefers-color-scheme`, which Electron's `nativeTheme.themeSource` drives from Settings. Never hard-code chrome colours.
@@ -39,12 +47,19 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
     - `_PRINT=out.pdf` makes printing write that PDF instead of showing the dialog.
     - `_USERDATA` points settings and recovery at a scratch folder.
     - `_DISCARD=1` answers the close-with-unsaved prompt.
+    - `_PICK=path` answers single-file pickers (attach, sound, import comments, compare).
+    - `_SAVE_TEXT=path` answers CSV, XFDF and FDF saves.
+    - `_IMAGES=a;b` adds image stamps.
+    - `_LINKS=path` records opened web links instead of opening them.
+    - `_SEARCH_DIR` answers the search-in-files folder picker.
+    - `_SHOW=1` shows test windows (they open off-screen otherwise).
 - `print.ts`: pending annotations are written into a copy, then PDFium renders one page at a time at 300 dpi (capped at 40 Mpx). The PNGs are spooled to a temp folder, and a hidden window prints them.
 - `viewRotation.ts`: view rotation keeps the page stack (canvas, overlay, highlights) in the unrotated page frame under one CSS transform. Every screen-to-page conversion goes through `toPage` / `deltaToPage` / `toDisplay`.
 - Tiling (`Viewer.tsx` PageView, `pdfiumRaw.renderRegion`): above 16 Mpx a page draws a ~3 Mpx base plus a full-resolution tile of the part in view, re-rendered on scroll.
 - Ribbon Organise tab acts on the thumbnails selected in the side pane (`Sidebar` reports them through `onSelectionChange`), or on the current page.
 
 ## Tests
+- `bash scripts/check.sh`: run before every commit (typecheck, unit, lint errors, build, all e2e).
 - `npm test` (54 unit tests), `npm run e2e` (6 specs; run `npm run build` first), `npm run lint` (0 errors, 27 warnings), `npx tsc --noEmit`.
 - An e2e test that leaves a document unsaved must set `OPENPDF_E2E_DISCARD=1`, or `app.close()` hangs on the native prompt.
 - If an Electron test window is left open after a failed run, kill only processes whose command line contains `openpdf-e2e` or the scratchpad path.
@@ -65,7 +80,13 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - Lint: some react-hooks rules are relaxed to warnings (see CLAUDE.md).
 
 ## Next steps (strict phase order)
-1. Phase 2 gaps in ROADMAP order. Polygon and polyline annotations come first among the unticked items' dependencies: measurements should then be savable as measurement annotations (Line /IT LineDimension, PolyLine /IT PolyLineDimension, Polygon /IT PolygonDimension, each with a /Measure dictionary).
+1. Phase 3 remainder, in ROADMAP order:
+   - copy and replace pages, split by bookmark or size;
+   - crop, resize, headers and footers, Bates numbering, page numbers;
+   - watermarks and backgrounds;
+   - bookmark, page label and link editing;
+   - optimise and compress;
+   - document properties and metadata.
 2. (Done this session) Phase 1, in ROADMAP order:
    - Marquee zoom; single and two-page modes.
    - Attachments, layers (optional content), page labels.
