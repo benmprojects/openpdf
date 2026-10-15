@@ -1615,6 +1615,41 @@ button.compare-item:hover {
   flex-direction: column;
   gap: 8px;
 }
+.imageedit-layer {
+  position: absolute;
+  inset: 0;
+  outline: none;
+}
+.imageedit-box {
+  position: absolute;
+  border: 1px dashed transparent;
+  cursor: move;
+}
+.imageedit-box:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.imageedit-box.selected {
+  border: 1.5px solid var(--accent);
+}
+.imageedit-bar {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2, 0 2px 8px rgba(0, 0, 0, 0.25));
+  z-index: 3;
+}
+.imageedit-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 8px;
+}
 .textedit-layer {
   position: absolute;
   inset: 0;

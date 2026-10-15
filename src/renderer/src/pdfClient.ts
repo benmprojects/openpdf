@@ -1,7 +1,7 @@
 import type { WorkerRequest, WorkerResponse } from './pdf.worker'
-import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject } from './pdfiumRaw'
+import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject, ImageObject } from './pdfiumRaw'
 
-export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject }
+export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject, ImageObject }
 
 export interface PageSize {
   width: number
@@ -164,6 +164,13 @@ export class PdfClient {
   async textObjects(page: number): Promise<{ objects: TextObject[]; total: number }> {
     const res = await this.call({ type: 'textObjects', page })
     if (res.ok && res.type === 'textObjects') return { objects: res.objects, total: res.total }
+    throw new Error('Unexpected response')
+  }
+
+  /** The image objects a page draws itself, in content-stream order, and the display-to-page matrix. */
+  async imageObjects(page: number): Promise<{ objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }> {
+    const res = await this.call({ type: 'imageObjects', page })
+    if (res.ok && res.type === 'imageObjects') return { objects: res.objects, total: res.total, toPage: res.toPage }
     throw new Error('Unexpected response')
   }
 

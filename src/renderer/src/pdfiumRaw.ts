@@ -807,6 +807,75 @@ export function readTextObjects(lib: PDFiumLibrary, page: PDFiumPage): { objects
   }
 }
 
+export interface ImageObject {
+  /** Position among the page's image objects: the k-th one is the k-th image-drawing operation of the content stream. */
+  ordinal: number
+  /** Display-space box (points from the top-left of the page as shown). */
+  rect: Rect
+  /** The transform that maps the image's unit square to the page. */
+  matrix: [number, number, number, number, number, number]
+}
+
+/**
+ * Image objects the page draws directly (not inside form XObjects), in content-stream order, and the matrix that
+ * maps display space (the page as shown, y down) to page space, so display-space edits can become page-space ones.
+ */
+export function readImageObjects(
+  lib: PDFiumLibrary,
+  page: PDFiumPage
+): { objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] } {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
+  const GRID = 8
+  const sx = Math.round(w * GRID)
+  const sy = Math.round(h * GRID)
+  const scratch = m.wasmExports.malloc(96)
+  const objects: ImageObject[] = []
+  try {
+    // Display (points) to page space, from three sample points.
+    const sample = (x: number, y: number): [number, number] => {
+      m._FPDF_DeviceToPage(p, 0, 0, sx, sy, 0, Math.round(x * GRID), Math.round(y * GRID), scratch + 64, scratch + 72)
+      const d = new DataView(m.HEAPU8.buffer)
+      return [d.getFloat64(scratch + 64, true), d.getFloat64(scratch + 72, true)]
+    }
+    const o = sample(0, 0)
+    const ex = sample(100, 0)
+    const ey = sample(0, 100)
+    const toPage: [number, number, number, number, number, number] = [(ex[0] - o[0]) / 100, (ex[1] - o[1]) / 100, (ey[0] - o[0]) / 100, (ey[1] - o[1]) / 100, o[0], o[1]]
+
+    const n = m._FPDFPage_CountObjects(p)
+    let ordinal = 0
+    for (let i = 0; i < n; i++) {
+      const obj = m._FPDFPage_GetObject(p, i)
+      if (m._FPDFPageObj_GetType(obj) !== 3) continue
+      const k = ordinal++
+      if (!m._FPDFPageObj_GetBounds(obj, scratch, scratch + 4, scratch + 8, scratch + 12)) continue
+      const f = new DataView(m.HEAPU8.buffer)
+      const l = f.getFloat32(scratch, true)
+      const b = f.getFloat32(scratch + 4, true)
+      const r = f.getFloat32(scratch + 8, true)
+      const t = f.getFloat32(scratch + 12, true)
+      m._FPDF_PageToDevice(p, 0, 0, sx, sy, 0, l, t, scratch + 32, scratch + 36)
+      m._FPDF_PageToDevice(p, 0, 0, sx, sy, 0, r, b, scratch + 40, scratch + 44)
+      const v = new DataView(m.HEAPU8.buffer)
+      const x1 = v.getInt32(scratch + 32, true) / GRID
+      const y1 = v.getInt32(scratch + 36, true) / GRID
+      const x2 = v.getInt32(scratch + 40, true) / GRID
+      const y2 = v.getInt32(scratch + 44, true) / GRID
+      const matrix: ImageObject['matrix'] = [1, 0, 0, 1, 0, 0]
+      if (m._FPDFPageObj_GetMatrix(obj, scratch + 16)) {
+        const mm = new DataView(m.HEAPU8.buffer)
+        for (let q = 0; q < 6; q++) matrix[q] = mm.getFloat32(scratch + 16 + q * 4, true)
+      }
+      objects.push({ ordinal: k, rect: { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }, matrix })
+    }
+    return { objects, total: ordinal, toPage }
+  } finally {
+    m.wasmExports.free(scratch)
+  }
+}
+
 /**
  * Links on a page: link annotations (go to a page, or open a web address) and web addresses written in the text,
  * which PDFium finds itself.

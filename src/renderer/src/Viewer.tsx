@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { AnnotLayer } from './AnnotLayer'
 import { CALLOUT_DEFAULT, isMarkup, pointInRect, simplifyPath, withBounds, NOTE_SIZE, type Annot, type Pt } from './annotations'
-import type { PageLink, PageSize, PdfClient, TextObject } from './pdfClient'
+import type { ImageObject, PageLink, PageSize, PdfClient, TextObject } from './pdfClient'
 import { TextEditLayer } from './TextEditLayer'
+import { ImageEditLayer } from './ImageEditLayer'
+import type { Matrix6 } from './content'
 import type { PageText } from './pdfiumRaw'
 import {
   comparePos,
@@ -82,6 +84,7 @@ export type Tool =
   | 'sound'
   | 'crop'
   | 'edittext'
+  | 'editimage'
 
 export interface DrawStyle {
   color: string
@@ -138,7 +141,10 @@ interface Props {
   onFollowLink: (link: PageLink) => void
   /** Edit Text tool: a text run on a page was given new text. */
   onEditText: (page: number, obj: TextObject, total: number, text: string) => void
-  /** False while the viewer's copy of the file is out of date; text cannot be picked then. */
+  /** Edit Image tool: an image was moved or resized (page-space change) or deleted (null). */
+  onChangeImage: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
+  onReplaceImage: (page: number, obj: ImageObject, total: number) => void
+  /** False while the viewer's copy of the file is out of date; text and images cannot be picked then. */
   textEditReady: boolean
   /** The eraser was dragged over a page: rub out ink within `radius` of the trail (page points). */
   onErase: (page: number, trail: Pt[], radius: number) => void
@@ -197,6 +203,8 @@ export function Viewer({
   onErase,
   onFollowLink,
   onEditText,
+  onChangeImage,
+  onReplaceImage,
   textEditReady,
   onLinkRect,
   onCropRect,
@@ -1062,6 +1070,8 @@ export function Viewer({
                 guides={shownGuides}
                 links={tool === 'select' ? links.get(i) : undefined}
                 onEditText={onEditText}
+                onChangeImage={onChangeImage}
+                onReplaceImage={onReplaceImage}
                 textEditReady={textEditReady}
                 onVisible={loadLinks}
                 eraseTrail={eraseTrail && eraseTrail.page === i ? eraseTrail : undefined}
@@ -1130,6 +1140,8 @@ interface PageViewProps {
   guides: Guide[]
   links?: PageLink[]
   onEditText: (page: number, obj: TextObject, total: number, text: string) => void
+  onChangeImage: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
+  onReplaceImage: (page: number, obj: ImageObject, total: number) => void
   textEditReady: boolean
   /** Called when the page comes near the view. */
   onVisible: (page: number) => void
@@ -1160,7 +1172,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onEditText, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onEditText, onChangeImage, onReplaceImage, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -1344,6 +1356,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
         />
       )}
       {annotProps.tool === 'edittext' && textEditReady && <TextEditLayer client={client} page={index} zoom={zoom} onCommit={onEditText} />}
+      {annotProps.tool === 'editimage' && textEditReady && <ImageEditLayer client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangeImage} onReplace={onReplaceImage} />}
       {links && links.length > 0 && (
         <div className="link-layer" aria-hidden>
           {links.flatMap((l, k) =>

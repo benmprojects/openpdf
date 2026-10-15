@@ -65,7 +65,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 
 ## Phase 4: Content editing (P0/P1)
 - [ ] Edit existing text (font match, reflow within a text box). Done so far: edit one text run in place (Edit tab > Edit text), redrawn in the installed font of the same family (Windows registry lookup, licence and glyph checks) or else a matching standard font. Still to do: reflow a paragraph
-- [ ] Edit, move, resize and replace images
+- [x] Edit, move, resize and replace images (Edit tab > Edit image: drag to move, corner to resize, Replace, Delete; page-level images only, not those inside form XObjects)
 - [ ] Add and edit shapes and paths; object selection, align, distribute, z-order
 - [ ] Add and edit links; add text and images
 - [ ] Spell check

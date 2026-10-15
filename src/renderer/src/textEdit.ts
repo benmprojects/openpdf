@@ -4,8 +4,9 @@
  * new text is drawn with pdf-lib in the same place, size and colour, in a standard font chosen to match.
  */
 import fontkit from '@pdf-lib/fontkit'
-import { PDFArray, PDFDocument, PDFName, PDFRawStream, PDFStream, StandardFonts, decodePDFRawStream, degrees, rgb, type PDFPage } from 'pdf-lib'
-import { bytesToString, isShow, num, parseContent, removeOps, showBytes, showOrigins, stringToBytes, type Op } from './content'
+import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib'
+import { pageContent } from './pageContent'
+import { isShow, num, parseContent, removeOps, showBytes, showOrigins, stringToBytes, type Op } from './content'
 
 export interface TextEditTarget {
   /** Zero-based page. */
@@ -47,18 +48,6 @@ export function pickStandardFont(s: Pick<TextStyle, 'font' | 'flags' | 'weight' 
   if (mono) return bold ? (italic ? StandardFonts.CourierBoldOblique : StandardFonts.CourierBold) : italic ? StandardFonts.CourierOblique : StandardFonts.Courier
   if (serif) return bold ? (italic ? StandardFonts.TimesRomanBoldItalic : StandardFonts.TimesRomanBold) : italic ? StandardFonts.TimesRomanItalic : StandardFonts.TimesRoman
   return bold ? (italic ? StandardFonts.HelveticaBoldOblique : StandardFonts.HelveticaBold) : italic ? StandardFonts.HelveticaOblique : StandardFonts.Helvetica
-}
-
-/** Decoded content of a page as one string, and the stream objects it came from. */
-function pageContent(page: PDFPage): string {
-  const c = page.node.lookup(PDFName.of('Contents'))
-  const parts: unknown[] = c instanceof PDFArray ? Array.from({ length: c.size() }, (_, i) => c.lookup(i)) : [c]
-  let src = ''
-  for (const st of parts) {
-    if (st instanceof PDFRawStream) src += bytesToString(decodePDFRawStream(st).decode()) + '\n'
-    else if (st instanceof PDFStream) src += bytesToString((st as unknown as { getContents(): Uint8Array }).getContents()) + '\n'
-  }
-  return src
 }
 
 /** Text Render Mode in force just before operation `idx`, following q/Q. */

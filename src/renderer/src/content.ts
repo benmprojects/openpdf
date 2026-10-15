@@ -332,3 +332,52 @@ export function showOrigins(ops: Op[]): ({ x: number; y: number } | null)[] {
   }
   return out
 }
+
+export type Matrix6 = Matrix
+
+export const matMul = mul
+
+/** The inverse of an affine matrix, or null when it is singular. */
+export function matInverse(m: Matrix): Matrix | null {
+  const det = m[0] * m[3] - m[1] * m[2]
+  if (Math.abs(det) < 1e-12) return null
+  const a = m[3] / det
+  const b = -m[1] / det
+  const c = -m[2] / det
+  const d = m[0] / det
+  return [a, b, c, d, -(m[4] * a + m[5] * c), -(m[4] * b + m[5] * d)]
+}
+
+export interface ImageDraw {
+  /** Index of the operation in the parsed list: a `Do` of an image, or a `BI` inline image. */
+  index: number
+  /** The transform in force: maps the image's unit square to the page. */
+  ctm: Matrix
+  /** The XObject's resource name, or undefined for an inline image. */
+  name?: string
+}
+
+/** Every image the content draws, in order, with the transform it is drawn under. `isImage` says whether an XObject name is an image. */
+export function imageDraws(ops: Op[], isImage: (name: string) => boolean): ImageDraw[] {
+  let ctm: Matrix = IDENTITY
+  const stack: Matrix[] = []
+  const out: ImageDraw[] = []
+  ops.forEach((o, index) => {
+    if (o.op === 'q') stack.push(ctm)
+    else if (o.op === 'Q') ctm = stack.pop() ?? ctm
+    else if (o.op === 'cm') {
+      const n = nums(o)
+      if (n.length === 6) ctm = mul(n as Matrix, ctm)
+    } else if (o.op === 'BI') out.push({ index, ctm })
+    else if (o.op === 'Do') {
+      const name = o.operands[0]
+      if (name && name.t === 'name' && isImage(name.v)) out.push({ index, ctm, name: name.v })
+    }
+  })
+  return out
+}
+
+/** Formats a matrix as a `cm` operation. */
+export function cmOp(m: Matrix): string {
+  return `${m.map(num).join(' ')} cm`
+}

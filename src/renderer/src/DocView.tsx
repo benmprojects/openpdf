@@ -67,6 +67,7 @@ import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
 import { replaceText, weightAndSlant } from './textEdit'
+import { replaceImage, transformImage } from './imageEdit'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
@@ -100,6 +101,7 @@ import {
   Files,
   Tags,
   Gauge,
+  ImageIcon,
   FolderOpen,
   Hand,
   Highlighter,
@@ -932,7 +934,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool === 'editimage' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -2088,6 +2090,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Text">
                 <RB big icon={TextCursorInput} label="Edit text" onClick={() => setTool(tool === 'edittext' ? 'select' : 'edittext')} pressed={tool === 'edittext'} disabled={!pages.length || busy || !!password} title="Click a line of text to change it (the text is redrawn in a matching standard font)" />
               </RGroup>
+              <RGroup label="Images">
+                <RB big icon={ImageIcon} label="Edit image" onClick={() => setTool(tool === 'editimage' ? 'select' : 'editimage')} pressed={tool === 'editimage'} disabled={!pages.length || busy || !!password} title="Click a picture to move it, resize it, replace it or delete it" />
+              </RGroup>
               <RGroup label="Edit">
                 <RStack>{undoButtons}</RStack>
               </RGroup>
@@ -2647,6 +2652,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onErase={eraseInk}
               onCropRect={cropToRect}
               onLinkRect={(page, rect) => setLinkDraft({ page, rect, to: 'uri', uri: 'https://', page1: String(Math.min(pages.length, page + 2)) })}
+              onChangeImage={(page, obj, total, change) =>
+                void applyPageEdit((b) => transformImage(b, { page, ordinal: obj.ordinal, total, matrix: obj.matrix }, change), change ? 'Image updated' : 'Image deleted')
+              }
+              onReplaceImage={async (page, obj, total) => {
+                const file = await window.openpdf.pickFile({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg'] })
+                if (!file) return
+                const d = file.data
+                const kind = d[0] === 0x89 && d[1] === 0x50 ? 'png' : d[0] === 0xff && d[1] === 0xd8 ? 'jpg' : null
+                if (!kind) {
+                  setNotice({ kind: 'error', text: 'That file is not a PNG or JPEG picture.' })
+                  return
+                }
+                await applyPageEdit((b) => replaceImage(b, { page, ordinal: obj.ordinal, total, matrix: obj.matrix }, { data: d, kind }), 'Image replaced')
+              }}
               textEditReady={clientBytes === viewBytes && (hiddenLayers !== null || viewBytes === bytes) && !busy}
               onEditText={(page, obj, total, text) => {
                 let hidden = false

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hexString, isShow, num, parseContent, removeOps, showBytes } from './content'
+import { hexString, imageDraws, isShow, matInverse, matMul, num, parseContent, removeOps, showBytes } from './content'
 
 describe('content stream parser', () => {
   it('splits operations with their operands and source ranges', () => {
@@ -46,5 +46,24 @@ describe('content stream parser', () => {
     expect(num(12)).toBe('12')
     expect(num(0.1 + 0.2)).toBe('0.3')
     expect(hexString('AB')).toBe('<4142>')
+  })
+})
+
+describe('images in content', () => {
+  it('lists image draws with the transform they are drawn under, skipping forms', () => {
+    const src = 'q 200 0 0 100 50 60 cm /Im1 Do Q q /Fm1 Do Q q 1 0 0 1 10 10 cm 30 0 0 30 5 5 cm BI /W 1 /H 1 ID x EI Q'
+    const d = imageDraws(parseContent(src), (n) => n.startsWith('Im'))
+    expect(d).toHaveLength(2)
+    expect(d[0]).toMatchObject({ name: 'Im1', ctm: [200, 0, 0, 100, 50, 60] })
+    expect(d[1].name).toBeUndefined()
+    expect(d[1].ctm).toEqual([30, 0, 0, 30, 15, 15])
+  })
+
+  it('inverts affine matrices', () => {
+    const m: [number, number, number, number, number, number] = [2, 1, -1, 3, 10, 20]
+    const inv = matInverse(m)!
+    const id = matMul(m, inv)
+    expect(id.map((v) => Math.round(v * 1e6) / 1e6)).toEqual([1, 0, 0, 1, 0, 0])
+    expect(matInverse([0, 0, 0, 0, 1, 1])).toBeNull()
   })
 })

@@ -10,6 +10,7 @@ import {
   readPageAnnots,
   readPageText,
   readTextObjects,
+  readImageObjects,
   removePageAnnot,
   setPageAnnotRect,
   renderRegion,
@@ -19,7 +20,8 @@ import {
   type PageLink,
   type OutlineNode,
   type PageText,
-  type TextObject
+  type TextObject,
+  type ImageObject
 } from './pdfiumRaw'
 
 export type WorkerRequest =
@@ -36,6 +38,7 @@ export type WorkerRequest =
   | { id: number; type: 'labels' }
   | { id: number; type: 'links'; page: number }
   | { id: number; type: 'textObjects'; page: number }
+  | { id: number; type: 'imageObjects'; page: number }
   | { id: number; type: 'close' }
 
 export type WorkerResponse =
@@ -51,6 +54,7 @@ export type WorkerResponse =
   | { id: number; ok: true; type: 'labels'; labels: string[] }
   | { id: number; ok: true; type: 'links'; links: PageLink[] }
   | { id: number; ok: true; type: 'textObjects'; objects: TextObject[]; total: number }
+  | { id: number; ok: true; type: 'imageObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
   | { id: number; ok: true; type: 'close' }
   | { id: number; ok: false; error: string }
 
@@ -126,6 +130,12 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const { objects, total } = readTextObjects(library, page)
       page.close()
       reply({ id: msg.id, ok: true, type: 'textObjects', objects, total })
+    } else if (msg.type === 'imageObjects') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const page = doc.getPage(msg.page)
+      const r = readImageObjects(library, page)
+      page.close()
+      reply({ id: msg.id, ok: true, type: 'imageObjects', ...r })
     } else if (msg.type === 'labels') {
       if (!doc || !library) throw new Error('No document loaded')
       reply({ id: msg.id, ok: true, type: 'labels', labels: readPageLabels(library, doc) })
