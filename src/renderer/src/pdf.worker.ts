@@ -5,6 +5,7 @@ import {
   readPageAnnots,
   readPageText,
   removePageAnnot,
+  renderRegion,
   type ImportedAnnot,
   type OutlineNode,
   type PageText
@@ -13,6 +14,7 @@ import {
 export type WorkerRequest =
   | { id: number; type: 'load'; data: Uint8Array; password?: string }
   | { id: number; type: 'render'; page: number; scale: number }
+  | { id: number; type: 'renderRegion'; page: number; scale: number; x: number; y: number; w: number; h: number }
   | { id: number; type: 'outline' }
   | { id: number; type: 'text'; page: number }
   | { id: number; type: 'annots' }
@@ -72,6 +74,12 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       reply({ id: msg.id, ok: true, type: 'render', width: out.width, height: out.height, data: out.data }, [
         out.data.buffer as ArrayBuffer
       ])
+    } else if (msg.type === 'renderRegion') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const page = doc.getPage(msg.page)
+      const data = renderRegion(library, doc, page, msg.scale, msg.x, msg.y, msg.w, msg.h)
+      page.close()
+      reply({ id: msg.id, ok: true, type: 'render', width: msg.w, height: msg.h, data }, [data.buffer as ArrayBuffer])
     } else if (msg.type === 'outline') {
       if (!doc || !library) throw new Error('No document loaded')
       reply({ id: msg.id, ok: true, type: 'outline', outline: readOutline(library, doc) })

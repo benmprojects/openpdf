@@ -350,3 +350,48 @@ export function removePageAnnot(lib: PDFiumLibrary, page: PDFiumPage, originalIn
   m._FPDFPage_CloseAnnot(annot)
   return same && m._FPDFPage_RemoveAnnot(p, current) !== 0
 }
+
+/** Size in pixels of a whole page rendered at `scale`, rounded the way @hyzyla/pdfium's render() rounds it. */
+export function scaledPageSize(page: PDFiumPage, scale: number): { width: number; height: number } {
+  const { originalWidth, originalHeight } = page.getOriginalSize()
+  return { width: Math.floor(Math.floor(originalWidth) * scale), height: Math.floor(Math.floor(originalHeight) * scale) }
+}
+
+/**
+ * Renders only part of a page: the `w` by `h` pixel region at (`x`, `y`) of the page as it would be rendered whole
+ * at `scale`. Used for high zoom levels, where a whole-page bitmap would be too large. Draws annotations and form
+ * fields like the wrapper's render(). Returns RGBA.
+ */
+export function renderRegion(
+  lib: PDFiumLibrary,
+  doc: PDFiumDocument,
+  page: PDFiumPage,
+  scale: number,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): Uint8Array {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const full = scaledPageSize(page, scale)
+  const form = (doc as unknown as { initializeFormFields(): number }).initializeFormFields()
+  m._FORM_OnAfterLoadPage(p, form)
+  const size = w * h * 4
+  const ptr = m.wasmExports.malloc(size)
+  if (!ptr) throw new Error('Failed to allocate memory for bitmap')
+  let bitmap = 0
+  try {
+    bitmap = m._FPDFBitmap_CreateEx(w, h, 4 /* BGRA */, ptr, w * 4)
+    m._FPDFBitmap_FillRect(bitmap, 0, 0, w, h, 0xffffffff)
+    // ANNOT | LCD_TEXT | REVERSE_BYTE_ORDER (RGBA out). The page is placed so the wanted region lands on the bitmap.
+    const flags = 0x01 | 0x02 | 0x10
+    m._FPDF_RenderPageBitmap(bitmap, p, -x, -y, full.width, full.height, 0, flags)
+    m._FPDF_FFLDraw(form, bitmap, p, -x, -y, full.width, full.height, 0, flags & ~0x01)
+    return m.HEAPU8.slice(ptr, ptr + size)
+  } finally {
+    m._FORM_OnBeforeClosePage(p, form)
+    if (bitmap) m._FPDFBitmap_Destroy(bitmap)
+    m.wasmExports.free(ptr)
+  }
+}

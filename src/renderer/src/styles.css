@@ -823,6 +823,11 @@ kbd {
 .page canvas {
   display: block;
 }
+/* At high zoom: a sharp render of just the part of the page in view, over a low-resolution whole page. */
+.page-tile {
+  position: absolute;
+  pointer-events: none;
+}
 /* The unrotated page frame; view rotation transforms this box. */
 .page-stack {
   position: absolute;

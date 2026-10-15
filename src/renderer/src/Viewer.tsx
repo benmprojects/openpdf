@@ -16,6 +16,21 @@ import {
 import { displayDims, stackTransform, toDisplay, toPage, type Rotation } from './viewRotation'
 
 /** Space around the page stack and between pages, in CSS pixels. */
+/** Above this many bitmap pixels a page renders as a low-resolution base plus a sharp tile of the part in view. */
+const TILE_THRESHOLD = 16_000_000
+const BASE_PIXELS = 3_000_000
+/** Extra rendered area around the view, in CSS pixels, so small scrolls need no new tile. */
+const TILE_MARGIN = 300
+
+/** Puts an RGBA render on a canvas. Returns false if the render was aborted or the canvas is gone. */
+function paint(cv: HTMLCanvasElement | null, out: { width: number; height: number; data: Uint8Array }, signal: AbortSignal): boolean {
+  if (signal.aborted || !cv) return false
+  cv.width = out.width
+  cv.height = out.height
+  cv.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height), 0, 0)
+  return true
+}
+
 export const PAD = 16
 export const GAP = 12
 
@@ -459,6 +474,7 @@ export function Viewer({
             annots={annotsByPage.get(i)}
             draft={draft && draft.page === i ? draft : undefined}
             epoch={epoch}
+            scroller={scroller}
             annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
             selection={selForPage(i)}
             matches={matchesByPage.get(i)}
@@ -479,6 +495,8 @@ interface PageViewProps {
   size: PageSize
   zoom: number
   rotation: Rotation
+  /** The scrolling container, so very large pages can render only the part in view. */
+  scroller: React.RefObject<HTMLDivElement | null>
   annots?: Annot[]
   draft?: Annot
   epoch: number
@@ -501,7 +519,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, epoch, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -519,32 +537,95 @@ function PageView({ client, index, size, zoom, rotation, epoch, annots, draft, a
     return () => io.disconnect()
   }, [])
 
+  // Whole-page rendering, or for very large bitmaps (high zoom) a low-resolution whole page plus a sharp tile
+  // covering just the part in view, re-rendered as the view scrolls.
+  const tileCanvas = useRef<HTMLCanvasElement>(null)
+  const [tile, setTile] = useState<{ x: number; y: number; w: number; h: number; scale: number } | null>(null)
+  const dpr = window.devicePixelRatio || 1
+  const fullScale = zoom * dpr
+  const tiled = Math.floor(size.width) * fullScale * Math.floor(size.height) * fullScale > TILE_THRESHOLD
+
   useEffect(() => {
     if (!visible) {
-      // Release the bitmap of pages that are far off screen.
+      // Release the bitmaps of pages that are far off screen.
       if (canvas.current) canvas.current.width = 0
+      if (tileCanvas.current) tileCanvas.current.width = 0
+      setTile(null)
       return
     }
     const ctrl = new AbortController()
-    const dpr = window.devicePixelRatio || 1
+    const scale = tiled ? Math.sqrt(BASE_PIXELS / (size.width * size.height)) : fullScale
     // Debounce so rapid zoom changes do not queue a render per step.
     const timer = setTimeout(() => {
       client
-        .render(index, zoom * dpr, { signal: ctrl.signal })
-        .then((out) => {
-          const cv = canvas.current
-          if (ctrl.signal.aborted || !cv) return
-          cv.width = out.width
-          cv.height = out.height
-          cv.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(out.data), out.width, out.height), 0, 0)
-        })
+        .render(index, scale, { signal: ctrl.signal })
+        .then((out) => paint(canvas.current, out, ctrl.signal))
         .catch(() => {})
     }, 60)
     return () => {
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [client, index, zoom, visible, epoch])
+  }, [client, index, zoom, visible, epoch, tiled, fullScale, size.width, size.height])
+
+  useEffect(() => {
+    setTile(null)
+    if (!visible || !tiled) return
+    const sc = scroller.current
+    const holderEl = holder.current
+    if (!sc || !holderEl) return
+    const fw = Math.floor(Math.floor(size.width) * fullScale)
+    const fh = Math.floor(Math.floor(size.height) * fullScale)
+    let ctrl: AbortController | null = null
+    let shown: { x: number; y: number; w: number; h: number } | null = null
+    // The part of the page in view, in whole-page pixels at full scale (unrotated page frame).
+    const wanted = (margin: number) => {
+      const v = sc.getBoundingClientRect()
+      const p = holderEl.getBoundingClientRect()
+      const u0 = Math.max(v.left, p.left) - p.left - margin
+      const v0 = Math.max(v.top, p.top) - p.top - margin
+      const u1 = Math.min(v.right, p.right) - p.left + margin
+      const v1 = Math.min(v.bottom, p.bottom) - p.top + margin
+      if (u1 <= u0 || v1 <= v0) return null
+      const a = toPage(rotation, u0 / zoom, v0 / zoom, size)
+      const b = toPage(rotation, u1 / zoom, v1 / zoom, size)
+      const x0 = Math.max(0, Math.floor(Math.min(a.x, b.x) * fullScale))
+      const y0 = Math.max(0, Math.floor(Math.min(a.y, b.y) * fullScale))
+      const x1 = Math.min(fw, Math.ceil(Math.max(a.x, b.x) * fullScale))
+      const y1 = Math.min(fh, Math.ceil(Math.max(a.y, b.y) * fullScale))
+      return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null
+    }
+    const inside = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) =>
+      a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h
+    const update = () => {
+      const need = wanted(0)
+      if (!need || (shown && inside(need, shown))) return
+      const region = wanted(TILE_MARGIN)
+      if (!region) return
+      ctrl?.abort()
+      const c = (ctrl = new AbortController())
+      client
+        .render(index, fullScale, { signal: c.signal, region })
+        .then((out) => {
+          if (paint(tileCanvas.current, out, c.signal)) {
+            shown = region
+            setTile({ ...region, scale: fullScale })
+          }
+        })
+        .catch(() => {})
+    }
+    let timer = setTimeout(update, 80)
+    const onScroll = () => {
+      clearTimeout(timer)
+      timer = setTimeout(update, 100)
+    }
+    sc.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      clearTimeout(timer)
+      ctrl?.abort()
+      sc.removeEventListener('scroll', onScroll)
+    }
+  }, [client, index, visible, tiled, fullScale, zoom, rotation, size, scroller, epoch])
 
   const needsText = selection !== null || (matches?.length ?? 0) > 0
   useEffect(() => {
@@ -585,6 +666,17 @@ function PageView({ client, index, size, zoom, rotation, epoch, annots, draft, a
       {/* Everything below stays in the unrotated page frame; the view rotation turns the whole stack. */}
       <div className="page-stack" style={{ width: cssW, height: cssH, transform: stackTransform(rotation, cssW, cssH) }}>
       <canvas ref={canvas} style={{ width: cssW, height: cssH }} />
+      {tiled && (
+        <canvas
+          ref={tileCanvas}
+          className="page-tile"
+          style={
+            tile && tile.scale === fullScale
+              ? { left: tile.x / dpr, top: tile.y / dpr, width: tile.w / dpr, height: tile.h / dpr }
+              : { display: 'none' }
+          }
+        />
+      )}
       {(annots || draft) && (
         <AnnotLayer
           annots={draft ? [...(annots ?? []), draft] : annots!}

@@ -18,6 +18,8 @@ export interface RenderOptions {
   priority?: number
   /** Aborting drops the request if it has not started, and rejects either way. */
   signal?: AbortSignal
+  /** Render only this pixel region of the page as it would be rendered whole at the given scale. */
+  region?: { x: number; y: number; w: number; h: number }
 }
 
 type Distribute<T> = T extends unknown ? Omit<T, 'id'> : never
@@ -28,6 +30,7 @@ interface QueuedRender {
   priority: number
   seq: number
   signal?: AbortSignal
+  region?: { x: number; y: number; w: number; h: number }
   resolve: (r: RenderedPage) => void
   reject: (e: Error) => void
 }
@@ -76,7 +79,7 @@ export class PdfClient {
   render(page: number, scale: number, opts: RenderOptions = {}): Promise<RenderedPage> {
     return new Promise((resolve, reject) => {
       if (opts.signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
-      this.queue.push({ page, scale, priority: opts.priority ?? 0, seq: this.seq++, signal: opts.signal, resolve, reject })
+      this.queue.push({ page, scale, priority: opts.priority ?? 0, seq: this.seq++, signal: opts.signal, region: opts.region, resolve, reject })
       this.pump()
     })
   }
@@ -97,7 +100,8 @@ export class PdfClient {
       }
       const job = this.queue.splice(bestIdx, 1)[0]
       this.inFlight++
-      this.call({ type: 'render', page: job.page, scale: job.scale })
+      const r = job.region
+      this.call(r ? { type: 'renderRegion', page: job.page, scale: job.scale, ...r } : { type: 'render', page: job.page, scale: job.scale })
         .then((res) => {
           if (job.signal?.aborted) job.reject(new DOMException('Aborted', 'AbortError'))
           else if (res.ok && res.type === 'render') job.resolve(res)
