@@ -1,5 +1,6 @@
 import { PDFiumLibrary, type PDFiumDocument } from '@hyzyla/pdfium'
 import wasmUrl from '@hyzyla/pdfium/pdfium.wasm?url'
+import { annotDicts } from './annotExtras'
 import {
   readAttachmentData,
   readAttachments,
@@ -8,6 +9,7 @@ import {
   readPageAnnots,
   readPageText,
   removePageAnnot,
+  setPageAnnotRect,
   renderRegion,
   type AttachmentInfo,
   type ImportedAnnot,
@@ -24,6 +26,7 @@ export type WorkerRequest =
   | { id: number; type: 'text'; page: number }
   | { id: number; type: 'annots' }
   | { id: number; type: 'hideAnnot'; page: number; index: number; subtype: number }
+  | { id: number; type: 'setAnnotRect'; page: number; index: number; subtype: number; rect: { x: number; y: number; w: number; h: number } }
   | { id: number; type: 'attachments' }
   | { id: number; type: 'attachmentData'; index: number }
   | { id: number; type: 'labels' }
@@ -36,6 +39,7 @@ export type WorkerResponse =
   | ({ id: number; ok: true; type: 'text' } & PageText)
   | { id: number; ok: true; type: 'annots'; pages: { page: number; annots: ImportedAnnot[]; replies: ImportedReply[] }[] }
   | { id: number; ok: true; type: 'hideAnnot'; hidden: boolean }
+  | { id: number; ok: true; type: 'setAnnotRect'; done: boolean }
   | { id: number; ok: true; type: 'attachments'; attachments: AttachmentInfo[] }
   | { id: number; ok: true; type: 'attachmentData'; data: Uint8Array }
   | { id: number; ok: true; type: 'labels'; labels: string[] }
@@ -44,6 +48,8 @@ export type WorkerResponse =
 
 let library: PDFiumLibrary | null = null
 let doc: PDFiumDocument | null = null
+/** The loaded bytes (unless password protected), for reading annotation details with pdf-lib. */
+let docBytes: Uint8Array | null = null
 /** Per page, the original indices of annotations hidden from rendering. */
 let hidden = new Map<number, number[]>()
 
@@ -55,6 +61,7 @@ async function getLibrary(): Promise<PDFiumLibrary> {
 function closeDoc(): void {
   doc?.destroy()
   doc = null
+  docBytes = null
   hidden = new Map()
 }
 
@@ -69,6 +76,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       closeDoc()
       const lib = await getLibrary()
       doc = await lib.loadDocument(msg.data, msg.password)
+      docBytes = msg.password ? null : msg.data
       const pages: { width: number; height: number }[] = []
       for (let i = 0; i < doc.getPageCount(); i++) {
         const page = doc.getPage(i)
@@ -113,9 +121,10 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (msg.type === 'annots') {
       if (!doc || !library) throw new Error('No document loaded')
       const pages: { page: number; annots: ImportedAnnot[]; replies: ImportedReply[] }[] = []
+      const dicts = docBytes ? await annotDicts(docBytes) : null
       for (let i = 0; i < doc.getPageCount(); i++) {
         const page = doc.getPage(i)
-        const { annots, replies } = readPageAnnots(library, page)
+        const { annots, replies } = readPageAnnots(library, page, dicts?.[i])
         page.close()
         if (annots.length || replies.length) pages.push({ page: i, annots, replies })
       }
@@ -132,6 +141,13 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         if (ok) hidden.set(msg.page, [...gone, msg.index])
         reply({ id: msg.id, ok: true, type: 'hideAnnot', hidden: ok })
       }
+    } else if (msg.type === 'setAnnotRect') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const gone = hidden.get(msg.page) ?? []
+      const page = doc.getPage(msg.page)
+      const done = setPageAnnotRect(library, page, msg.index - gone.filter((i) => i < msg.index).length, msg.subtype, msg.rect)
+      page.close()
+      reply({ id: msg.id, ok: true, type: 'setAnnotRect', done })
     } else {
       closeDoc()
       reply({ id: msg.id, ok: true, type: 'close' })

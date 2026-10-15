@@ -216,6 +216,22 @@ export function AnnotLayer({
           )
         }
 
+        if (a.kind === 'foreign') {
+          return (
+            <div
+              key={a.id}
+              className={`annot-foreign${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}`}
+              role="button"
+              aria-label={`Annotation${a.text ? `: ${a.text}` : ''}`}
+              title={a.text || undefined}
+              style={{ left: x * zoom, top: y * zoom, width: Math.max(4, r.w + (g?.kind === 'resize' ? g.dx / zoom : 0)) * zoom, height: Math.max(4, r.h + (g?.kind === 'resize' ? g.dy / zoom : 0)) * zoom }}
+              onMouseDown={(e) => begin(e, a, 'move')}
+            >
+              {selected && interactive && <div className="resize-handle" onMouseDown={(e) => begin(e, a, 'resize')} aria-label="Resize annotation" />}
+            </div>
+          )
+        }
+
         if (a.kind === 'note') {
           return (
             <div key={a.id}>

@@ -23,6 +23,11 @@ export type AnnotKind =
   /** A polygon with a scalloped ("cloudy") border, for marking up areas on drawings. */
   | 'cloud'
   | 'stamp'
+  /**
+   * An annotation from the file that we do not draw ourselves (another tool's stamp, a file attachment and so on):
+   * it keeps its own appearance and can be moved, resized, deleted and commented on.
+   */
+  | 'foreign'
 
 export interface Pt {
   x: number
@@ -230,7 +235,7 @@ export function cloudCurves(pts: Pt[], lineWidth: number): { start: Pt; curves: 
   return { start: pts[0], curves }
 }
 /** Kinds whose size can be changed with the corner handle. */
-export const isResizable = (k: AnnotKind) => k === 'textbox' || k === 'rectangle' || k === 'ellipse' || k === 'stamp'
+export const isResizable = (k: AnnotKind) => k === 'textbox' || k === 'rectangle' || k === 'ellipse' || k === 'stamp' || k === 'foreign'
 
 export function arrowHeadLength(lineWidth: number): number {
   return Math.max(9, lineWidth * 4.5)
@@ -349,6 +354,7 @@ export function defaultColor(kind: AnnotKind): string {
     case 'polyline':
     case 'cloud':
     case 'stamp':
+    case 'foreign':
       return '#e5322d'
     case 'highlight':
     case 'note':
@@ -398,7 +404,8 @@ export function annotLabel(kind: AnnotKind): string {
     polygon: 'Polygon',
     polyline: 'Polyline',
     cloud: 'Cloud',
-    stamp: 'Stamp'
+    stamp: 'Stamp',
+    foreign: 'Annotation'
   }[kind]
 }
 

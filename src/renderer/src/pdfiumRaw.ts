@@ -4,6 +4,8 @@
  * and `pageIdx` (FPDF_PAGE). Pin the @hyzyla/pdfium version and re-check these if it is upgraded.
  */
 import type { PDFiumDocument, PDFiumLibrary, PDFiumPage } from '@hyzyla/pdfium'
+import type { PDFDict } from 'pdf-lib'
+import { arrowEnds, dashStyle, measureOf, nameOf, numbers } from './annotExtras'
 import { pathBounds, type AnnotKind, type Pt } from './annotations'
 import type { Rect } from './textLogic'
 
@@ -157,6 +159,8 @@ export interface ImportedAnnot {
   fill?: string
   /** Second line of one of our dated stamps. */
   stampInfo?: string
+  dash?: 'dashed' | 'dotted'
+  measure?: { kind: 'distance' | 'perimeter' | 'area'; factor: number; unit: string; ratio?: string; label: string }
   opacity?: number
   fontFamily?: 'Helvetica' | 'Times' | 'Courier'
   author?: string
@@ -207,7 +211,12 @@ function cString(m: RawModule, s: string): number {
 const hex2 = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')
 
 /** Reads the annotations we can edit from one page, and the replies attached to annotations on it. */
-export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: ImportedAnnot[]; replies: ImportedReply[] } {
+export function readPageAnnots(
+  lib: PDFiumLibrary,
+  page: PDFiumPage,
+  /** The page's annotation dictionaries from pdf-lib, by index, for what PDFium cannot read; absent if unavailable. */
+  dicts?: (PDFDict | undefined)[]
+): { annots: ImportedAnnot[]; replies: ImportedReply[] } {
   const m = raw(lib)
   const p = pageHandle(page)
   const count = m._FPDFPage_GetAnnotCount(p)
@@ -284,11 +293,21 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
             }
           }
         }
-        let kind = ANNOT_KINDS[subtype]
+        const dict = dicts?.[i]
+        // Anything we cannot draw ourselves is still selectable, movable and commentable as a "foreign" annotation:
+        // it keeps its own appearance. Popups, links and form fields are not comments.
+        let kind = ANNOT_KINDS[subtype] ?? (subtype === 2 || subtype === 16 || subtype === 20 ? undefined : 'foreign')
         if (!kind) continue
         if (m._FPDFAnnot_GetFlags(annot) & (FLAG_HIDDEN | FLAG_NO_VIEW)) continue
-        // Measurements carry a /Measure dictionary we cannot read back; editing would lose the scale.
-        if (m._FPDFAnnot_HasKey(annot, keyMeasure)) continue
+        // Measurements: editable when their /Measure can be read (pdf-lib); otherwise left to PDFium.
+        let measure: ImportedAnnot['measure']
+        if (m._FPDFAnnot_HasKey(annot, keyMeasure)) {
+          const ms = measureOf(dict)
+          const it = nameOf(dict, 'IT')
+          const mk = it === 'LineDimension' ? 'distance' : it === 'PolyLineDimension' ? 'perimeter' : it === 'PolygonDimension' ? 'area' : null
+          if (!ms || !mk) kind = 'foreign'
+          else measure = { kind: mk, ...ms, label: readString(annot, keyContents) }
+        }
         if (!m._FPDFAnnot_GetRect(annot, scratch)) continue
         const f = new DataView(m.HEAPU8.buffer)
         const left = f.getFloat32(scratch, true)
@@ -302,13 +321,16 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
         let points: Pt[][] | undefined
         let label = ''
         let lineWidth = 1
+        let calloutBox: Rect | null = null
         if (kind === 'line') {
           const subj = readString(annot, keySubj)
-          if (subj !== 'Line' && subj !== 'Arrow') continue
           if (!m._FPDFAnnot_GetLine(annot, scratch + 16, scratch + 24)) continue
           const g = new DataView(m.HEAPU8.buffer)
           points = [[toDisplay(g.getFloat32(scratch + 16, true), g.getFloat32(scratch + 20, true)), toDisplay(g.getFloat32(scratch + 24, true), g.getFloat32(scratch + 28, true))].map(([x, y]) => ({ x, y }))]
-          kind = subj === 'Arrow' ? 'arrow' : 'line'
+          // An arrow by our own label, or by its line endings (/LE) whoever wrote it. A start-only arrow is turned round.
+          const ends = arrowEnds(dict)
+          if (!measure && !ends.end && ends.start) points = [[points[0][1], points[0][0]]]
+          kind = measure ? 'line' : subj === 'Arrow' || ends.end || ends.start ? 'arrow' : 'line'
         } else if (kind === 'rectangle' || kind === 'ellipse') {
           // Filled shapes are taken on too; the interior colour is read below.
         } else if (kind === 'polygon' || kind === 'polyline') {
@@ -331,11 +353,24 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
           if (kind === 'polygon' && m._FPDFAnnot_HasKey(annot, keyBE)) kind = 'cloud'
         } else if (kind === 'stamp') {
           label = readString(annot, keyLabel)
-          if (!label) continue
+          // Other tools' stamps keep their own picture.
+          if (!label) kind = 'foreign'
         } else if (kind === 'textbox') {
-          // Callouts need their leader line (/CL), which PDFium does not expose: leave them to PDFium.
           const it = readString(annot, keyIT)
-          if (it === 'FreeTextCallout') continue
+          if (it === 'FreeTextCallout') {
+            // The leader line (/CL) and the box inset (/RD) come from the dictionary; without them, keep it as is.
+            const cl = numbers(dict, 'CL')
+            if (!cl || cl.length < 4) kind = 'foreign'
+            else {
+              const rd = numbers(dict, 'RD') ?? [0, 0, 0, 0]
+              const [x0, y0, x1, y1] = rect
+              const box = [x0 + rd[0], y0 + rd[1], x1 - rd[2], y1 - rd[3]]
+              calloutBox = bboxOf([toDisplay(box[0], box[3]), toDisplay(box[2], box[1])])
+              const [tx, ty] = toDisplay(cl[0], cl[1])
+              points = [[{ x: tx, y: ty }]]
+              kind = 'callout'
+            }
+          }
           if (it === 'FreeTextTypeWriter') kind = 'typewriter'
         } else if (kind === 'ink') {
           points = []
@@ -359,6 +394,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
           }
           if (!points.length) continue
         }
+        if (kind === 'callout') lineWidth = 1
         if (kind === 'line' || kind === 'arrow' || kind === 'rectangle' || kind === 'ellipse' || kind === 'ink' || kind === 'stamp' || kind === 'polygon' || kind === 'polyline' || kind === 'cloud') {
           lineWidth = 2
           if (m._FPDFAnnot_GetBorder(annot, scratch + 48, scratch + 52, scratch + 56)) {
@@ -379,7 +415,8 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
             if (r.w > 0 && r.h > 0) rects.push(r)
           }
         }
-        if (points) rects = [pathBounds(kind, lineWidth, points)]
+        if (points && kind !== 'callout') rects = [pathBounds(kind, lineWidth, points)]
+        if (calloutBox) rects = [calloutBox]
         if (!rects.length) rects = [bboxOf([toDisplay(rect[0], rect[3]), toDisplay(rect[2], rect[1])])]
         if (kind === 'note') rects = [{ x: rects[0].x, y: rects[0].y, w: rects[0].w >= 4 ? rects[0].w : 22, h: rects[0].h >= 4 ? rects[0].h : 22 }]
         rects = rects.map((r) => (r.w > 0 && r.h > 0 ? r : { ...r, w: r.w || 22, h: r.h || 22 }))
@@ -404,7 +441,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
 
         let fontSize = 12
         let fontFamily: 'Helvetica' | 'Times' | 'Courier' | undefined
-        if (kind === 'textbox' || kind === 'typewriter') {
+        if (kind === 'textbox' || kind === 'typewriter' || kind === 'callout') {
           const da = readString(annot, keyDA)
           const face = /\/(\S+)\s+[\d.]+\s+Tf/.exec(da)?.[1] ?? ''
           fontFamily = /^(TiRo|Times|TimesNewRoman)/i.test(face) ? 'Times' : /^(Cour|Courier)/i.test(face) ? 'Courier' : undefined
@@ -432,6 +469,8 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
           stampInfo: kind === 'stamp' ? readString(annot, keyInfo) || undefined : undefined,
           opacity,
           fontFamily,
+          dash: kind === 'foreign' ? undefined : dashStyle(dict, lineWidth),
+          measure,
           author: readString(annot, keyT) || undefined,
           created: readString(annot, keyCreated) || undefined,
           modified: readString(annot, keyM) || undefined
@@ -574,4 +613,40 @@ export function readPageLabels(lib: PDFiumLibrary, doc: PDFiumDocument): string[
   const out: string[] = []
   for (let i = 0; i < n; i++) out.push(readUtf16(m, (buf, len) => m._FPDF_GetPageLabel(d, i, buf, len)))
   return out
+}
+
+/**
+ * Moves or resizes an annotation in the in-memory document: its appearance is scaled into the new rectangle.
+ * `rect` is in display space (points from the top left of the page as shown). Returns false if not found.
+ */
+export function setPageAnnotRect(lib: PDFiumLibrary, page: PDFiumPage, currentIndex: number, subtype: number, rect: Rect): boolean {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const annot = m._FPDFPage_GetAnnot(p, currentIndex)
+  if (!annot) return false
+  try {
+    if (m._FPDFAnnot_GetSubtype(annot) !== subtype) return false
+    const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
+    const GRID = 8
+    const buf = m.wasmExports.malloc(16)
+    try {
+      const toUser = (x: number, y: number) => {
+        m._FPDF_DeviceToPage(p, 0, 0, Math.round(w * GRID), Math.round(h * GRID), 0, Math.round(x * GRID), Math.round(y * GRID), buf, buf + 8)
+        const v = new DataView(m.HEAPU8.buffer)
+        return [v.getFloat64(buf, true), v.getFloat64(buf + 8, true)]
+      }
+      const [ax, ay] = toUser(rect.x, rect.y)
+      const [bx, by] = toUser(rect.x + rect.w, rect.y + rect.h)
+      const v = new DataView(m.HEAPU8.buffer)
+      v.setFloat32(buf, Math.min(ax, bx), true) // left
+      v.setFloat32(buf + 4, Math.max(ay, by), true) // top
+      v.setFloat32(buf + 8, Math.max(ax, bx), true) // right
+      v.setFloat32(buf + 12, Math.min(ay, by), true) // bottom
+      return m._FPDFAnnot_SetRect(annot, buf) !== 0
+    } finally {
+      m.wasmExports.free(buf)
+    }
+  } finally {
+    m._FPDFPage_CloseAnnot(annot)
+  }
 }

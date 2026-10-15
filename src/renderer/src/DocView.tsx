@@ -470,6 +470,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         const imported: Annot[] = []
         baseline.current = new Map()
         baselineReplies.current = new Map()
+        foreignRects.current = new Map()
         for (const { page, annots: list, replies } of pages) {
           for (const r of list) {
             const a: Annot = {
@@ -483,6 +484,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               lineWidth: r.lineWidth,
               points: r.points,
               fill: r.fill,
+              dash: r.dash,
+              measure: r.measure,
               stampInfo: r.stampInfo,
               opacity: r.opacity,
               fontFamily: r.fontFamily,
@@ -520,10 +523,43 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
   }, [client]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Foreign annotations: PDFium draws them, so moving one (or undoing a move) sets its rectangle there too, and
+  // deleting one hides it.
+  const foreignRects = useRef(new Map<number, string>())
+  useEffect(() => {
+    const c = client
+    if (!c) return
+    let changed = false
+    const jobs: Promise<unknown>[] = []
+    const present = new Set<number>()
+    for (const a of annots) {
+      if (a.kind !== 'foreign' || !a.origin) continue
+      present.add(a.id)
+      const key = JSON.stringify(a.rects[0])
+      const was = foreignRects.current.get(a.id)
+      foreignRects.current.set(a.id, key)
+      if (was !== undefined && was !== key) {
+        changed = true
+        jobs.push(c.setAnnotRect(a.page, a.origin.index, a.origin.subtype, a.rects[0]))
+      }
+    }
+    for (const [id] of foreignRects.current) {
+      if (present.has(id)) continue
+      const b = baseline.current.get(id)
+      foreignRects.current.delete(id)
+      if (b) {
+        changed = true
+        jobs.push(c.hideAnnot(b.page, b.origin.index, b.origin.subtype))
+      }
+    }
+    if (changed) Promise.all(jobs).then(() => setEpoch((e) => e + 1)).catch(() => {})
+  }, [annots, client])
+
   /** Stop PDFium drawing an imported annotation so our overlay can draw its edited version. */
   const touch = useCallback((id: number) => {
     const a = annotsRef.current.find((x) => x.id === id)
-    if (!a?.origin || touchedRef.current.has(id)) return
+    // A foreign annotation stays drawn by PDFium (it is moved there directly), so it is never hidden.
+    if (!a?.origin || touchedRef.current.has(id) || a.kind === 'foreign') return
     touchedRef.current = new Set(touchedRef.current).add(id)
     setTouched(touchedRef.current)
     clientRef.current
@@ -764,7 +800,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           const r = a.rects[0]
           return {
             ...a,
-            rects: [{ ...r, w: Math.max(40, Math.min(size.width - r.x, w)), h: Math.max(20, Math.min(size.height - r.y, h)) }]
+            // Foreign annotations can be small (icons); everything else keeps a usable minimum size.
+            rects: [{ ...r, w: Math.max(a.kind === 'foreign' ? 4 : 40, Math.min(size.width - r.x, w)), h: Math.max(a.kind === 'foreign' ? 4 : 20, Math.min(size.height - r.y, h)) }]
           }
         })
       )

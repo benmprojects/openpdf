@@ -155,6 +155,19 @@ export interface DeletedAnnot {
 
 const SUBTYPE_NAMES: Record<number, string> = {
   1: 'Text',
+  2: 'Link',
+  16: 'Popup',
+  17: 'FileAttachment',
+  18: 'Sound',
+  19: 'Movie',
+  20: 'Widget',
+  21: 'Screen',
+  22: 'PrinterMark',
+  23: 'TrapNet',
+  24: 'Watermark',
+  25: '3D',
+  26: 'RichMedia',
+  28: 'Redact',
   3: 'FreeText',
   4: 'Line',
   5: 'Square',
@@ -323,7 +336,10 @@ export async function writeAnnotations(
     }
     let groupWith: PDFRef | null = null
 
-    if (a.kind === 'caret') {
+    if (a.kind === 'foreign') {
+      if (!a.origin) continue
+      dict = { Rect: bounds, M: now, Contents: PDFHexString.fromText(a.text), ...(a.author ? { T: PDFHexString.fromText(a.author) } : {}) }
+    } else if (a.kind === 'caret') {
       const { bb, ap } = caretAp(a.rects[0], a.color)
       dict = {
         ...base,
@@ -605,7 +621,7 @@ export async function writeAnnotations(
       }
     }
 
-    if (a.opacity !== undefined && a.opacity < 1) {
+    if (a.opacity !== undefined && a.opacity < 1 && a.kind !== 'foreign') {
       dict.CA = a.opacity
       const apRef = (dict.AP as { N?: PDFRef } | undefined)?.N
       if (apRef && a.kind !== 'highlight') {

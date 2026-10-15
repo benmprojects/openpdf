@@ -70,12 +70,15 @@ test('typewriter and callout: drawn, typed, saved and read back', async () => {
     expect(problems).toEqual([])
     await app.close()
 
-    // Reopen: the typewriter is editable again; the callout stays drawn by PDFium.
+    // Reopen: the typewriter and the callout are both editable again (the callout through its /CL).
     app = await launch()
     win = await app.firstWindow()
     await expect(win.locator('.page')).toHaveCount(6)
     await expect(win.locator('.annot-box.typewriter')).toHaveCount(1)
-    await expect(win.locator('.annot-box.callout')).toHaveCount(0)
+    // An imported callout stays drawn by PDFium until edited; double-click opens it with its text.
+    await expect(win.locator('.annot-box.callout')).toHaveCount(1)
+    await win.locator('.annot-box.callout').dblclick()
+    await expect(win.getByRole('textbox', { name: 'Text box contents' })).toHaveValue('Check this level')
   } finally {
     await app.close()
     rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })

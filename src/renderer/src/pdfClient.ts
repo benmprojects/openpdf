@@ -153,6 +153,12 @@ export class PdfClient {
     return res.ok && res.type === 'hideAnnot' && res.hidden
   }
 
+  /** Moves or resizes an annotation already in the file, in memory, so PDFium draws it in its new place. */
+  async setAnnotRect(page: number, index: number, subtype: number, rect: { x: number; y: number; w: number; h: number }): Promise<boolean> {
+    const res = await this.call({ type: 'setAnnotRect', page, index, subtype, rect })
+    return res.ok && res.type === 'setAnnotRect' && res.done
+  }
+
   /** Text and character boxes for a page. Cached; the cache lives as long as the client. */
   pageText(page: number): Promise<PageText> {
     let p = this.textCache.get(page)
