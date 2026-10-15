@@ -650,3 +650,99 @@ export function setPageAnnotRect(lib: PDFiumLibrary, page: PDFiumPage, currentIn
     m._FPDFPage_CloseAnnot(annot)
   }
 }
+
+export interface PageLink {
+  /** Display-space rectangles (one per line for web links found in the text). */
+  rects: Rect[]
+  /** Zero-based target page, for links within the document. */
+  page?: number
+  /** Web address or mailto: link. */
+  uri?: string
+}
+
+/**
+ * Links on a page: link annotations (go to a page, or open a web address) and web addresses written in the text,
+ * which PDFium finds itself.
+ */
+export function readPageLinks(lib: PDFiumLibrary, doc: PDFiumDocument, page: PDFiumPage): PageLink[] {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const d = docHandle(doc)
+  const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
+  const GRID = 8
+  const scratch = m.wasmExports.malloc(64)
+  const out: PageLink[] = []
+  const toDisplay = (x: number, y: number): [number, number] => {
+    m._FPDF_PageToDevice(p, 0, 0, Math.round(w * GRID), Math.round(h * GRID), 0, x, y, scratch + 48, scratch + 52)
+    const v = new DataView(m.HEAPU8.buffer)
+    return [v.getInt32(scratch + 48, true) / GRID, v.getInt32(scratch + 52, true) / GRID]
+  }
+  const rectAt = (ptr: number): Rect => {
+    const v = new DataView(m.HEAPU8.buffer)
+    const [l, t, r, b] = [v.getFloat32(ptr, true), v.getFloat32(ptr + 4, true), v.getFloat32(ptr + 8, true), v.getFloat32(ptr + 12, true)]
+    const [x0, y0] = toDisplay(l, t)
+    const [x1, y1] = toDisplay(r, b)
+    return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) }
+  }
+  const ascii = (fill: (buf: number, len: number) => number) => {
+    const len = fill(0, 0)
+    if (len <= 1) return ''
+    const buf = m.wasmExports.malloc(len)
+    try {
+      fill(buf, len)
+      return new TextDecoder('latin1').decode(m.HEAPU8.slice(buf, buf + len - 1))
+    } finally {
+      m.wasmExports.free(buf)
+    }
+  }
+  try {
+    // Link annotations.
+    new DataView(m.HEAPU8.buffer).setInt32(scratch, 0, true)
+    for (let guard = 0; guard < 5000 && m._FPDFLink_Enumerate(p, scratch, scratch + 4); guard++) {
+      const link = new DataView(m.HEAPU8.buffer).getUint32(scratch + 4, true)
+      if (!link || !m._FPDFLink_GetAnnotRect(link, scratch + 8)) continue
+      const rect = rectAt(scratch + 8)
+      let dest = m._FPDFLink_GetDest(d, link)
+      const action = m._FPDFLink_GetAction(link)
+      let uri: string | undefined
+      if (!dest && action) {
+        const type = m._FPDFAction_GetType(action)
+        if (type === 1) dest = m._FPDFAction_GetDest(d, action)
+        else if (type === 3) uri = ascii((buf, len) => m._FPDFAction_GetURIPath(d, action, buf, len)) || undefined
+      }
+      const target = dest ? m._FPDFDest_GetDestPageIndex(d, dest) : -1
+      if (target >= 0) out.push({ rects: [rect], page: target })
+      else if (uri) out.push({ rects: [rect], uri })
+    }
+    // Web addresses in the text.
+    const text = m._FPDFText_LoadPage(p)
+    if (text) {
+      const web = m._FPDFLink_LoadWebLinks(text)
+      try {
+        const n = Math.min(m._FPDFLink_CountWebLinks(web), 2000)
+        for (let i = 0; i < n; i++) {
+          const url = readUtf16(m, (buf, len) => m._FPDFLink_GetURL(web, i, buf, len / 2) * 2)
+          const rects: Rect[] = []
+          const count = m._FPDFLink_CountRects(web, i)
+          for (let k = 0; k < count; k++) {
+            if (!m._FPDFLink_GetRect(web, i, k, scratch + 16, scratch + 24, scratch + 32, scratch + 40)) continue
+            const v = new DataView(m.HEAPU8.buffer)
+            const [l, t, r, b] = [v.getFloat64(scratch + 16, true), v.getFloat64(scratch + 24, true), v.getFloat64(scratch + 32, true), v.getFloat64(scratch + 40, true)]
+            const [x0, y0] = toDisplay(l, t)
+            const [x1, y1] = toDisplay(r, b)
+            rects.push({ x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) })
+          }
+          if (url && rects.length && !out.some((o) => o.uri === url && o.rects.some((q) => rects.some((r) => Math.abs(q.x - r.x) < 2 && Math.abs(q.y - r.y) < 2)))) {
+            out.push({ rects, uri: url })
+          }
+        }
+      } finally {
+        m._FPDFLink_CloseWebLinks(web)
+        m._FPDFText_ClosePage(text)
+      }
+    }
+  } finally {
+    m.wasmExports.free(scratch)
+  }
+  return out
+}

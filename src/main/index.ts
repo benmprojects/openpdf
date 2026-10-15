@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -205,6 +205,27 @@ ipcMain.handle('stamps:add', async (e) => {
     paths = res.filePaths
   }
   return addStamps(paths)
+})
+
+/** Opens a link from a document in the browser, after asking. Only web and mail links. */
+ipcMain.handle('link:open', async (e, url: string) => {
+  let parsed: URL
+  try {
+    parsed = new URL(url.includes(':') ? url : `https://${url}`)
+  } catch {
+    return false
+  }
+  if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) return false
+  if (e2e && process.env.OPENPDF_E2E_LINKS) {
+    await writeFile(process.env.OPENPDF_E2E_LINKS, parsed.href)
+    return true
+  }
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { type: 'question' as const, buttons: ['Open', 'Cancel'], defaultId: 0, cancelId: 1, message: 'Open this link?', detail: parsed.href }
+  const res = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+  if (res.response !== 0) return false
+  await shell.openExternal(parsed.href)
+  return true
 })
 
 /** Presentation mode. */

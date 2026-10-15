@@ -77,6 +77,7 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Link2,
   SlidersHorizontal,
   Eraser as EraserIcon,
   Hexagon,
@@ -621,7 +622,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     id: nextAnnotId.current++,
     page,
     kind,
-    color: colors[kind],
+    color: colors[kind] ?? defaultColor(kind),
     rects,
     text,
     fontSize: DEFAULT_FONT_SIZE,
@@ -855,7 +856,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -1177,6 +1178,30 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [aids, setAids] = useState<ViewAids>({ rulers: false, unit: 'mm', grid: null, snap: false })
   const [guides, setGuides] = useState<Guide[]>([])
   const GRID_MM = [5, 10, 20, 50]
+
+  const commentAnnots = useMemo(() => annots.filter((a) => a.kind !== 'link'), [annots])
+
+  // ---- Links ----------------------------------------------------------------------------------------
+  const [linkDraft, setLinkDraft] = useState<{ page: number; rect: { x: number; y: number; w: number; h: number }; to: 'uri' | 'page'; uri: string; page1: string } | null>(null)
+  const finishLink = () => {
+    const d = linkDraft
+    if (!d) return
+    const target = d.to === 'page' ? Number(d.page1) - 1 : -1
+    if (d.to === 'page' && !(target >= 0 && target < pages.length)) {
+      setNotice({ kind: 'error', text: `Enter a page from 1 to ${pages.length}.` })
+      return
+    }
+    if (d.to === 'uri' && !/^(https?:\/\/\S+\.\S+|mailto:\S+@\S+)$/i.test(d.uri.trim())) {
+      setNotice({ kind: 'error', text: 'Enter a web address starting with https:// (or a mailto: address).' })
+      return
+    }
+    const a = newAnnot('link', d.page, [d.rect])
+    if (d.to === 'page') a.linkPage = target
+    else a.linkUri = d.uri.trim()
+    history.commit((list) => [...list, a])
+    setLinkDraft(null)
+    setTool('select')
+  }
 
   // ---- Comments: threads, status, summary, export ------------------------------------------------------
   const focusComment = useCallback((id: number) => {
@@ -1683,6 +1708,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Type} label="Text box" onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')} disabled={!pages.length} pressed={tool === 'textbox'} title="Add a text box: click on the page" />
                 <RStack>
                   <RB icon={Keyboard} label="Typewriter" onClick={() => setTool(tool === 'typewriter' ? 'select' : 'typewriter')} disabled={!pages.length} pressed={tool === 'typewriter'} title="Type straight onto the page: click where the text starts" />
+                  <RB icon={Link2} label="Link" onClick={() => setTool(tool === 'link' ? 'select' : 'link')} disabled={!pages.length} pressed={tool === 'link'} title="Add a link: drag a box, then choose a web address or a page" />
                   <RB icon={MessageSquareShare} label="Callout" onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title="Callout: drag from the point to call out to where the text box goes" />
                 </RStack>
               </RGroup>
@@ -1944,6 +1970,33 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         />
       )}
 
+      {linkDraft && (
+        <form
+          className="page-dialog"
+          aria-label="Link target"
+          onSubmit={(e) => {
+            e.preventDefault()
+            finishLink()
+          }}
+        >
+          <span className="muted">Link to</span>
+          <label className="inline">
+            <input type="radio" checked={linkDraft.to === 'uri'} onChange={() => setLinkDraft({ ...linkDraft, to: 'uri' })} /> Web address
+          </label>
+          <input aria-label="Web address" className="wide" value={linkDraft.uri} disabled={linkDraft.to !== 'uri'} onChange={(e) => setLinkDraft({ ...linkDraft, uri: e.target.value })} autoFocus />
+          <label className="inline">
+            <input type="radio" checked={linkDraft.to === 'page'} onChange={() => setLinkDraft({ ...linkDraft, to: 'page' })} /> Page
+          </label>
+          <input aria-label="Target page" className="copies" value={linkDraft.page1} disabled={linkDraft.to !== 'page'} onChange={(e) => setLinkDraft({ ...linkDraft, page1: e.target.value })} />
+          <button className="primary" type="submit">
+            Add link
+          </button>
+          <button type="button" onClick={() => setLinkDraft(null)}>
+            Cancel
+          </button>
+        </form>
+      )}
+
       {calibrating && (
         <form
           className="page-dialog"
@@ -2141,7 +2194,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onToggleLayer={toggleLayer}
                 comments={
                   <CommentsPane
-                    annots={annots}
+                    annots={commentAnnots}
                     labels={pageLabels}
                     selectedId={selectedAnnot}
                     onFocus={focusComment}
@@ -2197,6 +2250,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               guides={guides}
               onGuides={setGuides}
               onErase={eraseInk}
+              onLinkRect={(page, rect) => setLinkDraft({ page, rect, to: 'uri', uri: 'https://', page1: String(Math.min(pages.length, page + 2)) })}
+              onFollowLink={(l) => (l.page !== undefined ? goTo(l.page) : l.uri ? void window.openpdf.openLink(l.uri) : undefined)}
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}

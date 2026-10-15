@@ -28,6 +28,8 @@ export type AnnotKind =
    * it keeps its own appearance and can be moved, resized, deleted and commented on.
    */
   | 'foreign'
+  /** A link: a box on the page that goes to a page (`linkPage`) or opens a web address (`linkUri`). */
+  | 'link'
 
 export interface Pt {
   x: number
@@ -102,6 +104,10 @@ export interface Annot {
   opacity?: number
   /** Text box, typewriter and callout font. Helvetica when unset. */
   fontFamily?: FontFamily
+  /** Link target: a web or mail address. */
+  linkUri?: string
+  /** Link target: a zero-based page. */
+  linkPage?: number
   /** Who made it (/T). */
   author?: string
   /** ISO date-times of creation and last change. */
@@ -156,7 +162,7 @@ export function formatWhen(iso?: string): string {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null])
 }
 
 export const NOTE_SIZE = 22
@@ -356,6 +362,8 @@ export function defaultColor(kind: AnnotKind): string {
     case 'stamp':
     case 'foreign':
       return '#e5322d'
+    case 'link':
+      return '#1f5fd1'
     case 'highlight':
     case 'note':
       return '#ffd400'
@@ -405,7 +413,8 @@ export function annotLabel(kind: AnnotKind): string {
     polyline: 'Polyline',
     cloud: 'Cloud',
     stamp: 'Stamp',
-    foreign: 'Annotation'
+    foreign: 'Annotation',
+    link: 'Link'
   }[kind]
 }
 

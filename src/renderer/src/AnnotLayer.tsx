@@ -216,6 +216,22 @@ export function AnnotLayer({
           )
         }
 
+        if (a.kind === 'link') {
+          return (
+            <div
+              key={a.id}
+              className={`annot-link${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}`}
+              role="button"
+              aria-label={`Link to ${a.linkUri ?? `page ${(a.linkPage ?? 0) + 1}`}`}
+              title={a.linkUri ?? `Page ${(a.linkPage ?? 0) + 1}`}
+              style={{ left: x * zoom, top: y * zoom, width: w * zoom, height: h * zoom }}
+              onMouseDown={(e) => begin(e, a, 'move')}
+            >
+              {selected && interactive && <div className="resize-handle" onMouseDown={(e) => begin(e, a, 'resize')} aria-label="Resize link" />}
+            </div>
+          )
+        }
+
         if (a.kind === 'foreign') {
           return (
             <div

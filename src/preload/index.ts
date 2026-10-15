@@ -33,6 +33,8 @@ const api = {
   /** Asks for PNG or JPEG files and copies them into the stamp library. */
   addStamps: (): Promise<{ added: number; refused: string[] }> => ipcRenderer.invoke('stamps:add'),
   removeStamp: (id: string): Promise<void> => ipcRenderer.invoke('stamps:remove', id),
+  /** Asks, then opens a web or mail link in the default app. Resolves false if refused or cancelled. */
+  openLink: (url: string): Promise<boolean> => ipcRenderer.invoke('link:open', url),
   setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
   copyImage: (png: Uint8Array): Promise<void> => ipcRenderer.invoke('clipboard:write-image', png),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('file:pick-folder'),

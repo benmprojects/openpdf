@@ -1,7 +1,7 @@
 import type { WorkerRequest, WorkerResponse } from './pdf.worker'
-import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageText } from './pdfiumRaw'
+import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText } from './pdfiumRaw'
 
-export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageText }
+export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText }
 
 export interface PageSize {
   width: number
@@ -46,6 +46,7 @@ export class PdfClient {
   private inFlight = 0
   private seq = 0
   private textCache = new Map<number, Promise<PageText>>()
+  private linkCache = new Map<number, Promise<PageLink[]>>()
 
   constructor() {
     this.worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
@@ -157,6 +158,20 @@ export class PdfClient {
   async setAnnotRect(page: number, index: number, subtype: number, rect: { x: number; y: number; w: number; h: number }): Promise<boolean> {
     const res = await this.call({ type: 'setAnnotRect', page, index, subtype, rect })
     return res.ok && res.type === 'setAnnotRect' && res.done
+  }
+
+  /** Links on a page (cached for the life of the client). */
+  links(page: number): Promise<PageLink[]> {
+    let p = this.linkCache.get(page)
+    if (!p) {
+      p = this.call({ type: 'links', page }).then((res) => {
+        if (res.ok && res.type === 'links') return res.links
+        throw new Error('Unexpected response')
+      })
+      p.catch(() => this.linkCache.delete(page))
+      this.linkCache.set(page, p)
+    }
+    return p
   }
 
   /** Text and character boxes for a page. Cached; the cache lives as long as the client. */

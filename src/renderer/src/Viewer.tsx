@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { AnnotLayer } from './AnnotLayer'
 import { CALLOUT_DEFAULT, isMarkup, pointInRect, simplifyPath, withBounds, NOTE_SIZE, type Annot, type Pt } from './annotations'
-import type { PageSize, PdfClient } from './pdfClient'
+import type { PageLink, PageSize, PdfClient } from './pdfClient'
 import type { PageText } from './pdfiumRaw'
 import {
   comparePos,
@@ -76,6 +76,7 @@ export type Tool =
   | 'polyline'
   | 'cloud'
   | 'eraser'
+  | 'link'
 
 export interface DrawStyle {
   color: string
@@ -124,6 +125,10 @@ interface Props {
   /** How page colours are shown: as they are, inverted for night reading, or high contrast. */
   pageColours: 'normal' | 'night' | 'contrast'
   measurements: Measurement[]
+  /** The link tool: a box dragged on one page, in page points (unrotated frame). */
+  onLinkRect: (page: number, rect: Rect) => void
+  /** A link was clicked: go to a page, or (after asking) open a web address. */
+  onFollowLink: (link: PageLink) => void
   /** The eraser was dragged over a page: rub out ink within `radius` of the trail (page points). */
   onErase: (page: number, trail: Pt[], radius: number) => void
   /** Rulers, grid and snapping. */
@@ -179,6 +184,8 @@ export function Viewer({
   guides,
   onGuides,
   onErase,
+  onFollowLink,
+  onLinkRect,
   tool,
   annots,
   selectedAnnot,
@@ -239,6 +246,30 @@ export function Viewer({
     [onCreateShape, onMeasure]
   )
   useEffect(() => setMeasureDraft(null), [measureKind])
+  // Links of pages near the view, for clicking and the hand cursor.
+  const linksRef = useRef(new Map<number, PageLink[]>())
+  const [links, setLinks] = useState<ReadonlyMap<number, PageLink[]>>(new Map())
+  const linksClient = useRef<PdfClient | null>(null)
+  const loadLinks = useCallback(
+    (page: number) => {
+      // A new client (the document was reloaded) starts a fresh set of links.
+      if (linksClient.current !== client) {
+        linksClient.current = client
+        linksRef.current = new Map()
+      }
+      if (linksRef.current.has(page)) return
+      linksRef.current.set(page, [])
+      client
+        .links(page)
+        .then((l) => {
+          if (linksClient.current !== client) return
+          linksRef.current.set(page, l)
+          setLinks(new Map(linksRef.current))
+        })
+        .catch(() => {})
+    },
+    [client]
+  )
   /** The eraser's path while dragging. */
   const [eraseTrail, setEraseTrail] = useState<{ page: number; points: Pt[]; radius: number } | null>(null)
   /** The marquee zoom rectangle, in screen pixels. */
@@ -611,7 +642,7 @@ export function Viewer({
         setMeasureDraft({ kind: measureKind, page, points, cursor: null })
         return
       }
-      if (tool === 'snapshot') {
+      if (tool === 'snapshot' || tool === 'link') {
         const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
         if (!pageEl) return
         e.preventDefault()
@@ -631,7 +662,7 @@ export function Viewer({
           const y0 = Math.max(0, Math.min(a.y, b.y))
           const x1 = Math.min(size.width, Math.max(a.x, b.x))
           const y1 = Math.min(size.height, Math.max(a.y, b.y))
-          if (x1 - x0 > 1 && y1 - y0 > 1) onSnapshot(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
         }
         window.addEventListener('mousemove', move)
         window.addEventListener('mouseup', up)
@@ -844,11 +875,16 @@ export function Viewer({
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
         if (moved) return
-        // A plain click: pick the text markup under the pointer, or clear the annotation selection.
+        // A plain click: follow a link, pick the text markup under the pointer, or clear the annotation selection.
         const i = pageAtPoint(ev.clientX, ev.clientY)
         const el = pageEls.current[i]
         if (!el) return
         const { x, y } = pointOnPage(el, i, ev.clientX, ev.clientY)
+        const link = linksRef.current.get(i)?.find((l) => l.rects.some((q) => pointInRect(q, x, y, 1)))
+        if (link && ev.detail === 1) {
+          onFollowLink(link)
+          return
+        }
         const hit = [...annots].reverse().find((a) => a.page === i && isMarkup(a.kind) && a.rects.some((q) => pointInRect(q, x, y, 2)))
         onSelectAnnot(hit ? hit.id : null)
         // Double-click a replace-text strikeout to edit the replacement.
@@ -857,7 +893,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect]
   )
 
   const ordered = useMemo(() => {
@@ -1010,6 +1046,8 @@ export function Viewer({
                 measureLabel={measureLabel}
                 grid={aids.grid}
                 guides={shownGuides}
+                links={tool === 'select' ? links.get(i) : undefined}
+                onVisible={loadLinks}
                 eraseTrail={eraseTrail && eraseTrail.page === i ? eraseTrail : undefined}
                 guidesInteractive={tool === 'select'}
                 onGuideDown={onGuideDown}
@@ -1074,6 +1112,9 @@ interface PageViewProps {
   measureLabel: (kind: MeasureKind, points: Pt[], page: number) => string
   grid: number | null
   guides: Guide[]
+  links?: PageLink[]
+  /** Called when the page comes near the view. */
+  onVisible: (page: number) => void
   eraseTrail?: { points: Pt[]; radius: number }
   guidesInteractive: boolean
   onGuideDown: (e: React.MouseEvent, g: Guide) => void
@@ -1101,7 +1142,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -1210,6 +1251,10 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
   }, [client, index, visible, tiled, fullScale, zoom, rotation, size, scroller, epoch])
 
   // Text is also loaded for every page near the view, for the screen-reader text layer.
+  useEffect(() => {
+    if (visible) onVisible(index)
+  }, [visible, index, onVisible])
+
   const needsText = visible || selection !== null || (matches?.length ?? 0) > 0
   useEffect(() => {
     if (!needsText) return
@@ -1278,6 +1323,15 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
           onEdit={annotProps.onEditAnnot}
           onText={annotProps.onAnnotText}
         />
+      )}
+      {links && links.length > 0 && (
+        <div className="link-layer" aria-hidden>
+          {links.flatMap((l, k) =>
+            l.rects.map((r, j) => (
+              <div key={`${k}-${j}`} className="link-hit" title={l.uri ?? `Go to page ${(l.page ?? 0) + 1}`} style={{ left: r.x * zoom, top: r.y * zoom, width: r.w * zoom, height: r.h * zoom }} />
+            ))
+          )}
+        </div>
       )}
       {eraseTrail && (
         <svg className="erase-trail" width={size.width * zoom} height={size.height * zoom} viewBox={`0 0 ${size.width} ${size.height}`}>

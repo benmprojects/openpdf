@@ -336,7 +336,12 @@ export async function writeAnnotations(
     }
     let groupWith: PDFRef | null = null
 
-    if (a.kind === 'foreign') {
+    if (a.kind === 'link') {
+      // No appearance: viewers show links as the page content under them.
+      dict = { Type: 'Annot', Subtype: 'Link', Rect: bounds, Border: [0, 0, 0], F: 4, M: now }
+      if (a.linkPage !== undefined && a.linkPage >= 0 && a.linkPage < pdf.getPageCount()) dict.Dest = [pdf.getPage(a.linkPage).ref, 'XYZ', null, null, null]
+      else dict.A = { S: 'URI', URI: PDFString.of(a.linkUri ?? '') }
+    } else if (a.kind === 'foreign') {
       if (!a.origin) continue
       dict = { Rect: bounds, M: now, Contents: PDFHexString.fromText(a.text), ...(a.author ? { T: PDFHexString.fromText(a.author) } : {}) }
     } else if (a.kind === 'caret') {
@@ -621,7 +626,7 @@ export async function writeAnnotations(
       }
     }
 
-    if (a.opacity !== undefined && a.opacity < 1 && a.kind !== 'foreign') {
+    if (a.opacity !== undefined && a.opacity < 1 && a.kind !== 'foreign' && a.kind !== 'link') {
       dict.CA = a.opacity
       const apRef = (dict.AP as { N?: PDFRef } | undefined)?.N
       if (apRef && a.kind !== 'highlight') {
