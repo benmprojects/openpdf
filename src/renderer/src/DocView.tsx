@@ -25,7 +25,8 @@ import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, type Match } from './textLogic'
 import { useHistory } from './useHistory'
 import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout'
-import { GAP, PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
+import { GAP, PAD, Viewer, type Tool, type ViewAids, type ViewerHandle } from './Viewer'
+import type { Guide } from './GuideLayer'
 import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
@@ -57,6 +58,9 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Grid3x3,
+  Magnet,
+  Eraser,
   Ruler,
   Spline,
   Pentagon,
@@ -832,6 +836,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     void r.start(currentPage, selected ?? undefined)
   }
 
+  // ---- Rulers, grid, guides -------------------------------------------------------------------------
+  const [aids, setAids] = useState<ViewAids>({ rulers: false, unit: 'mm', grid: null, snap: false })
+  const [guides, setGuides] = useState<Guide[]>([])
+  const GRID_MM = [5, 10, 20, 50]
+
   // ---- Measurement ----------------------------------------------------------------------------------
   // Measurements are an overlay for now (not saved). The scale comes from calibration, the page's own
   // viewport measure dictionaries, or paper millimetres.
@@ -1345,6 +1354,35 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={ZoomIn} label="Zoom in" onClick={() => stepZoom(1)} disabled={!pages.length} title="Zoom in (Ctrl++)" />
                 </RStack>
               </RGroup>
+              <RGroup label="Rulers and grid">
+                <RStack>
+                  <RB icon={Ruler} label="Rulers" onClick={() => setAids({ ...aids, rulers: !aids.rulers })} pressed={aids.rulers} disabled={!pages.length} title="Show rulers. Drag from a ruler to add a guide; drag a guide back to remove it" />
+                  <RB icon={Grid3x3} label="Grid" onClick={() => setAids({ ...aids, grid: aids.grid ? null : (10 * 72) / 25.4 })} pressed={!!aids.grid} disabled={!pages.length} title="Show a grid over the pages" />
+                  <RB icon={Magnet} label="Snap" onClick={() => setAids({ ...aids, snap: !aids.snap })} pressed={aids.snap} disabled={!pages.length} title="Snap drawing and measuring to the grid and guides" />
+                </RStack>
+                <RStack>
+                  <select className="rselect" aria-label="Ruler units" value={aids.unit} onChange={(e) => setAids({ ...aids, unit: e.target.value as ViewAids['unit'] })} title="Ruler units">
+                    <option value="mm">Millimetres</option>
+                    <option value="cm">Centimetres</option>
+                    <option value="in">Inches</option>
+                    <option value="pt">Points</option>
+                  </select>
+                  <select
+                    className="rselect"
+                    aria-label="Grid spacing"
+                    value={aids.grid ? String(Math.round((aids.grid * 25.4) / 72)) : '10'}
+                    onChange={(e) => setAids({ ...aids, grid: (Number(e.target.value) * 72) / 25.4 })}
+                    title="Grid spacing"
+                  >
+                    {GRID_MM.map((g) => (
+                      <option key={g} value={g}>
+                        Grid {g} mm
+                      </option>
+                    ))}
+                  </select>
+                  <RB icon={Eraser} label="Clear guides" onClick={() => setGuides([])} disabled={!guides.length} title="Remove all guides" />
+                </RStack>
+              </RGroup>
               <RGroup label="Read aloud">
                 {readerState === 'idle' ? (
                   <RB big icon={Volume2} label="Read" onClick={() => void readAloud()} disabled={!pages.length || !voices.length} title={voices.length ? 'Read aloud from this page, or the selected text' : 'No speech voices are installed'} />
@@ -1689,6 +1727,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               measurements={measurements}
               onMeasure={onMeasure}
               measureLabel={measureLabel}
+              aids={aids}
+              guides={guides}
+              onGuides={setGuides}
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}

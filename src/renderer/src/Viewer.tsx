@@ -13,7 +13,9 @@ import {
   type Match,
   type Rect
 } from './textLogic'
+import { GuideLayer, type Guide } from './GuideLayer'
 import { MeasureLayer, type MeasureKind, type Measurement } from './MeasureLayer'
+import { RULER_SIZE, RulerStrip, type RulerUnit } from './Rulers'
 import { layoutRows, rowOfPage, type PageMode } from './pageLayout'
 import { displayDims, stackTransform, toDisplay, toPage, type Rotation } from './viewRotation'
 
@@ -89,6 +91,15 @@ function constrain(kind: string, a: Pt, b: Pt): Pt {
   return { x: a.x + len * Math.cos(ang), y: a.y + len * Math.sin(ang) }
 }
 
+export interface ViewAids {
+  rulers: boolean
+  unit: RulerUnit
+  /** Grid spacing in points, or null for no grid. */
+  grid: number | null
+  /** Snap drawing and measuring to the grid and guides. */
+  snap: boolean
+}
+
 interface Props {
   client: PdfClient
   pages: PageSize[]
@@ -104,6 +115,10 @@ interface Props {
   /** How page colours are shown: as they are, inverted for night reading, or high contrast. */
   pageColours: 'normal' | 'night' | 'contrast'
   measurements: Measurement[]
+  /** Rulers, grid and snapping. */
+  aids: ViewAids
+  guides: Guide[]
+  onGuides: (g: Guide[]) => void
   /** A finished measurement, or the line drawn with the calibrate tool. */
   onMeasure: (kind: MeasureKind | 'calibrate', page: number, points: Pt[]) => void
   measureLabel: (kind: MeasureKind, points: Pt[], page: number) => string
@@ -149,6 +164,9 @@ export function Viewer({
   measurements,
   onMeasure,
   measureLabel,
+  aids,
+  guides,
+  onGuides,
   tool,
   annots,
   selectedAnnot,
@@ -223,6 +241,31 @@ export function Viewer({
     }
     return { rowTops: tops, offsets: pages.map((_, i) => tops.get(rowOf[i]) ?? PAD) }
   }, [visibleRows, rows, rowOf, pages, zoom, rotation])
+
+  /** Snaps a page point to the grid and to guides within a few pixels, when snapping is on. */
+  const snapPt = useCallback(
+    (p: Pt): Pt => {
+      if (!aids.snap) return p
+      const reach = 6 / zoom
+      const snapAxis = (v: number, axis: 'x' | 'y') => {
+        let best = v
+        let dist = reach
+        for (const g of guides) {
+          if (g.axis === axis && Math.abs(g.pos - v) < dist) {
+            dist = Math.abs(g.pos - v)
+            best = g.pos
+          }
+        }
+        if (best === v && aids.grid) {
+          const r = Math.round(v / aids.grid) * aids.grid
+          if (Math.abs(r - v) < Math.max(reach, aids.grid / 2)) best = r
+        }
+        return best
+      }
+      return { x: snapAxis(p.x, 'x'), y: snapAxis(p.y, 'y') }
+    },
+    [aids.snap, aids.grid, guides, zoom]
+  )
 
   /** A screen point to page points on the given page element, undoing the view rotation. */
   const pointOnPage = useCallback(
@@ -317,7 +360,7 @@ export function Viewer({
       const el = d && pageEls.current[d.page]
       if (!d || !el) return
       const size = pages[d.page]
-      const raw = pointOnPage(el, d.page, ev.clientX, ev.clientY)
+      const raw = snapPt(pointOnPage(el, d.page, ev.clientX, ev.clientY))
       let p = { x: Math.min(size.width, Math.max(0, raw.x)), y: Math.min(size.height, Math.max(0, raw.y)) }
       const prev = d.points[d.points.length - 1]
       if (prev && ev.shiftKey) p = constrain('line', prev, p)
@@ -345,7 +388,96 @@ export function Viewer({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('keydown', onKey, true)
     }
-  }, [drafting, pages, pointOnPage, onMeasure])
+  }, [drafting, pages, pointOnPage, onMeasure, snapPt])
+
+  // ---- Rulers and guides ----------------------------------------------------------------------------
+  // Rulers measure from the top left corner of the current page as displayed.
+  const [origin, setOrigin] = useState({ x: 0, y: 0 })
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
+  const currentPageRef = useRef(0)
+  currentPageRef.current = lastPage.current < 0 ? 0 : lastPage.current
+  useEffect(() => {
+    if (!aids.rulers) return
+    const sc = scroller.current
+    if (!sc) return
+    let raf = 0
+    const update = () => {
+      const el = pageEls.current[currentPageRef.current] ?? pageEls.current.find(Boolean)
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setOrigin((o) => (o.x === r.left && o.y === r.top ? o : { x: r.left, y: r.top }))
+    }
+    const onScroll = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(update)
+    }
+    const onMove = (e: MouseEvent) => setPointer({ x: e.clientX, y: e.clientY })
+    update()
+    sc.addEventListener('scroll', onScroll, { passive: true })
+    sc.addEventListener('mousemove', onMove)
+    const ro = new ResizeObserver(onScroll)
+    ro.observe(sc)
+    return () => {
+      cancelAnimationFrame(raf)
+      sc.removeEventListener('scroll', onScroll)
+      sc.removeEventListener('mousemove', onMove)
+      ro.disconnect()
+    }
+  }, [aids.rulers, zoom, rotation, mode, pages])
+
+  /** Where a guide being dragged would land: its page frame axis and position, or null over a ruler. */
+  const guideAt = useCallback(
+    (cx: number, cy: number, screenAxis: 'h' | 'v'): { axis: 'x' | 'y'; pos: number } | null => {
+      const sc = scroller.current
+      if (!sc) return null
+      const r = sc.getBoundingClientRect()
+      if (cx < r.left || cy < r.top) return null // dropped back on a ruler
+      const page = pageAtPoint(cx, cy)
+      const el = pageEls.current[page]
+      if (!el) return null
+      const p = pointOnPage(el, page, cx, cy)
+      // A horizontal line on screen is horizontal in the page frame unless the view is turned a quarter.
+      const turned = rotation === 90 || rotation === 270
+      const axis: 'x' | 'y' = (screenAxis === 'h') !== turned ? 'y' : 'x'
+      return { axis, pos: axis === 'x' ? p.x : p.y }
+    },
+    [pageAtPoint, pointOnPage, rotation]
+  )
+  const [guideDraft, setGuideDraft] = useState<{ axis: 'x' | 'y'; pos: number } | null>(null)
+  const dragGuide = useCallback(
+    (screenAxis: 'h' | 'v', existing: Guide | null) => {
+      const move = (ev: MouseEvent) => setGuideDraft(guideAt(ev.clientX, ev.clientY, screenAxis))
+      const up = (ev: MouseEvent) => {
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+        setGuideDraft(null)
+        const at = guideAt(ev.clientX, ev.clientY, screenAxis)
+        const rest = existing ? guides.filter((g) => g.id !== existing.id) : guides
+        if (!at) {
+          if (existing) onGuides(rest) // dragged back onto a ruler: removed
+          return
+        }
+        onGuides([...rest, { id: existing?.id ?? Date.now(), ...at }])
+      }
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    },
+    [guideAt, guides, onGuides]
+  )
+  const onGuideDown = useCallback(
+    (e: React.MouseEvent, g: Guide) => {
+      e.stopPropagation()
+      e.preventDefault()
+      const turned = rotation === 90 || rotation === 270
+      // A page-frame 'y' guide is horizontal on screen unless the view is turned.
+      dragGuide((g.axis === 'y') !== turned ? 'h' : 'v', g)
+    },
+    [dragGuide, rotation]
+  )
+  const shownGuides = useMemo(
+    () => (guideDraft ? [...guides, { id: -1, ...guideDraft }] : guides),
+    [guides, guideDraft]
+  )
 
   const measuresByPage = useMemo(() => {
     const map = new Map<number, Measurement[]>()
@@ -420,7 +552,7 @@ export function Viewer({
         const d = measureDraftRef.current
         if (d && d.page !== page) return // a measurement stays on one page
         const size = pages[page]
-        const raw = pointOnPage(pageEl, page, e.clientX, e.clientY)
+        const raw = snapPt(pointOnPage(pageEl, page, e.clientX, e.clientY))
         let p = { x: Math.min(size.width, Math.max(0, raw.x)), y: Math.min(size.height, Math.max(0, raw.y)) }
         const prev = d?.points[d.points.length - 1]
         if (prev && e.shiftKey) p = constrain('line', prev, p)
@@ -532,7 +664,7 @@ export function Viewer({
         const kind = tool
         const style = drawStyleRef.current
         const toPt = (cx: number, cy: number): Pt => {
-          const p = pointOnPage(pageEl, pageIdx, cx, cy)
+          const p = snapPt(pointOnPage(pageEl, pageIdx, cx, cy))
           return { x: Math.min(size.width, Math.max(0, p.x)), y: Math.min(size.height, Math.max(0, p.y)) }
         }
         const start = toPt(e.clientX, e.clientY)
@@ -616,7 +748,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, onMeasure]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, onMeasure, snapPt]
   )
 
   const ordered = useMemo(() => {
@@ -716,7 +848,7 @@ export function Viewer({
     [client, offsets, zoom, rotation, pages, ordered, mode.continuous, rowOf, shownRowSafe]
   )
 
-  return (
+  const scrollerEl = (
     <div
       ref={scroller}
       className={`${tool === 'hand' ? 'scroller hand' : tool === 'zoom' ? 'scroller zoom' : tool === 'select' ? 'scroller' : 'scroller place'} colours-${pageColours}`}
@@ -739,6 +871,10 @@ export function Viewer({
                 measures={measuresByPage.get(i)}
                 measureDraft={measureDraft && measureDraft.page === i ? measureDraft : undefined}
                 measureLabel={measureLabel}
+                grid={aids.grid}
+                guides={shownGuides}
+                guidesInteractive={tool === 'select'}
+                onGuideDown={onGuideDown}
                 epoch={epoch}
                 scroller={scroller}
                 annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
@@ -756,6 +892,37 @@ export function Viewer({
       {band && <div className="zoom-band" style={{ left: band.x, top: band.y, width: band.w, height: band.h }} />}
     </div>
   )
+  if (!aids.rulers) return <div className="viewer-frame">{scrollerEl}</div>
+  return (
+    <div className="viewer-frame with-rulers" style={{ gridTemplateColumns: `${RULER_SIZE}px 1fr`, gridTemplateRows: `${RULER_SIZE}px 1fr` }}>
+      <div className="ruler-corner" title={`Rulers in ${aids.unit}`}>
+        {aids.unit}
+      </div>
+      <RulerStrip
+        axis="x"
+        origin={origin.x}
+        zoom={zoom}
+        unit={aids.unit}
+        pointer={pointer?.x ?? null}
+        onGuideDrag={(e) => {
+          e.preventDefault()
+          dragGuide('h', null)
+        }}
+      />
+      <RulerStrip
+        axis="y"
+        origin={origin.y}
+        zoom={zoom}
+        unit={aids.unit}
+        pointer={pointer?.y ?? null}
+        onGuideDrag={(e) => {
+          e.preventDefault()
+          dragGuide('v', null)
+        }}
+      />
+      {scrollerEl}
+    </div>
+  )
 }
 
 interface PageViewProps {
@@ -767,6 +934,10 @@ interface PageViewProps {
   measures?: Measurement[]
   measureDraft?: { kind: MeasureKind | 'calibrate'; points: Pt[]; cursor: Pt | null }
   measureLabel: (kind: MeasureKind, points: Pt[], page: number) => string
+  grid: number | null
+  guides: Guide[]
+  guidesInteractive: boolean
+  onGuideDown: (e: React.MouseEvent, g: Guide) => void
   /** The scrolling container, so very large pages can render only the part in view. */
   scroller: React.RefObject<HTMLDivElement | null>
   annots?: Annot[]
@@ -791,7 +962,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -968,6 +1139,9 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
           onEdit={annotProps.onEditAnnot}
           onText={annotProps.onAnnotText}
         />
+      )}
+      {(grid || guides.length > 0) && (
+        <GuideLayer size={size} zoom={zoom} grid={grid} guides={guides} interactive={guidesInteractive} onGuideDown={onGuideDown} />
       )}
       {(measures?.length || measureDraft) && (
         <MeasureLayer items={measures ?? []} draft={measureDraft} zoom={zoom} rotation={rotation} size={size} label={measureLabel} page={index} />

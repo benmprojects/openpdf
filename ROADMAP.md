@@ -33,7 +33,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Print: page ranges, copies, fit or actual size, auto-rotate (output checked through the test hook; the system print dialog itself is not yet tested)
 - [x] Booklet and N-up printing (2, 4, 6, 9, 16 per sheet), presentation mode (F5, full screen)
 - [x] Read aloud (Windows voices; page by page or the selection; speed and voice), reading mode (Ctrl+H), night and high-contrast page colours, screen-reader text layer, Windows high-contrast support
-- [ ] Rulers, grid, guides, measurement tools (distance, perimeter, area)
+- [x] Rulers (mm, cm, in, pt), grid, guides (drag from a ruler), snap; measurement of distance, perimeter and area with calibration and document scales (overlay; saving as annotations comes with Phase 2 polygons)
 
 ## Phase 2: Annotation and markup (P0)
 - [x] Highlight, underline, strikeout (from selected text)
