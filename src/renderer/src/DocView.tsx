@@ -70,7 +70,9 @@ import { replaceBlock, weightAndSlant } from './textEdit'
 import { addImage, replaceImage, transformImage } from './imageEdit'
 import { transformPath } from './pathEdit'
 import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
-import { applyFormValues, flattenForm, readForm, type FormField, type FormValue } from './forms'
+import { applyFormValues, flattenForm, readForm, type FieldType, type FormField, type FormValue } from './forms'
+import { addField, deleteField, moveInTabOrder, placeWidget, setTabOrder, updateField, type FieldPatch, type FieldSpec, type TabOrder } from './formDesign'
+import { FieldDialog } from './FieldDialog'
 import { entriesFor, readDataFile, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataFormat } from './formData'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
@@ -171,6 +173,16 @@ import {
   Redo2,
   RotateCcw,
   Layers2,
+  SquareCheck,
+  CircleDot,
+  SquareChevronDown,
+  List,
+  RectangleHorizontal,
+  PenLine,
+  SquareDashedMousePointer,
+  Rows3,
+  Columns3,
+  ListOrdered,
   RotateCcwSquare,
   RotateCw,
   RotateCwSquare,
@@ -492,6 +504,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   /** Values typed into fields since the file was last written: name to value. */
   const [formValues, setFormValues] = useState<ReadonlyMap<string, FormValue>>(new Map())
   const [highlightFields, setHighlightFields] = useState(true)
+  // Designing: the kind of field being drawn, the box just drawn (waiting for its properties), the field whose properties are open, the selection.
+  const [fieldKind, setFieldKind] = useState<FieldType>('text')
+  const [fieldDraft, setFieldDraft] = useState<{ type: FieldType; page: number; rect: { x: number; y: number; w: number; h: number } } | null>(null)
+  const [fieldEdit, setFieldEdit] = useState<string | null>(null)
+  const [designSel, setDesignSel] = useState<{ name: string; widget: number } | null>(null)
   const formFieldsRef = useRef<FormField[]>([])
   formFieldsRef.current = formFields
   const setFormValue = useCallback((name: string, v: FormValue) => {
@@ -1101,7 +1118,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool === 'editimage' || tool === 'editpath' || tool === 'addimage' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool === 'editimage' || tool === 'editpath' || tool === 'addimage' || tool === 'formfield' || tool === 'formedit' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -1328,6 +1345,50 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     },
     [place, applyPageEdit]
   )
+
+  // ---- Form design ----------------------------------------------------------------------------------
+  const proposeName = (type: FieldType) => {
+    const base: Record<FieldType, string> = { text: 'Text', checkbox: 'Check', radio: 'Group', dropdown: 'Dropdown', list: 'List', button: 'Button', signature: 'Signature' }
+    const taken = new Set(formFields.map((f) => f.name))
+    let n = 1
+    while (taken.has(`${base[type]}${n}`)) n++
+    return `${base[type]}${n}`
+  }
+  /** Choose a kind of field and the drawing tool (pressing it again stops drawing). */
+  const startField = (type: FieldType) => {
+    if (tool === 'formfield' && fieldKind === type) return setTool('select')
+    setFieldKind(type)
+    setTool('formfield')
+    setNotice({ kind: 'info', text: 'Drag a box on the page where the field should go.' })
+  }
+  const createField = async (spec: Omit<FieldSpec, 'page' | 'rect' | 'type'>) => {
+    const d = fieldDraft
+    if (!d) return
+    setFieldDraft(null)
+    await applyPageEdit((b) => addField(b, { ...spec, type: d.type, page: d.page, rect: d.rect }), 'Field added')
+    setTool('formedit')
+    setDesignSel({ name: spec.name, widget: 0 })
+  }
+  const changeField = async (name: string, patch: FieldPatch) => {
+    setFieldEdit(null)
+    await applyPageEdit((b) => updateField(b, name, patch), 'Field updated')
+    if (patch.name && designSel?.name === name) setDesignSel({ name: patch.name, widget: designSel.widget })
+  }
+  const removeField = async (name: string) => {
+    setDesignSel(null)
+    await applyPageEdit((b) => deleteField(b, name), 'Field deleted')
+  }
+  const moveField = (name: string, widget: number, rect: { x: number; y: number; w: number; h: number }) => void applyPageEdit((b) => placeWidget(b, name, widget, rect), 'Field moved')
+  const chooseTabOrder = (order: TabOrder) => void applyPageEdit((b) => setTabOrder(b, order), 'Tab order changed')
+  const stepTabOrder = (dir: -1 | 1) => designSel && void applyPageEdit((b) => moveInTabOrder(b, designSel.name, dir), 'Tab order changed')
+  /** A push button was pressed in the filled-in form. */
+  const pressFormButton = (f: FormField) => {
+    const a = f.action
+    if (!a || a.kind === 'none') return
+    if (a.kind === 'reset') resetForm()
+    else if (a.kind === 'uri' && a.url) void window.openpdf.openLink(a.url)
+    else setNotice({ kind: 'info', text: a.kind === 'submit' ? 'Sending a form to a web address is not supported yet. Use Export to save the data.' : 'Scripts are not run yet.' })
+  }
 
   // Bookmark edits come quicker than the document reloads: keep the latest tree and write it when free.
   const outlineWant = useRef<BookmarkNode[] | null>(null)
@@ -2340,6 +2401,31 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Eraser} label="Clear form" onClick={resetForm} disabled={!formFields.length || busy} title="Empty every field" />
                 <RB big icon={RotateCcw} label="Revert" onClick={() => setFormValues(new Map())} disabled={!formValues.size} title="Go back to the values saved in the file" />
               </RGroup>
+              <RGroup label="Add a field">
+                <RStack>
+                  <RB icon={TextCursorInput} label="Text" onClick={() => startField('text')} pressed={tool === 'formfield' && fieldKind === 'text'} disabled={!pages.length || busy || !!password} title="Draw a text field on the page" />
+                  <RB icon={SquareCheck} label="Check box" onClick={() => startField('checkbox')} pressed={tool === 'formfield' && fieldKind === 'checkbox'} disabled={!pages.length || busy || !!password} title="Draw a check box" />
+                  <RB icon={CircleDot} label="Radio" onClick={() => startField('radio')} pressed={tool === 'formfield' && fieldKind === 'radio'} disabled={!pages.length || busy || !!password} title="Draw a radio button (buttons with the same group name are exclusive)" />
+                </RStack>
+                <RStack>
+                  <RB icon={SquareChevronDown} label="Drop-down" onClick={() => startField('dropdown')} pressed={tool === 'formfield' && fieldKind === 'dropdown'} disabled={!pages.length || busy || !!password} title="Draw a drop-down list" />
+                  <RB icon={List} label="List box" onClick={() => startField('list')} pressed={tool === 'formfield' && fieldKind === 'list'} disabled={!pages.length || busy || !!password} title="Draw a list box" />
+                  <RB icon={RectangleHorizontal} label="Button" onClick={() => startField('button')} pressed={tool === 'formfield' && fieldKind === 'button'} disabled={!pages.length || busy || !!password} title="Draw a push button" />
+                </RStack>
+                <RB big icon={PenLine} label="Signature" onClick={() => startField('signature')} pressed={tool === 'formfield' && fieldKind === 'signature'} disabled={!pages.length || busy || !!password} title="Draw a signature field" />
+              </RGroup>
+              <RGroup label="Arrange fields">
+                <RB big icon={SquareDashedMousePointer} label="Edit fields" onClick={() => setTool(tool === 'formedit' ? 'select' : 'formedit')} pressed={tool === 'formedit'} disabled={!formFields.length || busy || !!password} title="Select, move, resize, rename or delete fields" />
+                <RStack>
+                  <RB icon={Rows3} label="Tab by rows" onClick={() => chooseTabOrder('rows')} pressed={formFields[0]?.widgets[0]?.tabs === 'R'} disabled={!formFields.length || busy || !!password} title="Tab moves along each row, then down" />
+                  <RB icon={Columns3} label="Tab by columns" onClick={() => chooseTabOrder('columns')} pressed={formFields[0]?.widgets[0]?.tabs === 'C'} disabled={!formFields.length || busy || !!password} title="Tab moves down each column, then across" />
+                  <RB icon={ListOrdered} label="Tab in field order" onClick={() => chooseTabOrder('structure')} pressed={formFields[0]?.widgets[0]?.tabs === 'S'} disabled={!formFields.length || busy || !!password} title="Tab follows the order of the fields on the page (use Earlier and Later to change it)" />
+                </RStack>
+                <RStack>
+                  <RB icon={ArrowUp} label="Earlier" onClick={() => stepTabOrder(-1)} disabled={!designSel || tool !== 'formedit' || busy} title="Move the selected field earlier in the tab order" />
+                  <RB icon={ArrowDown} label="Later" onClick={() => stepTabOrder(1)} disabled={!designSel || tool !== 'formedit' || busy} title="Move the selected field later in the tab order" />
+                </RStack>
+              </RGroup>
               <RGroup label="Form data">
                 <RB big icon={FileInput} label="Import…" onClick={() => void importFormData()} disabled={!formFields.length || busy} title="Fill the fields from an FDF, XFDF, CSV or XML file" />
                 <RStack>
@@ -2560,6 +2646,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           onClose={() => setMarksMode(null)}
         />
       )}
+
+      {fieldDraft && <FieldDialog type={fieldDraft.type} names={formFields.map((f) => f.name)} proposedName={proposeName(fieldDraft.type)} onCreate={(s) => void createField(s)} onUpdate={() => {}} onClose={() => setFieldDraft(null)} />}
+      {fieldEdit &&
+        (() => {
+          const f = formFields.find((x) => x.name === fieldEdit)
+          return f ? <FieldDialog key={f.name} type={f.type} field={f} names={formFields.map((x) => x.name)} proposedName={f.name} onCreate={() => {}} onUpdate={(n, p) => void changeField(n, p)} onClose={() => setFieldEdit(null)} /> : null
+        })()}
 
       {docProps && (
         <DocPropsDialog
@@ -2947,7 +3040,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               annots={annots}
               selectedAnnot={selectedAnnot}
               extraSelected={extraSel}
-              forms={formFields.length ? { fields: formFields, values: formValues, onChange: setFormValue, highlight: highlightFields } : undefined}
+              onFieldRect={(page, rect) => setFieldDraft({ type: fieldKind, page, rect })}
+              forms={
+                formFields.length || tool === 'formfield' || tool === 'formedit'
+                  ? {
+                      fields: formFields,
+                      values: formValues,
+                      onChange: setFormValue,
+                      highlight: highlightFields,
+                      onButton: pressFormButton,
+                      design: tool === 'formedit' ? { selected: designSel, onSelect: setDesignSel, onPlace: moveField, onEdit: setFieldEdit, onDelete: (n) => void removeField(n) } : undefined
+                    }
+                  : undefined
+              }
               editingAnnot={editingAnnot}
               onSelectAnnot={selectAnnot}
               onMoveAnnot={moveAnnot}

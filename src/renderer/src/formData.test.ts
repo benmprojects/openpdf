@@ -12,14 +12,15 @@ const field = (name: string, type: FormField['type'], value: FormValue, extra: P
   align: 0,
   fontSize: 0,
   color: '#000000',
-  widgets: [{ page: 0, rect: { x: 0, y: 0, w: 10, h: 10 } }],
+  tooltip: '',
+  widgets: [{ page: 0, order: 0, tabs: '', rect: { x: 0, y: 0, w: 10, h: 10 } }],
   ...extra
 })
 
 const fields: FormField[] = [
   field('site.name', 'text', 'Eagle Farm <North> & "Yard"'),
   field('site.notes', 'text', 'Line one\nLine two, with a comma'),
-  field('accept', 'checkbox', true, { widgets: [{ page: 0, rect: { x: 0, y: 0, w: 10, h: 10 }, onValue: 'Yes' }] }),
+  field('accept', 'checkbox', true, { widgets: [{ page: 0, order: 0, tabs: '', rect: { x: 0, y: 0, w: 10, h: 10 }, onValue: 'Yes' }] }),
   field('trade', 'radio', 'Parks', { options: ['Civil', 'Landscape', 'Parks'] }),
   field('state', 'dropdown', 'QLD', { options: ['QLD', 'NSW'] }),
   field('tools', 'list', ['Roller', 'Grader'], { options: ['Excavator', 'Roller', 'Grader'], multiSelect: true }),

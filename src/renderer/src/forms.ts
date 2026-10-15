@@ -17,6 +17,11 @@ import {
   PDFTextField,
   PDFArray,
   PDFRef,
+  PDFNumber,
+  PDFString,
+  PDFHexString,
+  PDFRawStream,
+  decodePDFRawStream,
 
   TextAlignment,
   StandardFonts
@@ -24,6 +29,14 @@ import {
 import fontkit from '@pdf-lib/fontkit'
 import { frameFor } from './annotWrite'
 import type { Rect } from './textLogic'
+
+/** What a push button does when pressed. */
+export type ButtonAction =
+  | { kind: 'none' }
+  | { kind: 'reset' }
+  | { kind: 'submit'; url: string; format: 'fdf' | 'xfdf' | 'html' | 'pdf' }
+  | { kind: 'uri'; url: string }
+  | { kind: 'javascript'; code: string }
 
 export type FieldType = 'text' | 'checkbox' | 'radio' | 'dropdown' | 'list' | 'button' | 'signature'
 
@@ -42,6 +55,10 @@ export interface Widget {
   background?: string
   /** Caption of a push button. */
   caption?: string
+  /** Position among the page's annotations (the document order Tab follows by default). */
+  order: number
+  /** The page's tab order: R rows, C columns, S annotation order, or '' when not set. */
+  tabs: 'R' | 'C' | 'S' | ''
 }
 
 export interface FormField {
@@ -62,6 +79,9 @@ export interface FormField {
   editable?: boolean
   /** 0 left, 1 centre, 2 right. */
   align: 0 | 1 | 2
+  tooltip: string
+  /** What a push button does. */
+  action?: ButtonAction
   /** Font size from the default appearance; 0 means auto. */
   fontSize: number
   /** Text colour from the default appearance. */
@@ -77,6 +97,28 @@ const hex = (c: number[] | undefined): string | undefined => {
   if (c.length === 3) return `#${to(c[0])}${to(c[1])}${to(c[2])}`
   if (c.length === 4) return `#${to((1 - c[0]) * (1 - c[3]))}${to((1 - c[1]) * (1 - c[3]))}${to((1 - c[2]) * (1 - c[3]))}`
   return undefined
+}
+
+const textOf = (o: unknown): string => (o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : '')
+
+/** A push button's action, from the widget's /A dictionary. */
+function readAction(w: PDFDict): ButtonAction {
+  const a = w.lookupMaybe(PDFName.of('A'), PDFDict)
+  const s = a?.lookupMaybe(PDFName.of('S'), PDFName)?.decodeText()
+  if (!a || !s) return { kind: 'none' }
+  if (s === 'ResetForm') return { kind: 'reset' }
+  if (s === 'URI') return { kind: 'uri', url: textOf(a.lookup(PDFName.of('URI'))) }
+  if (s === 'JavaScript') {
+    const js = a.lookup(PDFName.of('JS'))
+    return { kind: 'javascript', code: js instanceof PDFRawStream ? new TextDecoder().decode(decodePDFRawStream(js).decode()) : textOf(js) }
+  }
+  if (s === 'SubmitForm') {
+    const flags = a.lookupMaybe(PDFName.of('Flags'), PDFNumber)?.asNumber() ?? 0
+    const target = a.lookup(PDFName.of('F'))
+    const url = target instanceof PDFDict ? textOf(target.lookup(PDFName.of('F'))) : textOf(target)
+    return { kind: 'submit', url, format: flags & 256 ? 'pdf' : flags & 32 ? 'xfdf' : flags & 4 ? 'html' : 'fdf' }
+  }
+  return { kind: 'none' }
 }
 
 /** The font size in a field's default appearance (0 for automatic). */
@@ -99,12 +141,15 @@ function fieldType(f: PDFField): FieldType | null {
 export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true })
   const form = doc.getForm()
-  const pageOf = new Map<PDFDict, number>()
+  const pageOf = new Map<PDFDict, { page: number; order: number }>()
+  const tabsOf: ('R' | 'C' | 'S' | '')[] = []
   doc.getPages().forEach((p, i) => {
+    const tab = p.node.lookupMaybe(PDFName.of('Tabs'), PDFName)?.decodeText()
+    tabsOf[i] = tab === 'R' || tab === 'C' || tab === 'S' ? tab : ''
     const annots = p.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
     for (let k = 0; annots && k < annots.size(); k++) {
       const d = annots.lookupMaybe(k, PDFDict)
-      if (d) pageOf.set(d, i)
+      if (d) pageOf.set(d, { page: i, order: k })
     }
   })
   const fields: FormField[] = []
@@ -113,7 +158,8 @@ export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
     if (!type) continue
     const widgets: Widget[] = []
     for (const w of f.acroField.getWidgets()) {
-      const page = pageOf.get(w.dict) ?? -1
+      const where = pageOf.get(w.dict)
+      const page = where?.page ?? -1
       const r = w.getRectangle()
       let rect: Rect = { x: r.x, y: r.y, w: r.width, h: r.height }
       if (page >= 0) {
@@ -142,7 +188,7 @@ export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
           onValue = undefined
         }
       }
-      widgets.push({ page, rect, onValue, border: hex(mk?.getBorderColor()), background: hex(mk?.getBackgroundColor()), caption: mk?.getCaptions()?.normal })
+      widgets.push({ page, order: where?.order ?? 0, tabs: page >= 0 ? tabsOf[page] : '', rect, onValue, border: hex(mk?.getBorderColor()), background: hex(mk?.getBackgroundColor()), caption: mk?.getCaptions()?.normal })
     }
     const da = f.acroField.getDefaultAppearance() ?? ''
     const size = /([\d.]+)\s+Tf/.exec(da)
@@ -180,6 +226,8 @@ export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
       value,
       initial: Array.isArray(value) ? [...value] : value,
       options,
+      tooltip: textOf(f.acroField.dict.lookup(PDFName.of('TU'))),
+      action: type === 'button' ? readAction(f.acroField.getWidgets()[0].dict) : undefined,
       readOnly: f.isReadOnly(),
       required: f.isRequired(),
       align: align === TextAlignment.Center ? 1 : align === TextAlignment.Right ? 2 : 0,

@@ -2448,6 +2448,35 @@ button.compare-item:hover {
   border-style: dashed;
   cursor: default;
 }
+.form-layer.design {
+  pointer-events: auto;
+  outline: none;
+}
+.form-design-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed var(--accent);
+  background: rgba(110, 160, 255, 0.14);
+  cursor: move;
+}
+.form-design-box.selected {
+  border: 1.5px solid var(--accent);
+  background: rgba(110, 160, 255, 0.26);
+}
+.form-design-name {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 100%;
+  padding: 0 3px;
+  font: 600 10px/14px Helvetica, Arial, sans-serif;
+  color: #fff;
+  background: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
 .ribbon-note {
   align-self: center;
   padding: 0 12px;

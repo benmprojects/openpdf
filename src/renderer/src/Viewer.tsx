@@ -89,6 +89,8 @@ export type Tool =
   | 'editimage'
   | 'editpath'
   | 'addimage'
+  | 'formfield'
+  | 'formedit'
 
 export interface DrawStyle {
   color: string
@@ -145,6 +147,8 @@ interface Props {
   onFollowLink: (link: PageLink) => void
   /** Edit Text tool: a block of text on a page was given new text. */
   onEditText: (page: number, block: TextBlock, total: number, text: string) => void
+  /** The form field tool: a box was dragged on a page (display space). */
+  onFieldRect: (page: number, rect: Rect) => void
   /** When set, the document's form fields are drawn as controls over each page (the page images leave them out). */
   forms?: FormsView
   /** Edit Image tool: an image was moved or resized (page-space change) or deleted (null). */
@@ -216,6 +220,7 @@ export function Viewer({
   onReplaceImage,
   onChangePath,
   forms,
+  onFieldRect,
   textEditReady,
   onLinkRect,
   onCropRect,
@@ -676,7 +681,7 @@ export function Viewer({
         setMeasureDraft({ kind: measureKind, page, points, cursor: null })
         return
       }
-      if (tool === 'snapshot' || tool === 'link' || tool === 'crop') {
+      if (tool === 'snapshot' || tool === 'link' || tool === 'crop' || tool === 'formfield') {
         const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
         if (!pageEl) return
         e.preventDefault()
@@ -696,7 +701,7 @@ export function Viewer({
           const y0 = Math.max(0, Math.min(a.y, b.y))
           const x1 = Math.min(size.width, Math.max(a.x, b.x))
           const y1 = Math.min(size.height, Math.max(a.y, b.y))
-          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : tool === 'crop' ? onCropRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+          if (x1 - x0 > 1 && y1 - y0 > 1) (tool === 'link' ? onLinkRect : tool === 'crop' ? onCropRect : tool === 'formfield' ? onFieldRect : onSnapshot)(page, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
         }
         window.addEventListener('mousemove', move)
         window.addEventListener('mouseup', up)
@@ -927,7 +932,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect, onCropRect]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect, onCropRect, onFieldRect]
   )
 
   const ordered = useMemo(() => {
@@ -1374,7 +1379,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
           onText={annotProps.onAnnotText}
         />
       )}
-      {forms && <FormLayer page={index} zoom={zoom} forms={forms} interactive={annotProps.tool === 'select'} />}
+      {forms && <FormLayer page={index} zoom={zoom} rotation={rotation} forms={forms} interactive={annotProps.tool === 'select' || annotProps.tool === 'formedit'} />}
       {annotProps.tool === 'edittext' && textEditReady && <TextEditLayer client={client} page={index} zoom={zoom} onCommit={onEditText} />}
       {annotProps.tool === 'editimage' && textEditReady && <ObjectEditLayer kind="image" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangeImage} onReplace={onReplaceImage} />}
       {annotProps.tool === 'editpath' && textEditReady && <ObjectEditLayer kind="path" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangePath} />}
