@@ -61,6 +61,7 @@ export type Tool =
   | 'ellipse'
   | 'ink'
   | 'stamp'
+  | 'caret'
   | 'zoom'
   | 'snapshot'
   | 'measure-distance'
@@ -135,7 +136,7 @@ interface Props {
   onResizeAnnot: (id: number, w: number, h: number) => void
   onEditAnnot: (id: number | null) => void
   onAnnotText: (id: number, text: string) => void
-  onPlace: (kind: 'note' | 'textbox' | 'stamp', page: number, x: number, y: number) => void
+  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret', page: number, x: number, y: number) => void
   drawStyle: DrawStyle
   onCreateShape: (a: Omit<Annot, 'id'>) => void
   onReshapeAnnot: (id: number, index: number, dx: number, dy: number) => void
@@ -705,7 +706,7 @@ export function Viewer({
         window.addEventListener('mouseup', up)
         return
       }
-      if (tool === 'note' || tool === 'textbox' || tool === 'stamp') {
+      if (tool === 'note' || tool === 'textbox' || tool === 'stamp' || tool === 'caret') {
         e.preventDefault()
         const { x, y } = pointOnPage(pageEl, Number(pageEl.dataset.page), e.clientX, e.clientY)
         onPlace(tool, Number(pageEl.dataset.page), tool === 'note' ? x - NOTE_SIZE / 2 : x, tool === 'note' ? y - NOTE_SIZE / 2 : y)
@@ -744,11 +745,13 @@ export function Viewer({
         const { x, y } = pointOnPage(el, i, ev.clientX, ev.clientY)
         const hit = [...annots].reverse().find((a) => a.page === i && isMarkup(a.kind) && a.rects.some((q) => pointInRect(q, x, y, 2)))
         onSelectAnnot(hit ? hit.id : null)
+        // Double-click a replace-text strikeout to edit the replacement.
+        if (hit && ev.detail >= 2 && hit.replace) onEditAnnot(hit.id)
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, onMeasure, snapPt]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, onMeasure, snapPt, onEditAnnot]
   )
 
   const ordered = useMemo(() => {

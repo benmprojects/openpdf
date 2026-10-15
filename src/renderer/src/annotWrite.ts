@@ -23,7 +23,9 @@ import {
 } from 'pdf-lib'
 import {
   arrowHeadPoints,
+  caretRectAfter,
   hexToRgb,
+  squigglePoints,
   LINE_WIDTH,
   STRIKEOUT_AT,
   TEXTBOX_LINE_HEIGHT,
@@ -139,8 +141,10 @@ const SUBTYPE_NAMES: Record<number, string> = {
   6: 'Circle',
   9: 'Highlight',
   10: 'Underline',
+  11: 'Squiggly',
   12: 'StrikeOut',
   13: 'Stamp',
+  14: 'Caret',
   15: 'Ink'
 }
 
@@ -217,7 +221,26 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
     }
     let dict: Record<string, Lit>
 
-    if (a.kind === 'highlight' || a.kind === 'underline' || a.kind === 'strikeout') {
+    /** A caret: a filled wedge pointing up, as Acrobat-style editors draw it. */
+    const caretAp = (r: Rect, color: string) => {
+      const body = `${rgb(color)} rg ${n(r.x)} ${n(r.y + r.h)} m ${n(r.x + r.w / 2)} ${n(r.y)} l ${n(r.x + r.w)} ${n(r.y + r.h)} l ${n(r.x + r.w / 2)} ${n(r.y + r.h * 0.7)} l h f`
+      const bb = userBounds(f, [r])
+      return { bb, ap: makeForm(ctx, bb, `q ${cm(f)} ${body} Q`) }
+    }
+    let groupWith: PDFRef | null = null
+
+    if (a.kind === 'caret') {
+      const { bb, ap } = caretAp(a.rects[0], a.color)
+      dict = {
+        ...base,
+        Rect: bb,
+        Subtype: 'Caret',
+        Contents: PDFHexString.fromText(a.text),
+        Sy: 'None',
+        RD: [0, 0, 0, 0],
+        AP: { N: ap }
+      }
+    } else if (a.kind === 'highlight' || a.kind === 'underline' || a.kind === 'strikeout' || a.kind === 'squiggly') {
       const quads: number[] = []
       for (const r of a.rects) {
         // Top-left, top-right, bottom-left, bottom-right as the reader sees the page.
@@ -232,7 +255,11 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
       }
       let body: string
       let resources: Lit = {}
-      if (a.kind === 'highlight') {
+      if (a.kind === 'squiggly') {
+        body =
+          `${rgb(a.color)} RG ${LINE_WIDTH} w 1 j ` +
+          a.rects.map((r) => squigglePoints(r).map((p, i) => `${n(p.x)} ${n(p.y)} ${i ? 'l' : 'm'}`).join(' ') + ' S').join(' ')
+      } else if (a.kind === 'highlight') {
         body = `/GS gs ${rgb(a.color)} rg ` + a.rects.map((r) => `${n(r.x)} ${n(r.y)} ${n(r.w)} ${n(r.h)} re f`).join(' ')
         resources = { ExtGState: { GS: { Type: 'ExtGState', BM: 'Multiply', CA: 1, ca: 1 } } }
       } else {
@@ -244,10 +271,26 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
       const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, resources)
       dict = {
         ...base,
-        Subtype: a.kind === 'highlight' ? 'Highlight' : a.kind === 'underline' ? 'Underline' : 'StrikeOut',
+        Subtype: a.kind === 'highlight' ? 'Highlight' : a.kind === 'underline' ? 'Underline' : a.kind === 'squiggly' ? 'Squiggly' : 'StrikeOut',
         QuadPoints: quads,
         Contents: PDFHexString.fromText(a.text),
         AP: { N: ap }
+      }
+      // Replace text: a caret holding the new text, and the strikeout grouped with it (ISO 32000 12.5.6.10).
+      if (a.kind === 'strikeout' && a.replace && !a.origin) {
+        const last = a.rects[a.rects.length - 1]
+        const { bb, ap: cap } = caretAp(caretRectAfter(last), a.color)
+        const caret = ctx.register(
+          ctx.obj({ ...base, Rect: bb, Subtype: 'Caret', Contents: PDFHexString.fromText(a.text), Sy: 'P', RD: [0, 0, 0, 0], AP: { N: cap } } as never)
+        )
+        let list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+        if (!list) {
+          list = ctx.obj([]) as PDFArray
+          page.node.set(PDFName.of('Annots'), list)
+        }
+        list.push(caret)
+        groupWith = caret
+        dict.IT = 'StrikeOutTextEdit'
       }
     } else if (a.kind === 'note') {
       const r = a.rects[0]
@@ -385,6 +428,10 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
       }
     }
 
+    if (groupWith) {
+      dict.IRT = groupWith
+      dict.RT = 'Group'
+    }
     const ref = ctx.register(ctx.obj(dict as never))
     let list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
     if (!list) {

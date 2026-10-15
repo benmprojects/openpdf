@@ -37,7 +37,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 
 ## Phase 2: Annotation and markup (P0)
 - [x] Highlight, underline, strikeout (from selected text)
-- [ ] Squiggly, replace text, insert caret
+- [x] Squiggly, replace text (strikeout grouped with a caret), insert text (caret)
 - [x] Sticky note, text box (free text)
 - [ ] Callout, typewriter
 - [x] Line, arrow, rectangle, ellipse, pencil/ink (move, reshape, resize, colour, width)

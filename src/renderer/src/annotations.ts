@@ -4,6 +4,9 @@ export type AnnotKind =
   | 'highlight'
   | 'underline'
   | 'strikeout'
+  | 'squiggly'
+  /** Insert-text mark: a caret where text should go, with the text to insert as its comment. */
+  | 'caret'
   | 'note'
   | 'textbox'
   | 'line'
@@ -38,6 +41,8 @@ export interface Annot {
   lineWidth: number
   /** Line and arrow: one path of two points. Ink: one path of many points. */
   points?: Pt[][]
+  /** Strikeout only: the struck text is to be replaced by `text` (saved as a caret grouped with the strikeout). */
+  replace?: boolean
   /** Set when the annotation was already in the file: where to find it again when saving. */
   origin?: {
     /** Position in the page's /Annots array. */
@@ -51,7 +56,7 @@ export interface Annot {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false])
 }
 
 export const NOTE_SIZE = 22
@@ -63,6 +68,10 @@ export const TEXTBOX_LINE_HEIGHT = 1.2
 /** Where the underline and strikeout sit within a text line's box, as a fraction of its height from the top. */
 export const UNDERLINE_AT = 0.88
 export const STRIKEOUT_AT = 0.55
+/** Squiggly underline: wave length and height as fractions of the line height. */
+export const SQUIGGLE_AT = 0.9
+export const SQUIGGLE_PERIOD = 0.33
+export const SQUIGGLE_AMPLITUDE = 0.07
 export const LINE_WIDTH = 1
 
 export const MARKUP_COLORS = ['#ffd400', '#7ee081', '#6ec1ff', '#ff8ac2', '#ff9a3c', '#e5322d']
@@ -180,6 +189,10 @@ export function defaultColor(kind: AnnotKind): string {
     case 'underline':
     case 'strikeout':
       return '#e5322d'
+    case 'squiggly':
+      return '#1c8a3a'
+    case 'caret':
+      return '#1f5fd1'
     case 'textbox':
       return '#000000'
   }
@@ -187,7 +200,7 @@ export function defaultColor(kind: AnnotKind): string {
 
 export function colorChoices(kind: AnnotKind): string[] {
   if (kind === 'textbox') return TEXT_COLORS
-  return isShapeKind(kind) || kind === 'stamp' ? SHAPE_COLORS : MARKUP_COLORS
+  return isShapeKind(kind) || kind === 'stamp' || kind === 'caret' ? SHAPE_COLORS : MARKUP_COLORS
 }
 
 /** `#rrggbb` to [r, g, b] in 0..1. */
@@ -201,6 +214,8 @@ export function annotLabel(kind: AnnotKind): string {
     highlight: 'Highlight',
     underline: 'Underline',
     strikeout: 'Strikeout',
+    squiggly: 'Squiggly',
+    caret: 'Insert text',
     note: 'Note',
     textbox: 'Text box',
     line: 'Line',
@@ -213,7 +228,23 @@ export function annotLabel(kind: AnnotKind): string {
 }
 
 export function isMarkup(kind: AnnotKind): boolean {
-  return kind === 'highlight' || kind === 'underline' || kind === 'strikeout'
+  return kind === 'highlight' || kind === 'underline' || kind === 'strikeout' || kind === 'squiggly'
+}
+
+/** The squiggly line under one text line's box, as SVG/PDF path points (a zigzag of short segments). */
+export function squigglePoints(r: Rect): Pt[] {
+  const y = r.y + r.h * SQUIGGLE_AT
+  const period = Math.max(2, r.h * SQUIGGLE_PERIOD)
+  const amp = Math.max(0.6, r.h * SQUIGGLE_AMPLITUDE)
+  const pts: Pt[] = []
+  for (let x = r.x, i = 0; x <= r.x + r.w + 0.01; x += period / 2, i++) pts.push({ x: Math.min(x, r.x + r.w), y: y + (i % 2 ? amp : -amp) })
+  return pts
+}
+
+/** Where a replace or insert caret sits for a text line: just past its end, in the lower part of the line. */
+export function caretRectAfter(r: Rect): Rect {
+  const h = Math.max(6, r.h * 0.6)
+  return { x: r.x + r.w - h * 0.4, y: r.y + r.h - h * 0.9, w: h * 0.8, h }
 }
 
 export function pointInRect(r: Rect, x: number, y: number, slop = 0): boolean {

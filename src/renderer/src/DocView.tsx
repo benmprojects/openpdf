@@ -22,7 +22,7 @@ import { writeAnnotations, type DeletedAnnot } from './annotWrite'
 import { deletePages, extractPages, insertPagesFrom, movePages, parsePageRanges, rotatePages, splitEvery } from './pageOps'
 import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
-import { findInPage, type Match } from './textLogic'
+import { findInPage, hitTest, type Match } from './textLogic'
 import { useHistory } from './useHistory'
 import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout'
 import { GAP, PAD, Viewer, type Tool, type ViewAids, type ViewerHandle } from './Viewer'
@@ -58,6 +58,9 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Waves,
+  Replace,
+  TextCursorInput,
   Grid3x3,
   Magnet,
   Eraser,
@@ -353,7 +356,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [editingAnnot, setEditingAnnot] = useState<number | null>(null)
   const [hasTextSelection, setHasTextSelection] = useState(false)
   const [colors, setColors] = useState<Record<AnnotKind, string>>(() => {
-    const kinds: AnnotKind[] = ['highlight', 'underline', 'strikeout', 'note', 'textbox', 'line', 'arrow', 'rectangle', 'ellipse', 'ink', 'stamp']
+    const kinds: AnnotKind[] = ['highlight', 'underline', 'strikeout', 'squiggly', 'caret', 'note', 'textbox', 'line', 'arrow', 'rectangle', 'ellipse', 'ink', 'stamp']
     return Object.fromEntries(kinds.map((k) => [k, defaultColor(k)])) as Record<AnnotKind, string>
   })
   const [drawWidth, setDrawWidth] = useState(DEFAULT_LINE_WIDTH)
@@ -488,22 +491,46 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   })
 
   const markSelection = useCallback(
-    async (kind: AnnotKind) => {
+    async (kind: AnnotKind, replace = false) => {
       const parts = (await viewer.current?.selectionRects()) ?? []
       if (!parts.length) return
       const made = parts.map((p) => newAnnot(kind, p.page, p.rects))
+      // Replace text: only the last part (where the caret goes) carries the replacement.
+      if (replace) made[made.length - 1].replace = true
       history.commit((list) => [...list, ...made])
-      setLastMarkup(kind)
+      if (!replace) setLastMarkup(kind)
       setSelectedAnnot(made[made.length - 1].id)
+      if (replace) setEditingAnnot(made[made.length - 1].id)
       viewer.current?.clearSelection()
     },
     [colors, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   const place = useCallback(
-    (kind: 'note' | 'textbox' | 'stamp', page: number, x: number, y: number) => {
+    async (kind: 'note' | 'textbox' | 'stamp' | 'caret', page: number, x: number, y: number) => {
       const size = pages[page]
       if (!size) return
+      if (kind === 'caret') {
+        // Put the caret before the character under the click, sized to its line; anywhere else, a default size.
+        let rect = { x: x - 4, y: y - 9, w: 8, h: 10 }
+        try {
+          const pt = await clientRef.current!.pageText(page)
+          const ch = hitTest(pt.boxes, x, y)
+          if (ch >= 0) {
+            const [l, t, , b] = [pt.boxes[ch * 4], pt.boxes[ch * 4 + 1], pt.boxes[ch * 4 + 2], pt.boxes[ch * 4 + 3]]
+            const h = Math.max(6, (b - t) * 0.6)
+            rect = { x: l - h * 0.4, y: b - h * 0.9, w: h * 0.8, h }
+          }
+        } catch {
+          // keep the default
+        }
+        const a = newAnnot('caret', page, [rect])
+        history.commit((list) => [...list, a])
+        setSelectedAnnot(a.id)
+        setEditingAnnot(a.id)
+        setTool('select')
+        return
+      }
       const stamp = kind === 'stamp' ? stampSize(stampLabel) : null
       const w = stamp ? stamp.w : kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.w
       const h = stamp ? stamp.h : kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.h
@@ -604,7 +631,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setEditingAnnot(null)
       const existing = annotsRef.current.find((a) => a.id === id)
       if (!existing) return
-      // A note or text box left empty is dropped rather than saved as an invisible object.
+      // A replace mark left empty becomes a plain strikeout.
+      if (existing.replace && !text.trim()) {
+        history.commit((list) => list.map((a) => (a.id === id ? { ...a, text: '', replace: false } : a)))
+        return
+      }
+      // A note, text box or insert mark left empty is dropped rather than saved as an invisible object.
       if (!text.trim()) return removeAnnot(id)
       if (text !== existing.text) touch(id)
       if (text !== existing.text) history.commit((list) => list.map((a) => (a.id === id ? { ...a, text } : a)))
@@ -1221,6 +1253,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RStack>
                   <RB icon={Underline} label="Underline" onClick={() => void markSelection('underline')} disabled={!hasTextSelection} title="Underline the selected text" />
                   <RB icon={Strikethrough} label="Strikeout" onClick={() => void markSelection('strikeout')} disabled={!hasTextSelection} title="Strike out the selected text" />
+                  <RB icon={Waves} label="Squiggly" onClick={() => void markSelection('squiggly')} disabled={!hasTextSelection} title="Squiggly underline under the selected text" />
+                </RStack>
+                <RStack>
+                  <RB icon={Replace} label="Replace text" onClick={() => void markSelection('strikeout', true)} disabled={!hasTextSelection} title="Strike out the selected text and type its replacement" />
+                  <RB icon={TextCursorInput} label="Insert text" onClick={() => setTool(tool === 'caret' ? 'select' : 'caret')} disabled={!pages.length} pressed={tool === 'caret'} title="Mark where text should be inserted: click in the text, then type it" />
                 </RStack>
               </RGroup>
               <RGroup label="Notes">

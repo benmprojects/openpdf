@@ -8,7 +8,9 @@ import {
   UNDERLINE_AT,
   LINE_WIDTH,
   annotLabel,
+  caretRectAfter,
   isMarkup,
+  squigglePoints,
   type Annot
 } from './annotations'
 import { deltaToPage, type Rotation } from './viewRotation'
@@ -100,7 +102,12 @@ export function AnnotLayer({
                 {a.kind === 'highlight' && !ghost && (
                   <div className="annot-highlight" style={{ ...base, top: r.y * zoom, height: r.h * zoom, background: a.color }} />
                 )}
-                {a.kind !== 'highlight' && !ghost && (
+                {a.kind === 'squiggly' && !ghost && (
+                  <svg className="annot-wave" style={{ left: r.x * zoom, top: r.y * zoom, width: r.w * zoom, height: r.h * zoom * 1.1 }} viewBox={`${r.x} ${r.y} ${r.w} ${r.h * 1.1}`} preserveAspectRatio="none">
+                    <polyline points={squigglePoints(r).map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={a.color} strokeWidth={LINE_WIDTH} vectorEffect="non-scaling-stroke" />
+                  </svg>
+                )}
+                {(a.kind === 'underline' || a.kind === 'strikeout') && !ghost && (
                   <div
                     className="annot-line"
                     style={{
@@ -112,9 +119,33 @@ export function AnnotLayer({
                   />
                 )}
                 {selected && <div className="annot-selected" style={{ ...base, top: r.y * zoom, height: r.h * zoom }} />}
+                {a.replace && i === a.rects.length - 1 && !ghost && <CaretMark rect={caretRectAfter(r)} color={a.color} zoom={zoom} title={a.text} />}
+                {a.replace && i === a.rects.length - 1 && editingId === a.id && (
+                  <NoteEditor annot={a} label="Replacement text" style={{ left: r.x * zoom, top: (r.y + r.h) * zoom + 4 }} onText={onText} />
+                )}
               </div>
             )
           })
+        }
+
+        if (a.kind === 'caret') {
+          const r = a.rects[0]
+          return (
+            <div key={a.id}>
+              <div
+                className={`annot-caret${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}`}
+                role="button"
+                aria-label={`Insert text: ${a.text || 'empty'}`}
+                title={a.text || undefined}
+                style={{ left: r.x * zoom, top: r.y * zoom, width: r.w * zoom, height: r.h * zoom }}
+                onMouseDown={(e) => begin(e, a, 'move')}
+                onDoubleClick={() => interactive && onEdit(a.id)}
+              >
+                {!ghost && <CaretMark rect={{ x: 0, y: 0, w: r.w, h: r.h }} color={a.color} zoom={zoom} />}
+              </div>
+              {editingId === a.id && <NoteEditor annot={a} label="Text to insert" style={{ left: r.x * zoom, top: (r.y + r.h) * zoom + 4 }} onText={onText} />}
+            </div>
+          )
         }
 
         const r = a.rects[0]
@@ -215,11 +246,31 @@ function TextEditor({ annot, onText }: { annot: Annot; onText: (id: number, text
   return <textarea className="annot-editor" aria-label="Text box contents" {...h} />
 }
 
-function NoteEditor({ annot, style, onText }: { annot: Annot; style: React.CSSProperties; onText: (id: number, text: string) => void }) {
+function NoteEditor({
+  annot,
+  style,
+  onText,
+  label = 'Note text'
+}: {
+  annot: Annot
+  style: React.CSSProperties
+  onText: (id: number, text: string) => void
+  label?: string
+}) {
   const h = useEditorHandlers(annot, onText)
   return (
     <div className="note-popup" style={style}>
-      <textarea aria-label="Note text" placeholder="Type a note. Ctrl+Enter to finish." {...h} />
+      <textarea aria-label={label} placeholder={`${label}. Ctrl+Enter to finish.`} {...h} />
     </div>
+  )
+}
+
+/** The wedge drawn for insert and replace marks, in the box `rect` (page points, or local when nested). */
+function CaretMark({ rect: r, color, zoom, title }: { rect: { x: number; y: number; w: number; h: number }; color: string; zoom: number; title?: string }) {
+  return (
+    <svg className="annot-caret-mark" style={{ left: r.x * zoom, top: r.y * zoom, width: r.w * zoom, height: r.h * zoom }} viewBox={`0 0 ${r.w} ${r.h}`}>
+      {title && <title>{title}</title>}
+      <path d={`M0 ${r.h} L${r.w / 2} 0 L${r.w} ${r.h} L${r.w / 2} ${r.h * 0.7} Z`} fill={color} />
+    </svg>
   )
 }

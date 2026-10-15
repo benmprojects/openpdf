@@ -22,6 +22,8 @@ const SUBTYPES: Record<string, string> = {
   highlight: 'Highlight',
   underline: 'Underline',
   strikeout: 'StrikeOut',
+  squiggly: 'Squiggly',
+  caret: 'Caret',
   note: 'Text',
   textbox: 'FreeText',
   line: 'Line',
@@ -60,7 +62,9 @@ describe('writeAnnotations', () => {
     annot('ink', {
       points: [[{ x: 50, y: 400 }, { x: 80, y: 420 }, { x: 120, y: 410 }, { x: 160, y: 450 }]]
     }),
-    annot('stamp', { rects: [{ x: 300, y: 400, w: stamp.w, h: stamp.h }], text: 'APPROVED' })
+    annot('stamp', { rects: [{ x: 300, y: 400, w: stamp.w, h: stamp.h }], text: 'APPROVED' }),
+    annot('squiggly', { rects: [{ x: 50, y: 500, w: 100, h: 12 }] }),
+    annot('caret', { rects: [{ x: 300, y: 500, w: 8, h: 10 }], text: 'insert me' })
   ]
 
   it('writes one annotation of each kind and the result reloads', async () => {
@@ -88,5 +92,17 @@ describe('writeAnnotations', () => {
     const stray = annot('rectangle', { page: 7, rects: [{ x: 1, y: 1, w: 10, h: 10 }] })
     const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), [stray]))
     expect(annotsOf(doc)).toHaveLength(0)
+  })
+
+  it('writes replace text as a caret grouped with the strikeout', async () => {
+    const replace = annot('strikeout', { rects: [{ x: 50, y: 600, w: 100, h: 12 }], text: 'new words', replace: true })
+    const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), [replace]))
+    const list = annotsOf(doc)
+    expect(list.map(subtype)).toEqual(['Caret', 'StrikeOut'])
+    const [caret, strike] = list
+    expect(strike.lookupMaybe(PDFName.of('IT'), PDFName)?.decodeText()).toBe('StrikeOutTextEdit')
+    expect(strike.lookupMaybe(PDFName.of('RT'), PDFName)?.decodeText()).toBe('Group')
+    expect(strike.lookup(PDFName.of('IRT'))).toBe(caret)
+    expect(caret.lookup(PDFName.of('Contents'))?.toString()).toContain(Buffer.from('new words', 'utf16le').toString('hex').slice(0, 4).toUpperCase())
   })
 })

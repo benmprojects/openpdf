@@ -163,8 +163,10 @@ const ANNOT_KINDS: Record<number, AnnotKind> = {
   6: 'ellipse',
   9: 'highlight',
   10: 'underline',
+  11: 'squiggly',
   12: 'strikeout',
   13: 'stamp',
+  14: 'caret',
   15: 'ink'
 }
 const FLAG_HIDDEN = 2
@@ -276,7 +278,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
         }
 
         let rects: Rect[] = []
-        if (kind === 'highlight' || kind === 'underline' || kind === 'strikeout') {
+        if (kind === 'highlight' || kind === 'underline' || kind === 'strikeout' || kind === 'squiggly') {
           const quads = m._FPDFAnnot_CountAttachmentPoints(annot)
           for (let q = 0; q < quads; q++) {
             if (!m._FPDFAnnot_GetAttachmentPoints(annot, q, scratch + 16)) continue
