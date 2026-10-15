@@ -35,7 +35,14 @@ async function readPdf(path: string) {
   return { name: basename(path), path, data: new Uint8Array(data) }
 }
 
+/**
+ * Test hook: with OPENPDF_E2E=1 the file dialogs are answered from environment variables instead of being
+ * shown, so end-to-end checks can drive insert, merge, extract and split. Does nothing in normal use.
+ */
+const e2e = process.env.OPENPDF_E2E === '1'
+
 ipcMain.handle('file:open-dialog', async () => {
+  if (e2e && process.env.OPENPDF_E2E_OPEN) return Promise.all(process.env.OPENPDF_E2E_OPEN.split(';').map(readPdf))
   const res = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'PDF documents', extensions: ['pdf'] }]
@@ -58,6 +65,7 @@ async function writePdf(path: string, data: Uint8Array) {
 ipcMain.handle('file:save', (_e, path: string, data: Uint8Array) => writePdf(path, data))
 
 ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array) => {
+  if (e2e && process.env.OPENPDF_E2E_SAVE) return writePdf(process.env.OPENPDF_E2E_SAVE, data)
   const win = BrowserWindow.fromWebContents(e.sender)
   const opts = { defaultPath: suggestedName, filters: [{ name: 'PDF documents', extensions: ['pdf'] }] }
   const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
@@ -67,11 +75,14 @@ ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array
 
 /** Asks for a folder, then writes each file into it without overwriting: a clash gets " (2)" and so on. */
 ipcMain.handle('file:save-many', async (e, files: { name: string; data: Uint8Array }[]) => {
-  const win = BrowserWindow.fromWebContents(e.sender)
-  const opts = { properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] }
-  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-  if (res.canceled || !res.filePaths[0]) return null
-  const dir = res.filePaths[0]
+  let dir = e2e ? process.env.OPENPDF_E2E_DIR : undefined
+  if (!dir) {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    dir = res.filePaths[0]
+  }
   const written: string[] = []
   for (const f of files) {
     const stem = f.name.replace(/\.pdf$/i, '')
