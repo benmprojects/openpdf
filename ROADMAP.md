@@ -44,7 +44,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Polygon, polyline, cloud, eraser (pencil strokes), fill colour, dashed and dotted lines; measurements saved as measurement annotations (LineDimension, PolyLineDimension, PolygonDimension with /Measure)
 - [x] Stamps: built-in text stamps (colour, resize)
 - [x] Custom image stamps (PNG/JPEG library in userData), dated stamps with name, date and time; stamp picker
-- [ ] Comment list: sort, filter, reply threads, status, summarise, export
+- [x] Comment list: sort, filter, search, reply threads, review status, summary PDF, CSV export; author and dates on new comments
 - [x] Colour choice, move, resize, delete, undo/redo, Save and Save As
 - [ ] Properties panel (font, opacity, border), saved tool presets, custom tool sets
 - [x] Edit annotations already in a file: highlight, underline, strikeout, note, text box (select, recolour, move, resize, edit text, delete; unedited ones are left byte-for-byte as they were)

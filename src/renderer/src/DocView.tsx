@@ -14,6 +14,10 @@ import {
   canDash,
   canFill,
   signature,
+  pdfDateToIso,
+  REVIEW_STATES,
+  type Reply,
+  type ReviewState,
   stampSize,
   imageStampSize,
   stampInfoLine,
@@ -37,6 +41,8 @@ import type { Guide } from './GuideLayer'
 import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
+import { CommentsPane } from './CommentsPane'
+import { commentsCsv, commentSummaryPdf } from './commentReport'
 import { StampPicker, type StampChoice } from './StampPicker'
 import type { ImageStamp } from '../../preload'
 import { Reader, type ReaderState } from './readAloud'
@@ -390,6 +396,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   fillsRef.current = fills
   const dashesRef = useRef(dashes)
   dashesRef.current = dashes
+  const authorRef = useRef(author)
+  authorRef.current = author
   const [stampChoice, setStampChoice] = useState<StampChoice>({ kind: 'text', label: STAMP_LABELS[0] })
   const [stampDated, setStampDated] = useState(false)
   const [stampImages, setStampImages] = useState<ImageStamp[]>([])
@@ -410,6 +418,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   // Annotations that were already in the file when it was opened. Unchanged ones stay in the file untouched.
   const baseline = useRef(new Map<number, { page: number; origin: NonNullable<Annot['origin']>; sig: string }>())
+  // Replies that were already in the file, so deleting one removes it on save.
+  const baselineReplies = useRef(new Map<number, { page: number; origin: NonNullable<Reply['origin']> }>())
   const [touched, setTouched] = useState<ReadonlySet<number>>(() => new Set())
   const touchedRef = useRef(touched)
   const [epoch, setEpoch] = useState(0)
@@ -440,7 +450,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         if (cancelled) return
         const imported: Annot[] = []
         baseline.current = new Map()
-        for (const { page, annots: list } of pages) {
+        baselineReplies.current = new Map()
+        for (const { page, annots: list, replies } of pages) {
           for (const r of list) {
             const a: Annot = {
               id: nextAnnotId.current++,
@@ -454,6 +465,24 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               points: r.points,
               fill: r.fill,
               stampInfo: r.stampInfo,
+              author: r.author,
+              created: r.created ? pdfDateToIso(r.created) : undefined,
+              modified: r.modified ? pdfDateToIso(r.modified) : undefined,
+              replies: replies
+                .filter((x) => x.parent === r.index)
+                .map((x) => {
+                  const reply: Reply = {
+                    id: nextAnnotId.current++,
+                    author: x.author,
+                    text: x.text,
+                    date: pdfDateToIso(x.date) ?? new Date(0).toISOString(),
+                    state: REVIEW_STATES.includes(x.state as ReviewState) ? (x.state as ReviewState) : undefined,
+                    origin: { index: x.index, subtype: 1, rect: x.rect }
+                  }
+                  baselineReplies.current.set(reply.id, { page, origin: reply.origin! })
+                  return reply
+                })
+                .sort((p, q) => p.date.localeCompare(q.date)),
               origin: { index: r.index, subtype: r.subtype, rect: r.rect }
             }
             imported.push(a)
@@ -484,10 +513,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const deleted = useMemo<DeletedAnnot[]>(() => {
     const present = new Set(annots.map((a) => a.id))
-    return [...baseline.current].filter(([id]) => !present.has(id)).map(([, b]) => ({ page: b.page, origin: b.origin }))
+    const presentReplies = new Set(annots.flatMap((a) => (a.replies ?? []).map((r) => r.id)))
+    return [
+      ...[...baseline.current].filter(([id]) => !present.has(id)).map(([, b]) => ({ page: b.page, origin: b.origin })),
+      ...[...baselineReplies.current].filter(([id]) => !presentReplies.has(id)).map(([, b]) => ({ page: b.page, origin: b.origin }))
+    ]
   }, [annots])
   const changed = (a: Annot) => !a.origin || baseline.current.get(a.id)?.sig !== signature(a)
-  const annotsDirty = deleted.length > 0 || annots.some(changed)
+  const hasNewReplies = (a: Annot) => !!a.replies?.some((r) => !r.origin)
+  const annotsDirty = deleted.length > 0 || annots.some(changed) || annots.some(hasNewReplies)
+  /** Writes the pending annotation edits (and new replies) into `src`. */
+  const applyEdits = (src: Uint8Array) => {
+    const list = annots.filter((a) => changed(a) || hasNewReplies(a))
+    return writeAnnotations(src, list, deleted, new Set(list.filter(changed).map((a) => a.id)))
+  }
   const dirty = annotsDirty || bytes !== savedBytes
   useEffect(() => onMeta({ dirty }), [dirty, onMeta])
 
@@ -496,7 +535,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // close removes it; after a crash the app offers it back on the next start.
   const recoveryKey = `${SESSION}-${docId}`
   const snapshot = useRef<() => Promise<Uint8Array>>(async () => bytes)
-  snapshot.current = async () => (annotsDirty && !password ? writeAnnotations(bytes, annots.filter(changed), deleted) : bytes)
+  snapshot.current = async () => (annotsDirty && !password ? applyEdits(bytes) : bytes)
   const metaRef = useRef({ name, path })
   metaRef.current = { name, path }
   useEffect(() => {
@@ -529,7 +568,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     rects,
     text,
     fontSize: DEFAULT_FONT_SIZE,
-    lineWidth: 1
+    lineWidth: 1,
+    author: authorRef.current || undefined,
+    created: new Date().toISOString()
   })
 
   const markSelection = useCallback(
@@ -629,6 +670,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const createShape = useCallback(
     (shape: Omit<Annot, 'id'>) => {
       const a: Annot = {
+        author: authorRef.current || undefined,
+        created: new Date().toISOString(),
         ...shape,
         id: nextAnnotId.current++,
         ...(canFill(shape.kind) && fillsRef.current[shape.kind] ? { fill: fillsRef.current[shape.kind] } : {}),
@@ -814,7 +857,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       }
       setSaving(true)
       try {
-        const out = annotsDirty ? await writeAnnotations(bytes, annots.filter(changed), deleted) : bytes
+        const out = annotsDirty ? await applyEdits(bytes) : bytes
         const saved =
           !asNew && path
             ? await window.openpdf.saveFile(path, out)
@@ -856,7 +899,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       }
       setBusy(true)
       try {
-        const base = annotsDirty ? await writeAnnotations(bytes, annots.filter(changed), deleted) : bytes
+        const base = annotsDirty ? await applyEdits(bytes) : bytes
         const out = await fn(base)
         if (!out) return
         setPageUndo((u) => [...u, base])
@@ -931,7 +974,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     const d = pageDialog
     if (!d) return
     try {
-      const src = annotsDirty ? await writeAnnotations(bytes, annots.filter(changed), deleted) : bytes
+      const src = annotsDirty ? await applyEdits(bytes) : bytes
       if (d.kind === 'extract') {
         const idx = parsePageRanges(dialogText, pages.length)
         const out = await extractPages(src, idx)
@@ -1000,6 +1043,40 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [guides, setGuides] = useState<Guide[]>([])
   const GRID_MM = [5, 10, 20, 50]
 
+  // ---- Comments: threads, status, summary, export ------------------------------------------------------
+  const focusComment = useCallback((id: number) => {
+    const a = annotsRef.current.find((x) => x.id === id)
+    if (!a) return
+    setSelectedAnnot(id)
+    if (a.rects[0]) void viewer.current?.scrollToRect(a.page, a.rects[0])
+  }, [])
+  const addReply = useCallback(
+    (id: number, text: string, state?: ReviewState) => {
+      const reply: Reply = { id: nextAnnotId.current++, author: authorRef.current, text, date: new Date().toISOString(), ...(state ? { state } : {}) }
+      history.commit((list) => list.map((a) => (a.id === id ? { ...a, replies: [...(a.replies ?? []), reply] } : a)))
+    },
+    [history.commit]
+  )
+  const setReviewState = useCallback((id: number, state: ReviewState) => addReply(id, '', state), [addReply])
+  const deleteReply = useCallback(
+    (id: number, replyId: number) =>
+      history.commit((list) => list.map((a) => (a.id === id ? { ...a, replies: (a.replies ?? []).filter((r) => r.id !== replyId) } : a))),
+    [history.commit]
+  )
+  const summariseComments = async () => {
+    try {
+      const out = await commentSummaryPdf(annots, pageLabels, name)
+      const saved = await window.openpdf.saveFileAs(`${baseName} (comment summary).pdf`, out)
+      if (saved) setNotice({ kind: 'info', text: `Comment summary saved as ${saved.name}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not summarise the comments: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  const exportCommentsCsv = async () => {
+    const saved = await window.openpdf.saveText(`${baseName} (comments).csv`, commentsCsv(annots, pageLabels), { name: 'CSV (comma separated)', ext: 'csv' })
+    if (saved) setNotice({ kind: 'info', text: `Comments exported to ${saved}` })
+  }
+
   // ---- Measurement ----------------------------------------------------------------------------------
   // Measurements are saved as measurement annotations. The scale comes from calibration, the page's own
   // viewport measure dictionaries, or paper millimetres.
@@ -1062,7 +1139,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (!pages.length) return
     let src = bytes
     try {
-      if (annotsDirty && !password) src = await writeAnnotations(bytes, annots.filter(changed), deleted)
+      if (annotsDirty && !password) src = await applyEdits(bytes)
       if (hiddenLayers && !password) src = await withHiddenLayers(src, hiddenLayers)
     } catch {
       src = bytes
@@ -1095,7 +1172,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       // PDFium then draws everything, including annotations, at print resolution.
       let src = bytes
       if (annotsDirty && password) setNotice({ kind: 'info', text: 'Unsaved annotation changes are not printed for password-protected PDFs.' })
-      else if (annotsDirty) src = await writeAnnotations(bytes, annots.filter(changed), deleted)
+      else if (annotsDirty) src = await applyEdits(bytes)
       // Print what is on screen: layers hidden in the view are hidden on paper too.
       if (hiddenLayers && !password) src = await withHiddenLayers(src, hiddenLayers)
       const res = await printDocument(
@@ -1911,6 +1988,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 layers={layers}
                 isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
                 onToggleLayer={toggleLayer}
+                comments={
+                  <CommentsPane
+                    annots={annots}
+                    labels={pageLabels}
+                    selectedId={selectedAnnot}
+                    onFocus={focusComment}
+                    onReply={addReply}
+                    onStatus={setReviewState}
+                    onDeleteReply={deleteReply}
+                    onSummarise={() => void summariseComments()}
+                    onExportCsv={() => void exportCommentsCsv()}
+                  />
+                }
               />
             )}
             {sidebar && !readingMode && (

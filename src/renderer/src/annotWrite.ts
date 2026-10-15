@@ -197,9 +197,16 @@ function findExisting(page: PDFPage, origin: Origin): { index: number; dict: PDF
 
 /**
  * Writes new annotations, updates edited ones that were already in the file (in place, keeping their other
- * properties such as author) and removes deleted ones together with their popup.
+ * properties) and removes deleted ones together with their popup. New replies in each annotation's thread are
+ * added as Text annotations pointing at it (/IRT). When `rewrite` is given, only the annotations named in it
+ * (and new ones) are rewritten; the rest are only there to receive new replies.
  */
-export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], deleted: DeletedAnnot[] = []): Promise<Uint8Array> {
+export async function writeAnnotations(
+  bytes: Uint8Array,
+  annots: Annot[],
+  deleted: DeletedAnnot[] = [],
+  rewrite?: ReadonlySet<number>
+): Promise<Uint8Array> {
   const pdf = await PDFDocument.load(bytes)
   const ctx = pdf.context
   let font: PDFFont | null = null
@@ -239,9 +246,48 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
     removals.set(d.page, set)
   }
 
+  /** Adds the thread's new replies, as Text annotations in reply to `parent` (sharing its /Rect). */
+  const writeReplies = (page: PDFPage, a: Annot, parent: PDFRef, rect: Lit) => {
+    for (const r of a.replies ?? []) {
+      if (r.origin) continue
+      const when = PDFString.fromDate(new Date(r.date))
+      const reply = ctx.register(
+        ctx.obj({
+          Type: 'Annot',
+          Subtype: 'Text',
+          Rect: rect,
+          F: 32, // NoView: shown in comment lists, not drawn as a second icon
+          Name: 'Comment',
+          Open: false,
+          Contents: PDFHexString.fromText(r.text),
+          T: PDFHexString.fromText(r.author),
+          M: when,
+          CreationDate: when,
+          IRT: parent,
+          RT: 'R',
+          ...(r.state ? { State: PDFHexString.fromText(r.state), StateModel: PDFHexString.fromText('Review') } : {})
+        } as never)
+      )
+      let list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+      if (!list) {
+        list = ctx.obj([]) as PDFArray
+        page.node.set(PDFName.of('Annots'), list)
+      }
+      list.push(reply)
+    }
+  }
+
   for (const a of annots) {
     if (a.page < 0 || a.page >= pdf.getPageCount() || !a.rects.length) continue
     const page: PDFPage = pdf.getPage(a.page)
+    // Unchanged annotations already in the file only receive their new replies.
+    if (a.origin && rewrite && !rewrite.has(a.id)) {
+      const existing = findExisting(page, a.origin)
+      const list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+      const ref = existing && list ? list.get(existing.index) : null
+      if (existing && ref instanceof PDFRef) writeReplies(page, a, ref, existing.dict.lookup(PDFName.of('Rect')) as never)
+      continue
+    }
     const cb = page.getCropBox()
     const f = frameFor(cb.x, cb.y, cb.x + cb.width, cb.y + cb.height, page.getRotation().angle)
     const bounds = userBounds(f, a.rects)
@@ -250,7 +296,9 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
       Rect: bounds,
       C: hexToRgb(a.color),
       F: 4,
-      M: now
+      M: now,
+      ...(a.author ? { T: PDFHexString.fromText(a.author) } : {}),
+      ...(a.created && !a.origin ? { CreationDate: PDFString.fromDate(new Date(a.created)) } : {})
     }
     let dict: Record<string, Lit>
 
@@ -547,6 +595,9 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
       if (existing) {
         const fresh = ctx.obj(dict as never) as unknown as PDFDict
         for (const [key, value] of fresh.entries()) existing.dict.set(key, value)
+        const list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+        const ref = list?.get(existing.index)
+        if (ref instanceof PDFRef) writeReplies(page, a, ref, dict.Rect)
         continue
       }
     }
@@ -600,6 +651,7 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
       page.node.set(PDFName.of('Annots'), list)
     }
     list.push(ref)
+    writeReplies(page, a, ref, dict.Rect)
   }
 
   for (const [pageIdx, indices] of removals) {

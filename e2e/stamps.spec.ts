@@ -29,7 +29,7 @@ test('dated text stamps and image stamps: picked, placed, saved, read back', asy
     const problems: string[] = []
     win.on('pageerror', (e) => problems.push(e.message))
     await expect(win.locator('.page')).toHaveCount(6)
-    await win.getByRole('tab', { name: 'Comment' }).click()
+    await win.getByRole('tab', { name: 'Comment', exact: true }).click()
     const p = (await win.locator('.page').first().boundingBox())!
 
     // A dated APPROVED stamp.
@@ -73,7 +73,7 @@ print(json.dumps(out))
     win = await app.firstWindow()
     await expect(win.locator('.page')).toHaveCount(6)
     await expect(win.locator('.annot-svg text').filter({ hasText: /\d\d\/\d\d\/\d{4}/ })).toHaveCount(1)
-    await win.getByRole('tab', { name: 'Comment' }).click()
+    await win.getByRole('tab', { name: 'Comment', exact: true }).click()
     await win.getByRole('button', { name: 'Choose stamp' }).click()
     await expect(win.getByRole('dialog', { name: 'Stamps' }).getByRole('button', { name: 'Image stamp Site sign-off' })).toBeVisible()
   } finally {

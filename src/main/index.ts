@@ -171,6 +171,22 @@ ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array
   return writeDocument(res.filePath, data)
 })
 
+/** Saves a text file (CSV export and the like), UTF-8 with a byte-order mark so Excel reads it correctly. */
+ipcMain.handle('file:save-text', async (e, suggested: string, text: string, filter: { name: string; ext: string }) => {
+  let target: string | undefined
+  if (e2e && process.env.OPENPDF_E2E_SAVE_TEXT) target = process.env.OPENPDF_E2E_SAVE_TEXT
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { defaultPath: suggested, filters: [{ name: filter.name, extensions: [filter.ext] }] }
+    const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+    if (res.canceled || !res.filePath) return null
+    target = res.filePath
+  }
+  await writeFile(`${target}.openpdf-tmp`, '\ufeff' + text, 'utf8')
+  await rename(`${target}.openpdf-tmp`, target)
+  return target
+})
+
 /** Image stamp library. */
 ipcMain.handle('stamps:list', () => listStamps())
 ipcMain.handle('stamps:remove', (_e, id: string) => removeStamp(id))

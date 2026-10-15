@@ -42,6 +42,8 @@ export interface ViewerHandle {
   scrollToPage(index: number): void
   scrollToMatch(match: Match): void
   copySelection(): Promise<boolean>
+  /** Brings a rectangle of a page (page points) into view. */
+  scrollToRect(page: number, rect: Rect): Promise<void>
   /** The selected text, or null when nothing is selected. */
   selectedText(): Promise<string | null>
   hasSelection(): boolean
@@ -895,6 +897,22 @@ export function Viewer({
           return
         }
         el.scrollTop = offsets[index] - PAD / 2
+      },
+      async scrollToRect(page, r) {
+        const el = scroller.current
+        if (!el) return
+        if (!mode.continuous && rowOf[page] !== shownRowSafe) {
+          setShownRow(rowOf[page])
+          await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)))
+        }
+        const pageEl = pageEls.current[page]
+        if (!pageEl) return
+        const a = toDisplay(rotation, r.x, r.y, pages[page])
+        const b = toDisplay(rotation, r.x + r.w, r.y + r.h, pages[page])
+        const top = pageEl.offsetTop + Math.min(a.v, b.v) * zoom
+        const left = pageEl.offsetLeft + Math.min(a.u, b.u) * zoom
+        if (top < el.scrollTop + 40 || top > el.scrollTop + el.clientHeight - 80) el.scrollTop = top - el.clientHeight / 3
+        if (left < el.scrollLeft + 20 || left > el.scrollLeft + el.clientWidth - 60) el.scrollLeft = left - el.clientWidth / 3
       },
       async scrollToMatch(match) {
         const el = scroller.current

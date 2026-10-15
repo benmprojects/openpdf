@@ -1,11 +1,11 @@
-import { Bookmark, Download, Eye, EyeOff, File as FileIcon, Layers, LayoutGrid, Paperclip, type LucideIcon } from 'lucide-react'
+import { Bookmark, Download, Eye, EyeOff, File as FileIcon, Layers, LayoutGrid, MessageSquare, Paperclip, type LucideIcon } from 'lucide-react'
 import type { Layer } from './layers'
 import { useEffect, useRef, useState } from 'react'
 import type { AttachmentInfo, OutlineNode, PageSize, PdfClient } from './pdfClient'
 
 const THUMB_WIDTH = 132
 
-export type SidebarTab = 'pages' | 'bookmarks' | 'attachments' | 'layers'
+export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers'
 
 /** A page edit requested from the thumbnail pane. `move.before` is an index in the current order (page count = end). */
 export type PageOp =
@@ -36,11 +36,14 @@ interface Props {
   layers: Layer[]
   isLayerVisible: (key: string) => boolean
   onToggleLayer: (key: string) => void
+  /** The Comments tab, rendered by the document view. */
+  comments: React.ReactNode
 }
 
 const TABS: [SidebarTab, string, LucideIcon][] = [
   ['pages', 'Pages', LayoutGrid],
   ['bookmarks', 'Bookmarks', Bookmark],
+  ['comments', 'Comments', MessageSquare],
   ['attachments', 'Attachments', Paperclip],
   ['layers', 'Layers', Layers]
 ]
@@ -70,6 +73,8 @@ export function Sidebar(props: Props) {
         />
       ) : tab === 'bookmarks' ? (
         <Bookmarks outline={outline} onGoTo={onGoTo} />
+      ) : tab === 'comments' ? (
+        props.comments
       ) : tab === 'attachments' ? (
         <Attachments list={props.attachments} onSave={props.onSaveAttachment} />
       ) : (

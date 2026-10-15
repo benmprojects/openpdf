@@ -43,7 +43,7 @@ test('squiggly, replace text and insert text are drawn, saved and read back', as
     const problems: string[] = []
     win.on('pageerror', (e) => problems.push(e.message))
     await expect(win.locator('.page')).toHaveCount(6)
-    await win.getByRole('tab', { name: 'Comment' }).click()
+    await win.getByRole('tab', { name: 'Comment', exact: true }).click()
 
     await selectWords(win, 75, 150)
     await win.getByRole('button', { name: 'Squiggly' }).click()

@@ -11,6 +11,7 @@ import {
   renderRegion,
   type AttachmentInfo,
   type ImportedAnnot,
+  type ImportedReply,
   type OutlineNode,
   type PageText
 } from './pdfiumRaw'
@@ -33,7 +34,7 @@ export type WorkerResponse =
   | { id: number; ok: true; type: 'render'; width: number; height: number; data: Uint8Array }
   | { id: number; ok: true; type: 'outline'; outline: OutlineNode[] }
   | ({ id: number; ok: true; type: 'text' } & PageText)
-  | { id: number; ok: true; type: 'annots'; pages: { page: number; annots: ImportedAnnot[] }[] }
+  | { id: number; ok: true; type: 'annots'; pages: { page: number; annots: ImportedAnnot[]; replies: ImportedReply[] }[] }
   | { id: number; ok: true; type: 'hideAnnot'; hidden: boolean }
   | { id: number; ok: true; type: 'attachments'; attachments: AttachmentInfo[] }
   | { id: number; ok: true; type: 'attachmentData'; data: Uint8Array }
@@ -111,12 +112,12 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       reply({ id: msg.id, ok: true, type: 'text', ...t }, [t.boxes.buffer as ArrayBuffer, t.charOf.buffer as ArrayBuffer])
     } else if (msg.type === 'annots') {
       if (!doc || !library) throw new Error('No document loaded')
-      const pages: { page: number; annots: ImportedAnnot[] }[] = []
+      const pages: { page: number; annots: ImportedAnnot[]; replies: ImportedReply[] }[] = []
       for (let i = 0; i < doc.getPageCount(); i++) {
         const page = doc.getPage(i)
-        const annots = readPageAnnots(library, page)
+        const { annots, replies } = readPageAnnots(library, page)
         page.close()
-        if (annots.length) pages.push({ page: i, annots })
+        if (annots.length || replies.length) pages.push({ page: i, annots, replies })
       }
       reply({ id: msg.id, ok: true, type: 'annots', pages })
     } else if (msg.type === 'hideAnnot') {

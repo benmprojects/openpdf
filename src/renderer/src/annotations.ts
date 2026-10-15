@@ -29,6 +29,22 @@ export interface Pt {
   y: number
 }
 
+/** Review states a reviewer can give a comment (ISO 32000 12.5.6.3, state model "Review"). */
+export type ReviewState = 'None' | 'Accepted' | 'Rejected' | 'Cancelled' | 'Completed'
+export const REVIEW_STATES: ReviewState[] = ['None', 'Accepted', 'Rejected', 'Cancelled', 'Completed']
+
+/** A reply in a comment's thread, or a change of its review state when `state` is set. */
+export interface Reply {
+  id: number
+  author: string
+  text: string
+  /** ISO date-time. */
+  date: string
+  state?: ReviewState
+  /** Set when the reply was already in the file: where to find it again (it is a Text annotation). */
+  origin?: { index: number; subtype: number; rect: [number, number, number, number] }
+}
+
 /**
  * An annotation that has been drawn but not yet written to the PDF. Geometry is in points from the top-left
  * of the displayed page (after page rotation), the same space as the character boxes from the worker.
@@ -55,6 +71,13 @@ export interface Annot {
   fill?: string
   /** Line style of shapes; solid when unset. */
   dash?: 'dashed' | 'dotted'
+  /** Who made it (/T). */
+  author?: string
+  /** ISO date-times of creation and last change. */
+  created?: string
+  modified?: string
+  /** The thread of replies and review-state changes, oldest first. */
+  replies?: Reply[]
   /** Image stamp: the picture as a data: URL (PNG or JPEG). */
   image?: string
   /** Text stamp: a second, smaller line, such as who stamped it and when. */
@@ -73,6 +96,31 @@ export interface Annot {
     /** /Rect in user space: left, bottom, right, top. */
     rect: [number, number, number, number]
   }
+}
+
+/** The review state of a comment: the latest state change in its thread. */
+export function reviewState(a: Annot): ReviewState {
+  const s = [...(a.replies ?? [])].reverse().find((r) => r.state)
+  return s?.state ?? 'None'
+}
+
+/** A PDF date string (D:YYYYMMDDHHmmSS+HH'mm') as ISO, or undefined if it cannot be read. */
+export function pdfDateToIso(s: string): string | undefined {
+  const m = /^D?:?(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?([Zz+-])?(\d{2})?'?(\d{2})?/.exec(s.trim())
+  if (!m) return undefined
+  const [, y, mo = '01', d = '01', h = '00', mi = '00', se = '00', tz, th = '00', tm = '00'] = m
+  const zone = !tz || tz === 'Z' || tz === 'z' ? 'Z' : `${tz}${th}:${tm}`
+  const date = new Date(`${y}-${mo}-${d}T${h}:${mi}:${se}${zone}`)
+  return isNaN(date.getTime()) ? undefined : date.toISOString()
+}
+
+/** Australian date and time for display: 15/10/2026 14:05. */
+export function formatWhen(iso?: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */

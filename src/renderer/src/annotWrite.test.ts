@@ -146,4 +146,44 @@ describe('writeAnnotations', () => {
     expect(cloud.lookup(PDFName.of('BE'), PDFDict).lookupMaybe(PDFName.of('S'), PDFName)?.decodeText()).toBe('C')
     expect(list.find((d) => subtype(d) === 'PolyLine')!.lookup(PDFName.of('Vertices'), PDFArray).size()).toBe(6)
   })
+
+  it('writes the author, and new replies and review states as Text annotations in reply', async () => {
+    const parent = annot('highlight', {
+      rects: [{ x: 50, y: 50, w: 100, h: 12 }],
+      author: 'Site engineer',
+      created: '2026-10-15T04:00:00.000Z',
+      replies: [
+        { id: 900, author: 'Reviewer', text: 'Agreed, fix on site.', date: '2026-10-15T05:00:00.000Z' },
+        { id: 901, author: 'Reviewer', text: '', date: '2026-10-15T05:01:00.000Z', state: 'Accepted' }
+      ]
+    })
+    const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), [parent]))
+    const list = annotsOf(doc)
+    expect(list.map(subtype)).toEqual(['Highlight', 'Text', 'Text'])
+    const [hl, reply, state] = list
+    const text = (d: PDFDict, k: string) => (d.lookup(PDFName.of(k)) as unknown as { decodeText(): string }).decodeText()
+    expect(text(hl, 'T')).toBe('Site engineer')
+    expect(reply.lookup(PDFName.of('IRT'))).toBe(hl)
+    expect(text(reply, 'Contents')).toBe('Agreed, fix on site.')
+    expect(text(state, 'State')).toBe('Accepted')
+    expect(text(state, 'StateModel')).toBe('Review')
+  })
+
+  it('only adds replies to an unchanged annotation that was already in the file', async () => {
+    const first = await writeAnnotations(await blankPdf(), [annot('note', { rects: [{ x: 300, y: 50, w: 22, h: 22 }], text: 'Original' })])
+    const doc0 = await PDFDocument.load(first)
+    const r = annotsOf(doc0)[0].lookup(PDFName.of('Rect'), PDFArray)
+    const rect = [0, 1, 2, 3].map((i) => (r.lookup(i) as unknown as { asNumber(): number }).asNumber()) as [number, number, number, number]
+    const existing = annot('note', {
+      rects: [{ x: 0, y: 0, w: 1, h: 1 }], // deliberately wrong: it must not be rewritten
+      text: 'Changed text that must not be written',
+      origin: { index: 0, subtype: 1, rect },
+      replies: [{ id: 902, author: 'A', text: 'A reply', date: '2026-10-15T05:00:00.000Z' }]
+    })
+    const doc = await PDFDocument.load(await writeAnnotations(first, [existing], [], new Set()))
+    const list = annotsOf(doc)
+    expect(list).toHaveLength(2)
+    expect((list[0].lookup(PDFName.of('Contents')) as unknown as { decodeText(): string }).decodeText()).toBe('Original')
+    expect(list[1].lookup(PDFName.of('IRT'))).toBe(list[0])
+  })
 })

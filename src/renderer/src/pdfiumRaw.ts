@@ -157,6 +157,23 @@ export interface ImportedAnnot {
   fill?: string
   /** Second line of one of our dated stamps. */
   stampInfo?: string
+  author?: string
+  /** PDF date strings. */
+  created?: string
+  modified?: string
+}
+
+/** A reply or review-state change: a Text annotation with /IRT pointing at another annotation on the page. */
+export interface ImportedReply {
+  index: number
+  /** Index of the annotation replied to. */
+  parent: number
+  author: string
+  text: string
+  /** PDF date string (/M, else /CreationDate). */
+  date: string
+  state?: string
+  rect: [number, number, number, number]
 }
 
 const ANNOT_KINDS: Record<number, AnnotKind> = {
@@ -187,12 +204,12 @@ function cString(m: RawModule, s: string): number {
 
 const hex2 = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')
 
-/** Reads the annotations we can edit (highlight, underline, strikeout, note, text box) from one page. */
-export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAnnot[] {
+/** Reads the annotations we can edit from one page, and the replies attached to annotations on it. */
+export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: ImportedAnnot[]; replies: ImportedReply[] } {
   const m = raw(lib)
   const p = pageHandle(page)
   const count = m._FPDFPage_GetAnnotCount(p)
-  if (count <= 0) return []
+  if (count <= 0) return { annots: [], replies: [] }
   const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
   const GRID = 8
   const sx = Math.round(w * GRID)
@@ -206,6 +223,14 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
   const keyBE = cString(m, 'BE')
   const keyMeasure = cString(m, 'Measure')
   const keyInfo = cString(m, 'OPInfo')
+  const keyT = cString(m, 'T')
+  const keyM = cString(m, 'M')
+  const keyCreated = cString(m, 'CreationDate')
+  const keyIRT = cString(m, 'IRT')
+  const keyRT = cString(m, 'RT')
+  const keyState = cString(m, 'State')
+  const keyStateModel = cString(m, 'StateModel')
+  const replies: ImportedReply[] = []
   const out: ImportedAnnot[] = []
 
   const toDisplay = (x: number, y: number): [number, number] => {
@@ -229,6 +254,33 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
       if (!annot) continue
       try {
         const subtype = m._FPDFAnnot_GetSubtype(annot)
+        // Replies (and review-state changes) are Text annotations pointing at another one; read them whatever
+        // their flags, and keep them out of the drawable list. Grouped pairs (/RT /Group) are not replies.
+        if (subtype === 1) {
+          const linked = m._FPDFAnnot_GetLinkedAnnot(annot, keyIRT)
+          if (linked) {
+            const parent = m._FPDFPage_GetAnnotIndex(p, linked)
+            m._FPDFPage_CloseAnnot(linked)
+            if (parent >= 0 && readString(annot, keyRT) !== 'Group') {
+              const g = new DataView(m.HEAPU8.buffer)
+              const ok = m._FPDFAnnot_GetRect(annot, scratch)
+              const r: [number, number, number, number] = ok
+                ? [g.getFloat32(scratch, true), g.getFloat32(scratch + 12, true), g.getFloat32(scratch + 8, true), g.getFloat32(scratch + 4, true)]
+                : [0, 0, 0, 0]
+              const model = readString(annot, keyStateModel)
+              replies.push({
+                index: i,
+                parent,
+                author: readString(annot, keyT),
+                text: readString(annot, keyContents),
+                date: readString(annot, keyM) || readString(annot, keyCreated),
+                state: model === 'Review' || (!model && readString(annot, keyState)) ? readString(annot, keyState) || undefined : undefined,
+                rect: [Math.min(r[0], r[2]), Math.min(r[1], r[3]), Math.max(r[0], r[2]), Math.max(r[1], r[3])]
+              })
+              continue
+            }
+          }
+        }
         let kind = ANNOT_KINDS[subtype]
         if (!kind) continue
         if (m._FPDFAnnot_GetFlags(annot) & (FLAG_HIDDEN | FLAG_NO_VIEW)) continue
@@ -365,7 +417,10 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
           points,
           rect,
           fill,
-          stampInfo: kind === 'stamp' ? readString(annot, keyInfo) || undefined : undefined
+          stampInfo: kind === 'stamp' ? readString(annot, keyInfo) || undefined : undefined,
+          author: readString(annot, keyT) || undefined,
+          created: readString(annot, keyCreated) || undefined,
+          modified: readString(annot, keyM) || undefined
         })
       } finally {
         m._FPDFPage_CloseAnnot(annot)
@@ -381,8 +436,9 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
     m.wasmExports.free(keyBE)
     m.wasmExports.free(keyMeasure)
     m.wasmExports.free(keyInfo)
+    for (const k of [keyT, keyM, keyCreated, keyIRT, keyRT, keyState, keyStateModel]) m.wasmExports.free(k)
   }
-  return out
+  return { annots: out, replies }
 }
 
 /**

@@ -27,7 +27,7 @@ for (const theme of ['light', 'dark'] as const) {
       await win.screenshot({ path: test.info().outputPath(`welcome-${theme}.png`) })
       await win.locator('.empty .recent-list button').first().click()
       await expect(win.locator('.page')).toHaveCount(6)
-      await win.getByRole('tab', { name: 'Comment' }).click()
+      await win.getByRole('tab', { name: 'Comment', exact: true }).click()
       await win.waitForTimeout(400)
       await win.screenshot({ path: test.info().outputPath(`doc-${theme}.png`) })
     } finally {

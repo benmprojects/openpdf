@@ -1,7 +1,7 @@
 import type { WorkerRequest, WorkerResponse } from './pdf.worker'
-import type { AttachmentInfo, ImportedAnnot, OutlineNode, PageText } from './pdfiumRaw'
+import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageText } from './pdfiumRaw'
 
-export type { AttachmentInfo, ImportedAnnot, OutlineNode, PageText }
+export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageText }
 
 export interface PageSize {
   width: number
@@ -141,7 +141,7 @@ export class PdfClient {
   }
 
   /** Editable annotations already in the document, grouped by page. */
-  async annots(): Promise<{ page: number; annots: ImportedAnnot[] }[]> {
+  async annots(): Promise<{ page: number; annots: ImportedAnnot[]; replies: ImportedReply[] }[]> {
     const res = await this.call({ type: 'annots' })
     if (res.ok && res.type === 'annots') return res.pages
     throw new Error('Unexpected response')

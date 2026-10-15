@@ -30,7 +30,7 @@ test('typewriter and callout: drawn, typed, saved and read back', async () => {
     const problems: string[] = []
     win.on('pageerror', (e) => problems.push(e.message))
     await expect(win.locator('.page')).toHaveCount(6)
-    await win.getByRole('tab', { name: 'Comment' }).click()
+    await win.getByRole('tab', { name: 'Comment', exact: true }).click()
     const p = (await win.locator('.page').first().boundingBox())!
 
     // Typewriter: click, type two lines; the box fits the text.

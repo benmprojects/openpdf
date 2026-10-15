@@ -26,6 +26,9 @@ const api = {
   /** Asks for a folder and writes the files into it, never overwriting. Resolves null if cancelled. */
   saveMany: (files: { name: string; data: Uint8Array }[]): Promise<{ dir: string; written: string[] } | null> =>
     ipcRenderer.invoke('file:save-many', files),
+  /** Save dialog for a text file; resolves to the written path, or null if cancelled. */
+  saveText: (suggested: string, text: string, filter: { name: string; ext: string }): Promise<string | null> =>
+    ipcRenderer.invoke('file:save-text', suggested, text, filter),
   listStamps: (): Promise<ImageStamp[]> => ipcRenderer.invoke('stamps:list'),
   /** Asks for PNG or JPEG files and copies them into the stamp library. */
   addStamps: (): Promise<{ added: number; refused: string[] }> => ipcRenderer.invoke('stamps:add'),
