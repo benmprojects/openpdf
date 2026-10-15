@@ -6,6 +6,7 @@ import type { ImageStamp } from '../main/stamps'
 import type { CertInfo, ChainResult, SignSource } from '../main/signing'
 import type { OcrResult } from '../main/ocr'
 import type { ScanOptions, ScannerInfo } from '../main/scan'
+import type { BatchAction } from '../renderer/src/batch'
 
 export type { ImageStamp }
 
@@ -58,6 +59,14 @@ const api = {
   decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
   /** The file encrypted with new passwords and permissions. */
   encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** Batch processing: PDFs among files and folders, one read, one result written (never overwriting). */
+  batchExpand: (paths: string[], recursive: boolean): Promise<string[]> => ipcRenderer.invoke('batch:expand', paths, recursive),
+  batchRead: (path: string): Promise<{ name: string; data: Uint8Array }> => ipcRenderer.invoke('batch:read', path),
+  batchWrite: (source: string, outDir: string | null, suffix: string, data: Uint8Array): Promise<string> => ipcRenderer.invoke('batch:write', source, outDir, suffix, data),
+  batchPick: (folders: boolean): Promise<string[]> => ipcRenderer.invoke('batch:pick-inputs', folders),
+  batchActions: (): Promise<BatchAction[]> => ipcRenderer.invoke('batch:actions'),
+  batchSaveAction: (a: BatchAction): Promise<BatchAction[]> => ipcRenderer.invoke('batch:save-action', a),
+  batchDeleteAction: (name: string): Promise<BatchAction[]> => ipcRenderer.invoke('batch:delete-action', name),
   /** Scanners Windows knows about. */
   listScanners: (): Promise<ScannerInfo[]> => ipcRenderer.invoke('scan:devices'),
   /** Scans; one PNG per sheet (empty when the scanner's own window was cancelled). */

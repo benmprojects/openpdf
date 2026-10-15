@@ -2586,3 +2586,65 @@ button.compare-item:hover {
 .std-fail span:first-child {
   color: #d3302b;
 }
+
+/* Batch processing dialog */
+.modal.wide {
+  width: min(880px, calc(100vw - 32px));
+}
+.batch h3 {
+  margin: 12px 0 6px;
+  font-size: 14px;
+}
+.batch textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.batch-actionbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+.batch-actionbar input {
+  flex: 1;
+  min-width: 160px;
+}
+.batch-steps {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.batch-step {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+}
+.batch-step-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.batch-field {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.batch-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.batch-results {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}

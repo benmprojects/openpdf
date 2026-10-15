@@ -114,3 +114,65 @@ export async function addTextLayer(bytes: Uint8Array, inputs: OcrInput[], unicod
   }
   return { bytes: await doc.save(), words, skipped }
 }
+
+// ---- Whole documents -------------------------------------------------------------------------------
+
+export interface OcrRun {
+  languages: string[]
+  dpi: number
+  /** Pages that have no text yet, or all of them. */
+  scope: 'blank' | 'all'
+  /** Only these pages (zero-based), when given. */
+  pages?: number[]
+}
+
+export interface OcrDeps {
+  /** A loaded copy of the document being recognised. */
+  client: { render(page: number, scale: number): Promise<{ width: number; height: number; data: Uint8Array }>; pageText(page: number): Promise<{ text: string }> }
+  /** Page sizes in points, as displayed. */
+  pages: { width: number; height: number }[]
+  recognise: (png: Uint8Array, languages: string[]) => Promise<{ lines: OcrLine[]; confidence: number }>
+  findFont: (family: string) => Promise<Uint8Array | null>
+  toPng: (width: number, height: number, rgba: Uint8Array) => Promise<Uint8Array>
+  progress?: (page: number, done: number, total: number) => void
+}
+
+export interface OcrDone {
+  bytes: Uint8Array
+  words: number
+  skipped: number
+  pagesDone: number
+  /** Mean confidence over the pages recognised, 0 to 100. */
+  confidence: number
+  /** No page needed recognising (every page already has text). */
+  nothingToDo: boolean
+}
+
+/** Recognises the text on pages of a document and writes it back as an invisible layer. */
+export async function ocrDocument(bytes: Uint8Array, o: OcrRun, d: OcrDeps): Promise<OcrDone> {
+  const list: number[] = []
+  for (let p = 0; p < d.pages.length; p++) {
+    if (o.pages && !o.pages.includes(p)) continue
+    if (o.scope === 'blank' && (await d.client.pageText(p)).text.trim().length > 20) continue
+    list.push(p)
+  }
+  if (!list.length) return { bytes, words: 0, skipped: 0, pagesDone: 0, confidence: 0, nothingToDo: true }
+  const inputs: OcrInput[] = []
+  let confidence = 0
+  for (const [i, p] of list.entries()) {
+    d.progress?.(p, i + 1, list.length)
+    const size = d.pages[p]
+    const rendered = await d.client.render(p, Math.min(o.dpi / 72, Math.sqrt(40_000_000 / (size.width * size.height))))
+    const res = await d.recognise(await d.toPng(rendered.width, rendered.height, rendered.data), o.languages)
+    confidence += res.confidence
+    inputs.push({ page: p, scale: rendered.width / size.width, lines: res.lines })
+  }
+  // Non-Latin languages need an installed font that has their letters.
+  let font: Uint8Array | null = null
+  for (const family of fontsForLanguages(o.languages)) {
+    font = await d.findFont(family).catch(() => null)
+    if (font) break
+  }
+  const out = await addTextLayer(bytes, inputs, font)
+  return { bytes: out.bytes, words: out.words, skipped: out.skipped, pagesDone: inputs.length, confidence: confidence / inputs.length, nothingToDo: false }
+}

@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import type { Settings } from '../../preload'
 
 /** A centred modal panel. Esc and a click on the backdrop close it. */
-export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const panel = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -17,7 +17,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
   }, [onClose])
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={panel} className="modal" role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={panel} className={wide ? 'modal wide' : 'modal'} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="close" onClick={onClose} aria-label="Close">

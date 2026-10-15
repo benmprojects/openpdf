@@ -52,11 +52,12 @@ import { PDFDocument } from 'pdf-lib'
 import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
+import { BatchDialog } from './BatchDialog'
 import { CreateDialog, type CreateRequest } from './CreateDialog'
 import { imagesToPdf, textToPdf } from './createPdf'
 import { ScanDialog, type ScanRequest } from './ScanDialog'
 import { OcrDialog, type OcrRequest } from './OcrDialog'
-import { addTextLayer, fontsForLanguages, type OcrInput } from './ocrLayer'
+import { addTextLayer, ocrDocument, type OcrInput } from './ocrLayer'
 import { ExportImagesDialog, type ExportImagesRequest } from './ExportDialog'
 import { bodySize, encodePage, pageFileName, scaleFor, structurePage, toDocx, toHtml, type ExportBlock } from './exportDoc'
 import { groupBlocks } from './textBlocks'
@@ -224,6 +225,7 @@ import {
   Trash2,
   Type,
   Archive,
+  ListChecks,
   BadgeCheck,
   EyeOff,
   ScanLine,
@@ -1871,6 +1873,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [createFrom, setCreateFrom] = useState<{ kind: 'images' | 'text'; files: { name: string; data: Uint8Array }[] } | null>(null)
   const [officeReady, setOfficeReady] = useState(true)
   const [exportImagesOpen, setExportImagesOpen] = useState(false)
+  const [batchOpen, setBatchOpen] = useState(false)
   const [ocrOpen, setOcrOpen] = useState(false)
   const [scanOpen, setScanOpen] = useState(false)
   useEffect(() => {
@@ -1922,52 +1925,32 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const runOcr = async (r: OcrRequest) => {
     setOcrOpen(false)
     if (!client) return
-    const scale = r.dpi / 72
-    const inputs: OcrInput[] = []
-    let confidence = 0
-    let todo = 0
-    setBusy(true)
+    let result: Awaited<ReturnType<typeof ocrDocument>> | null = null
     try {
-      const list: number[] = []
-      for (let p = 0; p < pages.length; p++) {
-        if (r.scope === 'current' && p !== currentPage) continue
-        if (r.scope === 'blank' && (await client.pageText(p)).text.trim().length > 20) continue
-        list.push(p)
-      }
-      if (!list.length) {
-        setNotice({ kind: 'info', text: 'Every page already has text. Choose "All pages" to recognise them anyway.' })
-        return
-      }
-      for (const p of list) {
-        todo++
-        setNotice({ kind: 'info', text: `Recognising page ${p + 1} (${todo} of ${list.length})…` })
-        const rendered = await client.render(p, Math.min(scale, Math.sqrt(40_000_000 / (pages[p].width * pages[p].height))))
-        const png = await encodeRotatedPng(rendered.width, rendered.height, rendered.data, 0)
-        const res = await window.openpdf.ocrRecognise(png, r.languages)
-        confidence += res.confidence
-        inputs.push({ page: p, scale: rendered.width / pages[p].width, lines: res.lines })
-      }
+      await applyPageEdit(async (b) => {
+        const out = await ocrDocument(
+          b,
+          { languages: r.languages, dpi: r.dpi, scope: r.scope === 'all' ? 'all' : 'blank', pages: r.scope === 'current' ? [currentPage] : undefined },
+          {
+            client,
+            pages,
+            recognise: (png, langs) => window.openpdf.ocrRecognise(png, langs),
+            findFont: async (family) => (await window.openpdf.findFont(family, false, false).catch(() => null))?.data ?? null,
+            toPng: (w, h, rgba) => encodeRotatedPng(w, h, rgba, 0),
+            progress: (page, done, total) => setNotice({ kind: 'info', text: `Recognising page ${page + 1} (${done} of ${total})…` })
+          }
+        )
+        result = out
+        return out.nothingToDo ? null : out.bytes
+      })
     } catch (e) {
       setNotice({ kind: 'error', text: `Text recognition failed: ${e instanceof Error ? e.message : String(e)}` })
       return
-    } finally {
-      setBusy(false)
     }
-    // Non-Latin languages need an installed font that has their letters.
-    let font: Uint8Array | null = null
-    for (const family of fontsForLanguages(r.languages)) {
-      font = (await window.openpdf.findFont(family, false, false).catch(() => null))?.data ?? null
-      if (font) break
-    }
-    let words = 0
-    let skipped = 0
-    await applyPageEdit(async (b) => {
-      const out = await addTextLayer(b, inputs, font)
-      words = out.words
-      skipped = out.skipped
-      return out.bytes
-    })
-    setNotice({ kind: 'info', text: `Recognised ${words} word${words === 1 ? '' : 's'} on ${inputs.length} page${inputs.length === 1 ? '' : 's'} (average confidence ${Math.round(confidence / Math.max(1, inputs.length))}%).${skipped ? ` ${skipped} word${skipped === 1 ? '' : 's'} could not be written with the available font.` : ''}` })
+    const out = result as Awaited<ReturnType<typeof ocrDocument>> | null
+    if (!out) return
+    if (out.nothingToDo) return setNotice({ kind: 'info', text: 'Every page already has text. Choose "All pages" to recognise them anyway.' })
+    setNotice({ kind: 'info', text: `Recognised ${out.words} word${out.words === 1 ? '' : 's'} on ${out.pagesDone} page${out.pagesDone === 1 ? '' : 's'} (average confidence ${Math.round(out.confidence)}%).${out.skipped ? ` ${out.skipped} word${out.skipped === 1 ? '' : 's'} could not be written with the available font.` : ''}` })
   }
   const runScan = (r: ScanRequest) => {
     setScanOpen(false)
@@ -2735,6 +2718,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={FileOutput} label="Export FDF" onClick={() => void exportComments('fdf')} disabled={!commentAnnots.length} title="Export the comments as FDF" />
                 </RStack>
               </RGroup>
+              <RGroup label="Automate">
+                <RB big icon={ListChecks} label="Batch" onClick={() => setBatchOpen(true)} title="Run a list of steps (watermark, page numbers, optimise, OCR, clean-up) over many PDFs" />
+              </RGroup>
               <RGroup label="Security">
                 <RB big icon={ShieldCheck} label="Security" onClick={() => setSecurityOpen(true)} disabled={!pages.length || busy || locked} title="Set or remove passwords and permissions (applied when you save)" />
               </RGroup>
@@ -3303,6 +3289,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       )}
       {scanOpen && <ScanDialog onScan={runScan} onClose={() => setScanOpen(false)} />}
       {ocrOpen && <OcrDialog pageCount={pages.length} currentPage={currentPage} onRun={(r) => void runOcr(r)} onClose={() => setOcrOpen(false)} />}
+      {batchOpen && <BatchDialog onClose={() => setBatchOpen(false)} />}
       {exportImagesOpen && <ExportImagesDialog pageCount={pages.length} currentPage={currentPage} onExport={(r) => void runExportImages(r)} onClose={() => setExportImagesOpen(false)} />}
       {createFrom && <CreateDialog kind={createFrom.kind} files={createFrom.files.map((f) => f.name)} onCreate={runCreate} onClose={() => setCreateFrom(null)} />}
       {signOpen && <SignDialog canCertify={sigRows.length === 0} onSign={startSign} onClose={() => setSignOpen(false)} />}

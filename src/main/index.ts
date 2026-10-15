@@ -9,6 +9,8 @@ import { copyEncryption, decryptPdf, encryptionInfo, encryptPdf, runQpdf } from 
 import { chainStatus, listCertificates, pfxInfo, signCms, type SignSource } from './signing'
 import { findLibreOffice, htmlToPdf, officeToPdf, screenshot } from './convert'
 import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
+import { deleteAction, expandPdfs, listActions, readPdf as readBatchPdf, saveAction, writeResult } from './batchIo'
+import type { BatchAction } from '../renderer/src/batch'
 import { listScanners, scan, type ScanOptions } from './scan'
 import { addStamps, listStamps, removeStamp } from './stamps'
 import {
@@ -261,6 +263,23 @@ ipcMain.handle('scan:devices', () => listScanners())
 ipcMain.handle('scan:acquire', async (_e, o: ScanOptions) => {
   if (e2e && process.env.OPENPDF_E2E_SCAN) return Promise.all(process.env.OPENPDF_E2E_SCAN.split('|').map(async (f) => new Uint8Array(await readFile(f))))
   return scan(o)
+})
+
+/** Batch processing: files in, results out (never overwriting), and the saved actions. */
+ipcMain.handle('batch:expand', (_e, paths: unknown, recursive: unknown) => expandPdfs(Array.isArray(paths) ? paths.filter((x): x is string => typeof x === 'string') : [], recursive === true))
+ipcMain.handle('batch:read', (_e, path: unknown) => readBatchPdf(String(path)))
+ipcMain.handle('batch:write', (_e, source: unknown, outDir: unknown, suffix: unknown, data: Uint8Array) =>
+  writeResult(String(source), typeof outDir === 'string' && outDir ? outDir : null, typeof suffix === 'string' ? suffix : '', new Uint8Array(data))
+)
+ipcMain.handle('batch:actions', () => listActions())
+ipcMain.handle('batch:save-action', (_e, a: BatchAction) => saveAction(a))
+ipcMain.handle('batch:delete-action', (_e, name: unknown) => deleteAction(String(name)))
+ipcMain.handle('batch:pick-inputs', async (e, folders: boolean) => {
+  if (e2e && process.env.OPENPDF_E2E_BATCH_PICK) return process.env.OPENPDF_E2E_BATCH_PICK.split('|')
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { properties: (folders ? ['openDirectory', 'multiSelections'] : ['openFile', 'multiSelections']) as ('openDirectory' | 'openFile' | 'multiSelections')[], filters: folders ? [] : [{ name: 'PDF documents', extensions: ['pdf'] }] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled ? [] : res.filePaths
 })
 
 /** Text recognition (OCR): the languages, and one page image at a time. */
