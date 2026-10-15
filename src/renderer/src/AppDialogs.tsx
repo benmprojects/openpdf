@@ -92,10 +92,10 @@ function UpdateSettings({ settings, onChange }: { settings: Settings; onChange: 
         Check for updates when OpenPDF starts
       </label>
       <div className="form-grid" style={{ marginTop: 6 }}>
-        <label htmlFor="set-update-feed">Update address</label>
+        <label htmlFor="set-update-feed">Update address (optional)</label>
         <input
           id="set-update-feed"
-          placeholder="https://… (the folder with latest.yml)"
+          placeholder="Leave empty to use OpenPDF's GitHub releases"
           value={settings.updates.feed}
           onChange={(e) => onChange({ updates: { ...settings.updates, feed: e.target.value } })}
         />

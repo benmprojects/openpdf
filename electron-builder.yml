@@ -8,6 +8,15 @@ files:
   - package.json
 # tesseract.js starts worker threads from files inside its own package, and the OCR language data is read from disk:
 # neither works from inside the app archive.
+# Updates come from this repository's releases. electron-builder writes app-update.yml from this into the program, and the
+# updater uses it when no other update address is set (Settings > Updates and privacy). The repository is public, so no
+# token is needed to read releases.
+publish:
+  provider: github
+  owner: benmprojects
+  repo: openpdf
+  releaseType: release
+
 asarUnpack:
   - node_modules/tesseract.js/**
   - node_modules/tesseract.js-core/**

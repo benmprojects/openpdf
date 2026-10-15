@@ -23,7 +23,7 @@ test('updates are off unless turned on, the privacy statement is shown, and a ba
     await expect(section.getByRole('checkbox', { name: /Check for updates/ })).not.toBeChecked()
 
     await section.getByRole('button', { name: 'Check now' }).click()
-    await expect(section.getByRole('status')).toContainText('Enter the update address first.')
+    await expect(section.getByRole('status')).toContainText('only be checked in the installed program')
     await section.getByRole('textbox', { name: 'Update address' }).fill('http://updates.example.com/feed')
     await section.getByRole('button', { name: 'Check now' }).click()
     await expect(section.getByRole('status')).toContainText('must start with https://')

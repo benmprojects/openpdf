@@ -16,7 +16,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      # scripts/make-test-pdf.py uses only the standard library, so no pip packages are needed.
+      # The end-to-end tests make and check PDFs with these (and OpenSSL, which comes with Git for Windows).
+      - run: pip install pymupdf cryptography pillow
+      - run: echo "C:\Program Files\Git\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - run: npm ci --legacy-peer-deps
       - run: npm run typecheck
       - run: npm run lint
@@ -25,7 +27,7 @@ jobs:
       - run: npm run build
       - run: npx playwright test
       - name: Build Windows installer
-        run: npx electron-builder --win --publish never
+        run: npx electron-builder --win nsis --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: OpenPDF-Windows-installer

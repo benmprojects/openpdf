@@ -6,6 +6,8 @@
  * address an attacker can alter would not be protected.
  */
 import { app } from 'electron'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { autoUpdater } from 'electron-updater'
 import { feedAllowed } from '../shared/updateFeed'
 
@@ -24,6 +26,9 @@ export interface UpdateStatus {
   percent?: number
 }
 
+/** Whether this build carries its own update source (written by electron-builder from the `publish` setting). */
+const hasBuiltInFeed = () => existsSync(join(process.resourcesPath, 'app-update.yml'))
+
 let last: UpdateStatus = { state: 'off', current: app.getVersion() }
 let configured = ''
 
@@ -32,7 +37,8 @@ function configure(feed: string): void {
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.allowDowngrade = false
-  autoUpdater.setFeedURL({ provider: 'generic', url: feed })
+  // An empty address means this program's own releases; an address means a feed folder with latest.yml.
+  if (feed) autoUpdater.setFeedURL({ provider: 'generic', url: feed })
   autoUpdater.on('download-progress', (p) => {
     last = { ...last, state: 'downloading', percent: Math.round(p.percent) }
   })
@@ -47,11 +53,12 @@ export const updateStatus = (): UpdateStatus => last
 /** Asks the feed whether a newer version exists. */
 export async function checkForUpdates(feed: string): Promise<UpdateStatus> {
   const current = app.getVersion()
-  if (!feed.trim()) return (last = { state: 'off', current, message: 'Enter the update address first.' })
-  if (!feedAllowed(feed)) return (last = { state: 'error', current, message: 'The update address must start with https:// (or be on this computer).' })
+  const custom = feed.trim()
+  if (custom && !feedAllowed(custom)) return (last = { state: 'error', current, message: 'The update address must start with https:// (or be on this computer).' })
   if (!app.isPackaged) return (last = { state: 'unavailable', current, message: 'Updates can only be checked in the installed program.' })
+  if (!custom && !hasBuiltInFeed()) return (last = { state: 'unavailable', current, message: 'This build has no update source of its own. Enter an update address.' })
   try {
-    configure(feed.trim())
+    configure(custom)
     const r = await autoUpdater.checkForUpdates()
     const v = r?.updateInfo.version
     last = r && v && r.isUpdateAvailable ? { state: 'available', current, version: v } : { state: 'none', current }

@@ -1,0 +1,51 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 builds the Windows installer and publishes it, with latest.yml (which the program's
+# updater reads), as a GitHub release. "Run workflow" builds the same installer without publishing, to check it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - name: The version in package.json must match the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          if ("v$v" -ne "${{ github.ref_name }}") { Write-Error "package.json says $v but the tag is ${{ github.ref_name }}"; exit 1 }
+      - run: npm run build
+      # The installer is signed when a certificate is supplied as secrets (CSC_LINK, a base64 .pfx, and CSC_KEY_PASSWORD).
+      - name: Build and publish the installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npx electron-builder --win nsis --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      - name: Build the installer (not published)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: npx electron-builder --win nsis --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        with:
+          name: OpenPDF-installer
+          path: |
+            dist/*.exe
+            dist/latest.yml
+          if-no-files-found: error
