@@ -804,6 +804,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [searching, setSearching] = useState(false)
   const searchInput = useRef<HTMLInputElement>(null)
   const runId = useRef(0)
+  const matchesRef = useRef(matches)
+  matchesRef.current = matches
+  const currentRef = useRef(current)
+  currentRef.current = current
   // A search-in-files result: fill in the find bar and go to that match once the search reaches it.
   const jumpTarget = useRef<{ page: number; from: number } | null>(null)
   useEffect(() => {
@@ -821,10 +825,6 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       viewer.current?.scrollToMatch(matchesRef.current[hit])
     }
   }, [jump?.key]) // eslint-disable-line react-hooks/exhaustive-deps
-  const matchesRef = useRef(matches)
-  matchesRef.current = matches
-  const currentRef = useRef(current)
-  currentRef.current = current
 
   useEffect(() => {
     if (!client || !searchOpen || !query) {
