@@ -63,7 +63,7 @@ const BOM = '\uFEFF'
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /** A minimal XMP packet for the Info entries (Dublin Core, PDF and XMP basic schemas). */
-export function buildXmp(p: DocProps): string {
+export function buildXmp(p: DocProps, pdfa?: { part: number; conformance: string }): string {
   const alt = (tag: string, v: string) => (v ? `<${tag}><rdf:Alt><rdf:li xml:lang="x-default">${esc(v)}</rdf:li></rdf:Alt></${tag}>` : '')
   const parts = [
     alt('dc:title', p.title),
@@ -72,13 +72,14 @@ export function buildXmp(p: DocProps): string {
     p.keywords ? `<pdf:Keywords>${esc(p.keywords)}</pdf:Keywords>` : '',
     p.producer ? `<pdf:Producer>${esc(p.producer)}</pdf:Producer>` : '',
     p.creator ? `<xmp:CreatorTool>${esc(p.creator)}</xmp:CreatorTool>` : '',
+    pdfa ? `<pdfaid:part>${pdfa.part}</pdfaid:part><pdfaid:conformance>${pdfa.conformance}</pdfaid:conformance>` : '',
     p.created ? `<xmp:CreateDate>${esc(p.created)}</xmp:CreateDate>` : '',
     p.modified ? `<xmp:ModifyDate>${esc(p.modified)}</xmp:ModifyDate><xmp:MetadataDate>${esc(p.modified)}</xmp:MetadataDate>` : ''
   ].filter(Boolean)
   return (
     `<?xpacket begin="${BOM}" id="W5M0MpCehiHzreSzNTczkc9d"?>\n` +
     `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">` +
-    `<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">` +
+    `<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/" xmlns:xmp="http://ns.adobe.com/xap/1.0/"${pdfa ? ' xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"' : ''}>` +
     parts.join('') +
     `</rdf:Description></rdf:RDF></x:xmpmeta>\n<?xpacket end="w"?>`
   )

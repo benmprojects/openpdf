@@ -1,4 +1,5 @@
 import { Modal } from './AppDialogs'
+import type { PdfAReport } from './pdfa'
 import type { CheckStatus, StandardsReport } from './standards'
 
 const MARK: Record<CheckStatus, string> = { pass: '✔', warn: '⚠', fail: '✖' }
@@ -26,13 +27,30 @@ function Section({ title, claim, report, standard }: { title: string; claim?: st
 }
 
 /** What the file says about PDF/A and PDF/UA, and basic checks against each. */
-export function StandardsDialog({ report, onClose }: { report: StandardsReport; onClose: () => void }) {
+export function StandardsDialog({ report, conversion, onClose }: { report: StandardsReport; conversion?: PdfAReport; onClose: () => void }) {
   const a = report.claims.pdfa
   const ua = report.claims.pdfua
   return (
     <Modal title="PDF standards" onClose={onClose}>
       <div className="marks-form">
         <p className="muted">These are quick checks of things that can be tested from the file alone. They are not a full validator: passing them does not make a file conformant.</p>
+        {conversion && (
+          <section aria-label="What the conversion did">
+            <h3>Conversion to PDF/A-2b</h3>
+            <ul className="std-list">
+              {conversion.fixed.map((t) => (
+                <li key={t} className="std-pass">
+                  <span aria-hidden>✔</span> {t}
+                </li>
+              ))}
+              {conversion.remaining.map((t) => (
+                <li key={t} className="std-warn">
+                  <span aria-hidden>⚠</span> {t}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         <Section title="PDF/A (archiving)" standard="PDF/A" report={report} claim={a ? `PDF/A-${a.part}${a.conformance ? a.conformance.toLowerCase() : ''}` : undefined} />
         <Section title="PDF/UA (accessibility)" standard="PDF/UA" report={report} claim={ua ? `PDF/UA-${ua.part}` : undefined} />
         <div className="marks-actions">

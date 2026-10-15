@@ -62,6 +62,7 @@ import { bodySize, encodePage, pageFileName, scaleFor, structurePage, toDocx, to
 import { groupBlocks } from './textBlocks'
 import { SanitiseDialog } from './SanitiseDialog'
 import { StandardsDialog } from './StandardsDialog'
+import { convertToPdfA, type PdfAReport } from './pdfa'
 import { checkStandards, type StandardsReport } from './standards'
 import { SignDialog, type SignRequest } from './SignDialog'
 import { SignaturesDialog, signatureState, type SignatureRow } from './SignaturesDialog'
@@ -222,6 +223,7 @@ import {
   Strikethrough,
   Trash2,
   Type,
+  Archive,
   BadgeCheck,
   EyeOff,
   ScanLine,
@@ -473,6 +475,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [optimising, setOptimising] = useState(false)
   const [docProps, setDocProps] = useState<DocProps | null>(null)
   const [standards, setStandards] = useState<StandardsReport | null>(null)
+  const [conversion, setConversion] = useState<PdfAReport | undefined>(undefined)
+  const makePdfA = async () => {
+    let done: { report: StandardsReport; conv: PdfAReport } | null = null
+    await applyPageEdit(async (b) => {
+      const r = await convertToPdfA(b, async (family, bold, italic) => (await window.openpdf.findFont(family, bold, italic).catch(() => null))?.data ?? null)
+      done = { report: await checkStandards(r.bytes), conv: r.report }
+      return r.bytes
+    })
+    if (done) {
+      const d = done as { report: StandardsReport; conv: PdfAReport }
+      setConversion(d.conv)
+      setStandards(d.report)
+    }
+  }
   const openStandards = async () => {
     try {
       setStandards(await checkStandards(annotsDirty ? await applyEdits(bytes) : bytes))
@@ -2725,6 +2741,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Info">
                 <RB big icon={FileText} label="Properties" onClick={() => void openDocProps()} disabled={!pages.length || busy || locked} title="Title, author, keywords and other document properties" />
                 <RB big icon={BadgeCheck} label="Standards" onClick={() => void openStandards()} disabled={!pages.length || busy} title="What the file declares about PDF/A and PDF/UA, with basic checks" />
+                <RB big icon={Archive} label="Convert to PDF/A" onClick={() => void makePdfA()} disabled={!pages.length || busy || locked} title="Make the file PDF/A-2b as far as this program can (best effort: check the result with a validator)" />
               </RGroup>
               <RGroup label="Output">
                 <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
@@ -3373,7 +3390,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </Modal>
       )}
 
-      {standards && <StandardsDialog report={standards} onClose={() => setStandards(null)} />}
+      {standards && (
+        <StandardsDialog
+          report={standards}
+          conversion={conversion}
+          onClose={() => {
+            setStandards(null)
+            setConversion(undefined)
+          }}
+        />
+      )}
       {docProps && (
         <DocPropsDialog
           initial={docProps}

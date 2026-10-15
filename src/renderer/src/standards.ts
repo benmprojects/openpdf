@@ -46,7 +46,7 @@ function xmpValue(xmp: string, prefix: string, name: string): string | undefined
 }
 
 /** Every font dictionary a page (or a form it draws) uses, found through its resources. */
-function fontsOf(doc: PDFDocument): PDFDict[] {
+export function fontsOf(doc: PDFDocument): PDFDict[] {
   const out = new Set<PDFDict>()
   const seen = new Set<PDFDict>()
   const visit = (res: PDFDict | undefined, depth: number) => {
@@ -77,7 +77,7 @@ function fontsOf(doc: PDFDocument): PDFDict[] {
   return [...out]
 }
 
-function fontIsEmbedded(font: PDFDict): boolean {
+export function fontIsEmbedded(font: PDFDict): boolean {
   const sub = font.lookup(N('Subtype'))
   if (sub === N('Type3')) return true
   const target = sub === N('Type0') ? font.lookupMaybe(N('DescendantFonts'), PDFArray)?.lookupMaybe(0, PDFDict) : font
@@ -85,7 +85,7 @@ function fontIsEmbedded(font: PDFDict): boolean {
   return !!desc && (desc.has(N('FontFile')) || desc.has(N('FontFile2')) || desc.has(N('FontFile3')))
 }
 
-const fontName = (f: PDFDict) => (f.lookup(N('BaseFont')) as PDFName | undefined)?.decodeText().replace(/^[A-Z]{6}\+/, '') ?? 'unnamed'
+export const fontName = (f: PDFDict) => (f.lookup(N('BaseFont')) as PDFName | undefined)?.decodeText().replace(/^[A-Z]{6}\+/, '') ?? 'unnamed'
 
 /** Whether any page uses transparency (a transparency group, soft mask, blend mode or opacity below one). */
 function usesTransparency(doc: PDFDocument): boolean {
