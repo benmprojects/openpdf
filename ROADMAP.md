@@ -92,8 +92,8 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Create PDF from clipboard and screenshots; PDF/A output (File > Convert to PDF/A: PDF/A-2b best effort, not validated with veraPDF)
 
 ## Phase 8: Productivity and automation (P2)
-- [ ] Batch processing and action wizard (watermark, OCR, optimise on folders)
-- [ ] Command-line interface and scripting API
+- [x] Batch processing and action wizard (watermark, OCR, optimise on folders) (File > Batch: ordered steps, saved actions, shareable action files; originals are never changed or overwritten)
+- [x] Command-line interface and scripting API (`OpenPDF --batch <action> --out <folder> ...`, action files as JSON, exit codes and a JSON report; the scripting surface is the action file, there is no embedded scripting language)
 - [ ] Compare two documents (text and visual)
 - [ ] Portfolios/packages, embedded files
 - [ ] 3D, multimedia and rich media playback (low priority)

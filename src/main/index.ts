@@ -10,6 +10,7 @@ import { chainStatus, listCertificates, pfxInfo, signCms, type SignSource } from
 import { findLibreOffice, htmlToPdf, officeToPdf, screenshot } from './convert'
 import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
 import { deleteAction, expandPdfs, listActions, readPdf as readBatchPdf, saveAction, writeResult } from './batchIo'
+import { HELP, loadAction, parseCli } from './cli'
 import type { BatchAction } from '../renderer/src/batch'
 import { listScanners, scan, type ScanOptions } from './scan'
 import { addStamps, listStamps, removeStamp } from './stamps'
@@ -35,7 +36,9 @@ const e2e = process.env.OPENPDF_E2E === '1'
 if (e2e && process.env.OPENPDF_E2E_USERDATA) app.setPath('userData', process.env.OPENPDF_E2E_USERDATA)
 
 // One window: opening a PDF from Explorer while the app runs adds a tab to the running window.
-if (!e2e && !app.requestSingleInstanceLock()) app.quit()
+// A command-line run (OpenPDF --batch ...) is its own process: it neither takes the lock nor opens the main window.
+const cli = parseCli(process.argv.slice(app.isPackaged ? 1 : 2))
+if (!e2e && !cli && !app.requestSingleInstanceLock()) app.quit()
 
 let mainWindow: BrowserWindow | null = null
 
@@ -627,9 +630,71 @@ ipcMain.handle('file:initial', async () => {
   return files.filter((f) => f !== null)
 })
 
+/** What a command-line batch run is doing, for the hidden window that does the work to ask about. */
+let cliJob: { steps: BatchAction['steps']; inputs: string[]; recursive: boolean; outDir: string | null; suffix: string } | null = null
+let cliReport: string | null = null
+const say = (text: string) => {
+  try {
+    process.stdout.write(text.endsWith('\n') ? text : `${text}\n`)
+  } catch {
+    // no console to write to (a Windows program started from a window): the report file is the record
+  }
+}
+
+ipcMain.handle('cli:job', () => cliJob)
+ipcMain.handle('cli:done', async (_e, results: { source: string; ok: boolean; output?: string; error?: string; notes?: string[] }[]) => {
+  const failed = results.filter((r) => !r.ok).length
+  for (const r of results) say(r.ok ? `ok      ${r.source} -> ${r.output}${r.notes?.length ? ` (${r.notes.join('; ')})` : ''}` : `FAILED  ${r.source}: ${r.error}`)
+  say(`${results.length - failed} of ${results.length} file${results.length === 1 ? '' : 's'} processed${failed ? `, ${failed} failed` : ''}.`)
+  if (cliReport) await writeFile(cliReport, JSON.stringify({ processed: results.length - failed, failed, results }, null, 2)).catch(() => undefined)
+  app.exit(results.length === 0 ? 1 : failed ? 1 : 0)
+})
+
+async function runCli(c: NonNullable<typeof cli>): Promise<void> {
+  if (c.kind === 'help') {
+    say(HELP)
+    return app.exit(0)
+  }
+  if (c.kind === 'error') {
+    say(`${c.message}\n\n${HELP}`)
+    return app.exit(2)
+  }
+  if (c.kind === 'list') {
+    const actions = await listActions()
+    say(actions.length ? actions.map((a) => `${a.name}  (${a.steps.length} step${a.steps.length === 1 ? '' : 's'})`).join('\n') : 'There are no saved actions.')
+    return app.exit(0)
+  }
+  try {
+    const action = await loadAction(c.action, await listActions())
+    const problems = checkStepsMain(action.steps)
+    if (problems) throw new Error(problems)
+    cliJob = { steps: action.steps, inputs: c.inputs.map((i) => resolve(i)), recursive: c.recursive, outDir: c.out ? resolve(c.out) : null, suffix: c.suffix }
+    cliReport = c.report ? resolve(c.report) : null
+  } catch (e) {
+    say(e instanceof Error ? e.message : String(e))
+    return app.exit(2)
+  }
+  const win = new BrowserWindow({ show: false, webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  win.webContents.on('render-process-gone', () => {
+    say('The batch run stopped unexpectedly.')
+    app.exit(3)
+  })
+  if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}?cli=1`)
+  else void win.loadFile(join(__dirname, '../renderer/index.html'), { query: { cli: '1' } })
+}
+
+/** The same checks the Batch dialog makes, without importing renderer code: a step list must exist and end well. */
+function checkStepsMain(steps: unknown[]): string | null {
+  if (!Array.isArray(steps) || !steps.length) return 'The action has no steps.'
+  const sec = steps.findIndex((x) => (x as { kind?: string })?.kind === 'security')
+  if (sec >= 0 && sec !== steps.length - 1) return 'Adding a password must be the last step.'
+  return null
+}
+
 app.whenReady().then(async () => {
   await loadSettings() // applies the theme before the window paints
   Menu.setApplicationMenu(null) // the ribbon replaces Electron's default File/Edit/View/Window menu
+  if (cli) return runCli(cli)
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

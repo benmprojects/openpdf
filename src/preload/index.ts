@@ -59,6 +59,9 @@ const api = {
   decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
   /** The file encrypted with new passwords and permissions. */
   encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** Command-line run: the job to do, and handing back the results (the program then exits). */
+  cliJob: (): Promise<{ steps: BatchAction['steps']; inputs: string[]; recursive: boolean; outDir: string | null; suffix: string } | null> => ipcRenderer.invoke('cli:job'),
+  cliDone: (results: unknown[]): Promise<void> => ipcRenderer.invoke('cli:done', results),
   /** Batch processing: PDFs among files and folders, one read, one result written (never overwriting). */
   batchExpand: (paths: string[], recursive: boolean): Promise<string[]> => ipcRenderer.invoke('batch:expand', paths, recursive),
   batchRead: (path: string): Promise<{ name: string; data: Uint8Array }> => ipcRenderer.invoke('batch:read', path),
