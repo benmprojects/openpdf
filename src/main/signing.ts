@@ -36,7 +36,13 @@ Add-Type -AssemblyName System.Security
 $X509 = 'System.Security.Cryptography.X509Certificates'
 function Get-Cert {
   if ($Pfx) { return New-Object "$X509.X509Certificate2" -ArgumentList $Pfx, $env:OPENPDF_PFX_PW, 'EphemeralKeySet' }
-  return Get-Item "Cert:\CurrentUser\My\$Thumb"
+  return (Get-Store | Where-Object { $_.Thumbprint -eq $Thumb } | Select-Object -First 1)
+}
+function Get-Store {
+  # The .NET store works where the Cert: drive does not (some hosts and runners).
+  $store = New-Object "$X509.X509Store" -ArgumentList 'My', 'CurrentUser'
+  $store.Open('ReadOnly')
+  try { return @($store.Certificates) } finally { $store.Close() }
 }
 function Describe($c) {
   [pscustomobject]@{
@@ -51,7 +57,7 @@ function Describe($c) {
 }
 switch ($Mode) {
   'list' {
-    $list = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey } | ForEach-Object { Describe $_ })
+    $list = @(Get-Store | Where-Object { $_.HasPrivateKey } | ForEach-Object { Describe $_ })
     ConvertTo-Json -InputObject $list -Compress
   }
   'pfx' {
