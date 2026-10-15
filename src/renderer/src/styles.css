@@ -373,3 +373,25 @@ select:focus-visible {
   border: 2px dashed var(--accent);
   pointer-events: none;
 }
+
+.scroller.hand .page {
+  cursor: grab;
+}
+.scroller.hand.panning .page {
+  cursor: grabbing;
+}
+.password-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding-top: 15vh;
+}
+.password-form input {
+  width: 260px;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}

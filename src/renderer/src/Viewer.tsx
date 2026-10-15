@@ -28,6 +28,7 @@ interface Props {
   client: PdfClient
   pages: PageSize[]
   zoom: number
+  tool: 'select' | 'hand'
   matches: Match[]
   currentMatch: number
   onPageChange: (index: number) => void
@@ -40,7 +41,7 @@ interface Selection {
   focus: CharPos
 }
 
-export function Viewer({ client, pages, zoom, matches, currentMatch, onPageChange, onSize, ref }: Props) {
+export function Viewer({ client, pages, zoom, tool, matches, currentMatch, onPageChange, onSize, ref }: Props) {
   const scroller = useRef<HTMLDivElement>(null)
   const pageEls = useRef<(HTMLDivElement | null)[]>([])
   const [sel, setSel] = useState<Selection | null>(null)
@@ -139,7 +140,27 @@ export function Viewer({ client, pages, zoom, matches, currentMatch, onPageChang
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (e.button !== 0 || !(e.target as HTMLElement).closest('[data-page]')) return
+      if (e.button !== 0) return
+      if (tool === 'hand') {
+        const sc = scroller.current
+        if (!sc) return
+        e.preventDefault()
+        const start = { x: e.clientX, y: e.clientY, left: sc.scrollLeft, top: sc.scrollTop }
+        const pan = (ev: MouseEvent) => {
+          sc.scrollLeft = start.left - (ev.clientX - start.x)
+          sc.scrollTop = start.top - (ev.clientY - start.y)
+        }
+        const stop = () => {
+          window.removeEventListener('mousemove', pan)
+          window.removeEventListener('mouseup', stop)
+          sc.classList.remove('panning')
+        }
+        sc.classList.add('panning')
+        window.addEventListener('mousemove', pan)
+        window.addEventListener('mouseup', stop)
+        return
+      }
+      if (!(e.target as HTMLElement).closest('[data-page]')) return
       e.preventDefault()
       const startX = e.clientX
       const startY = e.clientY
@@ -169,7 +190,7 @@ export function Viewer({ client, pages, zoom, matches, currentMatch, onPageChang
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt]
+    [posAt, tool]
   )
 
   const ordered = useMemo(() => {
@@ -232,7 +253,7 @@ export function Viewer({ client, pages, zoom, matches, currentMatch, onPageChang
   )
 
   return (
-    <div ref={scroller} className="scroller" onMouseDown={onMouseDown}>
+    <div ref={scroller} className={tool === 'hand' ? 'scroller hand' : 'scroller'} onMouseDown={onMouseDown}>
       <div className="viewer" style={{ padding: PAD }}>
         {pages.map((size, i) => (
           <PageView

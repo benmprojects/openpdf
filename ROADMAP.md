@@ -17,7 +17,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 
 ## Phase 1: Viewer (P0)
 - [x] Open, tabs, drag and drop
-- [ ] Password-protected files
+- [x] Password-protected files
 - [x] Zoom: fit width, fit page, presets, Ctrl+/-; continuous scroll
 - [ ] Marquee zoom, rotate view, single and two-page modes
 - [x] Thumbnails, bookmarks/outline
@@ -25,7 +25,8 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Text search (highlight all, whole word, match case, next/previous)
 - [ ] Find in multiple files
 - [x] Text select and copy
-- [ ] Snapshot tool, hand and select tools
+- [x] Hand and select tools
+- [ ] Snapshot tool
 - [ ] Print (page ranges, scaling, booklet, N-up), presentation/full-screen mode
 - [ ] Read-aloud (system TTS), reading mode, accessibility (screen-reader, high contrast)
 - [ ] Rulers, grid, guides, measurement tools (distance, perimeter, area)

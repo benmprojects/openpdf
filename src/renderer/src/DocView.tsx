@@ -21,6 +21,10 @@ export function DocView({ data, active }: Props) {
   const [pages, setPages] = useState<PageSize[]>([])
   const [error, setError] = useState<string | null>(null)
   const [outline, setOutline] = useState<OutlineNode[] | null>(null)
+  const [password, setPassword] = useState<string | undefined>()
+  const [passwordIssue, setPasswordIssue] = useState<'required' | 'wrong' | null>(null)
+  const [passwordDraft, setPasswordDraft] = useState('')
+  const [tool, setTool] = useState<'select' | 'hand'>('select')
 
   const [mode, setMode] = useState<ZoomMode>('fit-width')
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -31,21 +35,26 @@ export function DocView({ data, active }: Props) {
   useEffect(() => {
     const c = new PdfClient()
     let cancelled = false
-    c.load(data)
+    c.load(data, password)
       .then((p) => {
         if (cancelled) return
+        setPasswordIssue(null)
         setPages(p)
         setClient(c)
         c.outline()
           .then((o) => !cancelled && setOutline(o))
           .catch(() => !cancelled && setOutline([]))
       })
-      .catch((e: Error) => !cancelled && setError(`Could not open this PDF: ${e.message}`))
+      .catch((e: Error) => {
+        if (cancelled) return
+        if (/password/i.test(e.message)) setPasswordIssue(password ? 'wrong' : 'required')
+        else setError(`Could not open this PDF: ${e.message}`)
+      })
     return () => {
       cancelled = true
       c.dispose()
     }
-  }, [data])
+  }, [data, password])
 
   const onSize = useCallback((w: number, h: number) => setSize((s) => (s.w === w && s.h === h ? s : { w, h })), [])
 
@@ -268,6 +277,13 @@ export function DocView({ data, active }: Props) {
           +
         </button>
         <span className="sep" />
+        <button onClick={() => setTool('select')} disabled={!pages.length} aria-pressed={tool === 'select'} title="Select text">
+          Select
+        </button>
+        <button onClick={() => setTool('hand')} disabled={!pages.length} aria-pressed={tool === 'hand'} title="Hand tool: drag to pan">
+          Hand
+        </button>
+        <span className="sep" />
         <button onClick={openSearch} disabled={!pages.length} aria-pressed={searchOpen} title="Find (Ctrl+F)">
           Find
         </button>
@@ -316,6 +332,26 @@ export function DocView({ data, active }: Props) {
       <div className="body">
         {error ? (
           <div className="error">{error}</div>
+        ) : passwordIssue ? (
+          <form
+            className="password-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              setPassword(passwordDraft)
+            }}
+          >
+            <p>{passwordIssue === 'wrong' ? 'That password is incorrect.' : 'This document is password protected.'}</p>
+            <input
+              type="password"
+              autoFocus
+              value={passwordDraft}
+              onChange={(e) => setPasswordDraft(e.target.value)}
+              aria-label="Document password"
+            />
+            <button className="primary" type="submit" disabled={!passwordDraft}>
+              Open
+            </button>
+          </form>
         ) : !client ? (
           <div className="empty">Loading…</div>
         ) : (
@@ -336,6 +372,7 @@ export function DocView({ data, active }: Props) {
               client={client}
               pages={pages}
               zoom={zoom}
+              tool={tool}
               matches={matches}
               currentMatch={current}
               onPageChange={setCurrentPage}
