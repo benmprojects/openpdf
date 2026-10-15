@@ -3,15 +3,80 @@
  * dictionaries), straight from the annotation dictionaries with pdf-lib. Used by the PDFium worker when importing
  * annotations, so more of what other tools write can be edited faithfully.
  */
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib'
+
+const textOf = (o: unknown) => (o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : undefined)
+
+export interface LinkTarget {
+  uri?: string
+  page?: number
+}
+
+/** Targets of the Link annotations seen by annotDicts, resolved against the document's pages. */
+const linkTargets = new WeakMap<PDFDict, LinkTarget>()
+
+/** Where a Link annotation goes, when it is a web address or a page of this document; undefined for anything else. */
+export function linkTargetOf(d: PDFDict | undefined): LinkTarget | undefined {
+  return d ? linkTargets.get(d) : undefined
+}
+
+function resolveLink(doc: PDFDocument, d: PDFDict, pageIndex: Map<string, number>): LinkTarget | undefined {
+  const a = d.lookupMaybe(PDFName.of('A'), PDFDict)
+  const s = a && nameOf(a, 'S')
+  if (a && s === 'URI') {
+    const uri = textOf(a.lookup(PDFName.of('URI')))
+    return uri ? { uri } : undefined
+  }
+  if (a && s !== 'GoTo') return undefined
+  let dest = a ? a.lookup(PDFName.of('D')) : d.lookup(PDFName.of('Dest'))
+  // Named destinations: the old /Dests dictionary, or the /Names /Dests name tree (first level of names only).
+  const name = dest instanceof PDFName ? dest.decodeText() : textOf(dest)
+  if (name !== undefined) {
+    const dests = doc.catalog.lookupMaybe(PDFName.of('Dests'), PDFDict)
+    dest = dests?.lookup(PDFName.of(name))
+    if (!dest) {
+      const tree = doc.catalog.lookupMaybe(PDFName.of('Names'), PDFDict)?.lookupMaybe(PDFName.of('Dests'), PDFDict)
+      const find = (node: PDFDict | undefined, depth: number): unknown => {
+        if (!node || depth > 10) return undefined
+        const names = node.lookupMaybe(PDFName.of('Names'), PDFArray)
+        for (let i = 0; names && i + 1 < names.size(); i += 2) if (textOf(names.lookup(i)) === name) return names.lookup(i + 1)
+        const kids = node.lookupMaybe(PDFName.of('Kids'), PDFArray)
+        for (let i = 0; kids && i < kids.size(); i++) {
+          const hit = find(kids.lookupMaybe(i, PDFDict), depth + 1)
+          if (hit) return hit
+        }
+        return undefined
+      }
+      dest = find(tree, 0) as typeof dest
+    }
+    if (dest instanceof PDFDict) dest = dest.lookup(PDFName.of('D'))
+  }
+  if (!(dest instanceof PDFArray) || !dest.size()) return undefined
+  const ref = dest.get(0)
+  if (ref instanceof PDFRef) {
+    const page = pageIndex.get(ref.toString())
+    return page === undefined ? undefined : { page }
+  }
+  return undefined
+}
 
 /** Each page's /Annots dictionaries, in /Annots order (the same order as PDFium's annotation indices). */
 export async function annotDicts(bytes: Uint8Array): Promise<((PDFDict | undefined)[])[] | null> {
   try {
     const doc = await PDFDocument.load(bytes, { updateMetadata: false })
-    return doc.getPages().map((p) => {
+    const pages = doc.getPages()
+    const pageIndex = new Map(pages.map((p, i) => [p.ref.toString(), i]))
+    return pages.map((p) => {
       const arr = p.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
-      return arr ? Array.from({ length: arr.size() }, (_, i) => arr.lookupMaybe(i, PDFDict)) : []
+      if (!arr) return []
+      return Array.from({ length: arr.size() }, (_, i) => {
+        const d = arr.lookupMaybe(i, PDFDict)
+        if (d && nameOf(d, 'Subtype') === 'Link') {
+          const t = resolveLink(doc, d, pageIndex)
+          if (t) linkTargets.set(d, t)
+        }
+        return d
+      })
     })
   } catch {
     return null // encrypted or damaged: import without the extras
@@ -34,7 +99,6 @@ export function nameOf(d: PDFDict | undefined, key: string): string | undefined 
   return d?.lookupMaybe(PDFName.of(key), PDFName)?.decodeText()
 }
 
-const textOf = (o: unknown) => (o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : undefined)
 
 const ARROWS = new Set(['OpenArrow', 'ClosedArrow', 'ROpenArrow', 'RClosedArrow'])
 

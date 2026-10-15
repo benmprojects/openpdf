@@ -11,7 +11,12 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - The user asked for a professional look with icons, like a ribbon editor. Keep new UI consistent with the design system below.
 
 ## Current state
-- Phases 0, 1 and 2 complete (see ROADMAP). Phase 3 first part (page organisation) done earlier.
+- Phases 0, 1 and 2 complete (see ROADMAP). Phase 3: page organisation, copy/replace/split, Layout tab (headers, footers, numbers, Bates, watermarks, backgrounds, crop, resize), and bookmark, page label and link editing are done.
+- Bookmark, page label and link editing:
+  - `outlineEdit.ts`: bookmark tree edits (insert, remove, update, move, indent, outdent) and `writeOutline` (a fresh /Outlines tree, every bookmark to the top of its page). `readLabelRanges` / `writeLabelRanges` / `labelFor` for /PageLabels.
+  - Bookmarks pane (`Sidebar.tsx`) has an edit toolbar; F2 renames, Delete deletes. The pane shows the edited tree until the rewritten file reads back the same, and DocView queues outline writes (`editOutline`) because edits come faster than reloads.
+  - Organise > Page labels opens `PageLabelsDialog.tsx`.
+  - Links already in a file are imported as kind `link` when they go to a web address or a page here (resolved in `annotExtras.ts`, including named destinations). They are hidden unless the Link tool is on or one is selected. With the Link tool, links can be moved, resized, deleted, and retargeted by double-click. Saving keeps the original border and flags and replaces /A or /Dest.
 - Phase 2 this session:
   - New annotation kinds: squiggly, caret/replace text, typewriter, callout, polygon/polyline/cloud, image and dated stamps, file attachment, sound, link.
   - Shape options: fill, dashes, opacity, fonts.
@@ -51,6 +56,7 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
     - `_SAVE_TEXT=path` answers CSV, XFDF and FDF saves.
     - `_IMAGES=a;b` adds image stamps.
     - `_LINKS=path` records opened web links instead of opening them.
+    - `_CLIP=path` writes copied images (snapshots) to that file instead of the system clipboard, which other programs on the machine can hold.
     - `_SEARCH_DIR` answers the search-in-files folder picker.
     - `_SHOW=1` shows test windows (they open off-screen otherwise).
 - `print.ts`: pending annotations are written into a copy, then PDFium renders one page at a time at 300 dpi (capped at 40 Mpx). The PNGs are spooled to a temp folder, and a hidden window prints them.
@@ -74,6 +80,8 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - Saving password-protected PDFs is refused, and so are page edits on them.
 - Applying a page edit writes pending annotation edits into the file first. Undoing the page edit brings them back as ordinary saved annotations.
 - Deleting a page can leave a bookmark pointing at nothing.
+- Rewriting bookmarks sends each one to the top of its page (any zoom or position in the original destination is dropped) and closes every bookmark that has children.
+- An edited link keeps working from PDFium's copy until the file is saved (following a link uses PDFium's list).
 - Underline and strikeout on sideways text are drawn horizontally.
 - Thumbnails that have not rendered yet show a placeholder.
 - Printed output is raster: text is not selectable in a print-to-PDF.
@@ -81,10 +89,6 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 
 ## Next steps (strict phase order)
 1. Phase 3 remainder, in ROADMAP order:
-   - copy and replace pages, split by bookmark or size;
-   - crop, resize, headers and footers, Bates numbering, page numbers;
-   - watermarks and backgrounds;
-   - bookmark, page label and link editing;
    - optimise and compress;
    - document properties and metadata.
 2. (Done this session) Phase 1, in ROADMAP order:

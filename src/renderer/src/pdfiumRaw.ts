@@ -5,7 +5,7 @@
  */
 import type { PDFiumDocument, PDFiumLibrary, PDFiumPage } from '@hyzyla/pdfium'
 import type { PDFDict } from 'pdf-lib'
-import { arrowEnds, dashStyle, measureOf, nameOf, numbers } from './annotExtras'
+import { arrowEnds, dashStyle, measureOf, nameOf, numbers, linkTargetOf } from './annotExtras'
 import { pathBounds, type AnnotKind, type Pt } from './annotations'
 import type { Rect } from './textLogic'
 
@@ -167,6 +167,9 @@ export interface ImportedAnnot {
   /** PDF date strings. */
   created?: string
   modified?: string
+  /** Link target (kind 'link'). */
+  linkUri?: string
+  linkPage?: number
 }
 
 /** A reply or review-state change: a Text annotation with /IRT pointing at another annotation on the page. */
@@ -296,7 +299,9 @@ export function readPageAnnots(
         const dict = dicts?.[i]
         // Anything we cannot draw ourselves is still selectable, movable and commentable as a "foreign" annotation:
         // it keeps its own appearance. Popups, links and form fields are not comments.
-        let kind = ANNOT_KINDS[subtype] ?? (subtype === 2 || subtype === 16 || subtype === 20 ? undefined : 'foreign')
+        // Links are taken on when they go to a web address or a page here; others (files, scripts) are left alone.
+        const link = subtype === 2 ? linkTargetOf(dict) : undefined
+        let kind = link ? 'link' : (ANNOT_KINDS[subtype] ?? (subtype === 2 || subtype === 16 || subtype === 20 ? undefined : 'foreign'))
         if (!kind) continue
         if (m._FPDFAnnot_GetFlags(annot) & (FLAG_HIDDEN | FLAG_NO_VIEW)) continue
         // Measurements: editable when their /Measure can be read (pdf-lib); otherwise left to PDFium.
@@ -473,7 +478,9 @@ export function readPageAnnots(
           measure,
           author: readString(annot, keyT) || undefined,
           created: readString(annot, keyCreated) || undefined,
-          modified: readString(annot, keyM) || undefined
+          modified: readString(annot, keyM) || undefined,
+          linkUri: link?.uri,
+          linkPage: link?.page
         })
       } finally {
         m._FPDFPage_CloseAnnot(annot)

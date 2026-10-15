@@ -22,6 +22,8 @@ export function annotsFromImported(page: number, list: ImportedAnnot[], replies:
     stampInfo: r.stampInfo,
     opacity: r.opacity,
     fontFamily: r.fontFamily,
+    linkUri: r.linkUri,
+    linkPage: r.linkPage,
     author: r.author,
     created: r.created ? pdfDateToIso(r.created) : undefined,
     modified: r.modified ? pdfDateToIso(r.modified) : undefined,

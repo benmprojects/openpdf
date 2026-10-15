@@ -1,4 +1,24 @@
-import { Bookmark, Download, Eye, EyeOff, File as FileIcon, Layers, LayoutGrid, MessageSquare, Paperclip, type LucideIcon } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Bookmark,
+  BookmarkPlus,
+  Crosshair,
+  Download,
+  Eye,
+  EyeOff,
+  File as FileIcon,
+  IndentDecrease,
+  IndentIncrease,
+  Layers,
+  LayoutGrid,
+  MessageSquare,
+  Paperclip,
+  PencilLine,
+  Trash2,
+  type LucideIcon
+} from 'lucide-react'
+import { indentAt, insertAfter, moveAt, nodeAt, outdentAt, removeAt, updateAt, type BookmarkNode, type Path } from './outlineEdit'
 import type { Layer } from './layers'
 import { getPageClip, onPageClip } from './pageClipboard'
 import { useEffect, useRef, useState } from 'react'
@@ -43,6 +63,8 @@ interface Props {
   onToggleLayer: (key: string) => void
   /** The Comments tab, rendered by the document view. */
   comments: React.ReactNode
+  /** Saves an edited bookmark tree. */
+  onEditOutline?: (tree: BookmarkNode[]) => void
 }
 
 const TABS: [SidebarTab, string, LucideIcon][] = [
@@ -77,7 +99,7 @@ export function Sidebar(props: Props) {
           labels={labels}
         />
       ) : tab === 'bookmarks' ? (
-        <Bookmarks outline={outline} onGoTo={onGoTo} />
+        <Bookmarks outline={outline} onGoTo={onGoTo} currentPage={currentPage} onEdit={props.onEditOutline} />
       ) : tab === 'comments' ? (
         props.comments
       ) : tab === 'attachments' ? (
@@ -405,40 +427,187 @@ function Thumb({
   )
 }
 
-function Bookmarks({ outline, onGoTo }: { outline: OutlineNode[] | null; onGoTo: (p: number) => void }) {
-  if (outline === null) return <div className="side-empty">Loading…</div>
-  if (!outline.length) return <div className="side-empty">This document has no bookmarks.</div>
+function Bookmarks({
+  outline,
+  onGoTo,
+  currentPage,
+  onEdit
+}: {
+  outline: OutlineNode[] | null
+  onGoTo: (p: number) => void
+  currentPage: number
+  /** Saves an edited bookmark tree into the document. */
+  onEdit?: (tree: BookmarkNode[]) => void
+}) {
+  const [sel, setSel] = useState<Path | null>(null)
+  const [renaming, setRenaming] = useState<Path | null>(null)
+  // The edited tree, shown until the document has been rewritten and its outline read back the same.
+  const [pending, setPending] = useState<BookmarkNode[] | null>(null)
+  const settled = pending !== null && outline !== null && sameTree(pending, outline)
+  useEffect(() => {
+    if (settled) setPending(null)
+  }, [settled])
+  const tree: BookmarkNode[] | null = pending ?? outline
+  if (tree === null) return <div className="side-empty">Loading…</div>
+  const apply = (next: { tree: BookmarkNode[]; path: Path } | BookmarkNode[], path?: Path | null) => {
+    if (!onEdit) return
+    const t = Array.isArray(next) ? next : next.tree
+    setPending(t)
+    onEdit(t)
+    setSel(Array.isArray(next) ? (path ?? null) : next.path)
+  }
+  const node = sel ? nodeAt(tree, sel) : undefined
+  const add = () => {
+    const r = insertAfter(tree, sel ?? [], { title: 'New bookmark', page: currentPage, children: [] })
+    apply(r)
+    setRenaming(r.path)
+  }
+  const same = (p: Path | null, q: Path | null) => !!p && !!q && p.length === q.length && p.every((x, i) => x === q[i])
   return (
-    <div className="outline" role="tree">
-      {outline.map((n, i) => (
-        <OutlineItem key={i} node={n} depth={0} onGoTo={onGoTo} />
-      ))}
+    <div
+      className="outline-pane"
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (!sel || renaming || !onEdit) return
+        if (e.key === 'F2') {
+          e.preventDefault()
+          setRenaming(sel)
+        } else if (e.key === 'Delete') {
+          e.preventDefault()
+          apply(removeAt(tree, sel), null)
+        }
+      }}
+    >
+      {onEdit && (
+        <div className="outline-tools" role="toolbar" aria-label="Bookmark tools">
+          <button className="icon-btn" onClick={add} aria-label="Add bookmark" title="Add a bookmark to the current page">
+            <BookmarkPlus size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={() => sel && setRenaming(sel)} aria-label="Rename bookmark" title="Rename (F2)">
+            <PencilLine size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={() => sel && apply(updateAt(tree, sel, { page: currentPage }), sel)} aria-label="Set to current page" title="Point the bookmark at the current page">
+            <Crosshair size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={() => sel && apply(moveAt(tree, sel, -1))} aria-label="Move up" title="Move up">
+            <ArrowUp size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={() => sel && apply(moveAt(tree, sel, 1))} aria-label="Move down" title="Move down">
+            <ArrowDown size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={() => sel && apply(outdentAt(tree, sel))} aria-label="Outdent" title="Move out a level">
+            <IndentDecrease size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={() => sel && apply(indentAt(tree, sel))} aria-label="Indent" title="Move in a level (under the bookmark above)">
+            <IndentIncrease size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={() => sel && apply(removeAt(tree, sel), null)} aria-label="Delete bookmark" title="Delete (Delete)">
+            <Trash2 size={15} aria-hidden />
+          </button>
+        </div>
+      )}
+      {!tree.length ? (
+        <div className="side-empty">This document has no bookmarks.</div>
+      ) : (
+        <div className="outline" role="tree">
+          {tree.map((n, i) => (
+            <OutlineItem
+              key={i}
+              node={n}
+              path={[i]}
+              depth={0}
+              onGoTo={onGoTo}
+              selected={sel}
+              renaming={renaming}
+              same={same}
+              onSelect={setSel}
+              onRename={(p, title) => {
+                setRenaming(null)
+                if (title !== null && title.trim()) apply(updateAt(tree, p, { title: title.trim() }), p)
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
-function OutlineItem({ node, depth, onGoTo }: { node: OutlineNode; depth: number; onGoTo: (p: number) => void }) {
+function sameTree(a: BookmarkNode[], b: BookmarkNode[]): boolean {
+  return a.length === b.length && a.every((n, i) => n.title === b[i].title && n.page === b[i].page && sameTree(n.children, b[i].children))
+}
+
+function OutlineItem({
+  node,
+  path,
+  depth,
+  onGoTo,
+  selected,
+  renaming,
+  same,
+  onSelect,
+  onRename
+}: {
+  node: OutlineNode
+  path: Path
+  depth: number
+  onGoTo: (p: number) => void
+  selected: Path | null
+  renaming: Path | null
+  same: (p: Path | null, q: Path | null) => boolean
+  onSelect: (p: Path) => void
+  onRename: (p: Path, title: string | null) => void
+}) {
   const [open, setOpen] = useState(depth < 1)
   const hasKids = node.children.length > 0
+  const isSel = same(path, selected)
   return (
-    <div role="treeitem" aria-expanded={hasKids ? open : undefined}>
-      <div className="outline-row" style={{ paddingLeft: 6 + depth * 14 }}>
-        <button
-          className="twisty"
-          onClick={() => setOpen(!open)}
-          disabled={!hasKids}
-          aria-label={open ? 'Collapse' : 'Expand'}
-        >
+    <div role="treeitem" aria-expanded={hasKids ? open : undefined} aria-selected={isSel}>
+      <div className={isSel ? 'outline-row on' : 'outline-row'} style={{ paddingLeft: 6 + depth * 14 }}>
+        <button className="twisty" onClick={() => setOpen(!open)} disabled={!hasKids} aria-label={open ? 'Collapse' : 'Expand'}>
           {hasKids ? (open ? '▾' : '▸') : ''}
         </button>
-        <button className="outline-title" disabled={node.page < 0} onClick={() => onGoTo(node.page)} title={node.title}>
-          {node.title || '(untitled)'}
-        </button>
+        {same(path, renaming) ? (
+          <input
+            className="outline-rename"
+            aria-label="Bookmark title"
+            autoFocus
+            defaultValue={node.title}
+            onFocus={(e) => e.currentTarget.select()}
+            onBlur={(e) => onRename(path, e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+              if (e.key === 'Escape') onRename(path, null)
+            }}
+          />
+        ) : (
+          <button
+            className="outline-title"
+            onClick={() => {
+              onSelect(path)
+              if (node.page >= 0) onGoTo(node.page)
+            }}
+            title={node.title}
+          >
+            {node.title || '(untitled)'}
+          </button>
+        )}
       </div>
       {hasKids && open && (
         <div role="group">
           {node.children.map((c, i) => (
-            <OutlineItem key={i} node={c} depth={depth + 1} onGoTo={onGoTo} />
+            <OutlineItem
+              key={i}
+              node={c}
+              path={[...path, i]}
+              depth={depth + 1}
+              onGoTo={onGoTo}
+              selected={selected}
+              renaming={renaming}
+              same={same}
+              onSelect={onSelect}
+              onRename={onRename}
+            />
           ))}
         </div>
       )}

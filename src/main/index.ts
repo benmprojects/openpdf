@@ -269,6 +269,8 @@ ipcMain.handle('window:fullscreen', (e, on: boolean) => {
 ipcMain.handle('clipboard:write-image', async (_e, png: Uint8Array) => {
   const sig = [0x89, 0x50, 0x4e, 0x47]
   if (!sig.every((b, i) => png[i] === b)) throw new Error('Not a PNG image')
+  // Tests read the image from a file: other programs on the machine can take the system clipboard.
+  if (e2e && process.env.OPENPDF_E2E_CLIP) return writeFile(process.env.OPENPDF_E2E_CLIP, png)
   await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })])
 })
 

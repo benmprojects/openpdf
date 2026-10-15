@@ -39,6 +39,8 @@ interface Props {
   rotation: Rotation
   onEdit: (id: number | null) => void
   onText: (id: number, text: string) => void
+  /** The Link tool is on: links are shown and can be picked, moved, resized and edited (double-click). */
+  linkMode?: boolean
 }
 
 export function AnnotLayer({
@@ -56,12 +58,13 @@ export function AnnotLayer({
   pageSize,
   rotation,
   onEdit,
-  onText
+  onText,
+  linkMode = false
 }: Props) {
   const [gesture, setGesture] = useState<Gesture | null>(null)
 
   const begin = (e: React.MouseEvent, a: Annot, kind: Gesture['kind'], index?: number) => {
-    if (e.button !== 0 || !interactive) return
+    if (e.button !== 0 || !(interactive || (linkMode && a.kind === 'link'))) return
     e.stopPropagation()
     e.preventDefault()
     onSelect(a.id)
@@ -237,17 +240,21 @@ export function AnnotLayer({
         }
 
         if (a.kind === 'link') {
+          // Links already in the file stay out of sight unless the Link tool is on.
+          if (a.origin !== undefined && !linkMode && !selected) return null
+          const live = interactive || linkMode
           return (
             <div
               key={a.id}
-              className={`annot-link${selected ? ' selected' : ''}${interactive ? ' interactive' : ''}`}
+              className={`annot-link${selected ? ' selected' : ''}${live ? ' interactive' : ''}`}
               role="button"
               aria-label={`Link to ${a.linkUri ?? `page ${(a.linkPage ?? 0) + 1}`}`}
               title={a.linkUri ?? `Page ${(a.linkPage ?? 0) + 1}`}
               style={{ left: x * zoom, top: y * zoom, width: w * zoom, height: h * zoom }}
               onMouseDown={(e) => begin(e, a, 'move')}
+              onDoubleClick={() => live && onEdit(a.id)}
             >
-              {selected && interactive && <div className="resize-handle" onMouseDown={(e) => begin(e, a, 'resize')} aria-label="Resize link" />}
+              {selected && live && <div className="resize-handle" onMouseDown={(e) => begin(e, a, 'resize')} aria-label="Resize link" />}
             </div>
           )
         }

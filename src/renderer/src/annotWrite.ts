@@ -375,7 +375,8 @@ export async function writeAnnotations(
       }
     } else if (a.kind === 'link') {
       // No appearance: viewers show links as the page content under them.
-      dict = { Type: 'Annot', Subtype: 'Link', Rect: bounds, Border: [0, 0, 0], F: 4, M: now }
+      // A link already in the file keeps its own border and flags; only the box and target change.
+      dict = a.origin ? { Rect: bounds, M: now } : { Type: 'Annot', Subtype: 'Link', Rect: bounds, Border: [0, 0, 0], F: 4, M: now }
       if (a.linkPage !== undefined && a.linkPage >= 0 && a.linkPage < pdf.getPageCount()) dict.Dest = [pdf.getPage(a.linkPage).ref, 'XYZ', null, null, null]
       else dict.A = { S: 'URI', URI: PDFString.of(a.linkUri ?? '') }
     } else if (a.kind === 'foreign') {
@@ -684,6 +685,8 @@ export async function writeAnnotations(
       const existing = findExisting(page, a.origin)
       if (existing) {
         const fresh = ctx.obj(dict as never) as unknown as PDFDict
+        // A link's target is either /A or /Dest: drop the old one so the new one is the only target.
+        if (a.kind === 'link') for (const k of ['A', 'Dest']) existing.dict.delete(PDFName.of(k))
         for (const [key, value] of fresh.entries()) existing.dict.set(key, value)
         const list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
         const ref = list?.get(existing.index)

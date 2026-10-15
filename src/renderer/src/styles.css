@@ -1615,6 +1615,36 @@ button.compare-item:hover {
   flex-direction: column;
   gap: 8px;
 }
+.labels-table {
+  border-collapse: collapse;
+}
+.labels-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 6px 4px 0;
+}
+.labels-table td {
+  padding: 2px 6px 2px 0;
+}
+.labels-table input,
+.labels-table select {
+  min-height: 28px;
+  padding: 3px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.labels-table input[type='number'] {
+  width: 5em;
+}
+.labels-table input:not([type='number']) {
+  width: 8em;
+}
+.error-text {
+  color: var(--danger-text);
+}
 .marks-actions {
   display: flex;
   justify-content: flex-end;
@@ -2101,6 +2131,41 @@ button.compare-item:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.outline-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  outline: none;
+}
+.outline-pane .outline {
+  flex: 1;
+  overflow: auto;
+}
+.outline-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.outline-tools .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+.outline-row.on .outline-title {
+  background: var(--pressed);
+  border-radius: 4px;
+}
+.outline-rename {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  padding: 1px 6px;
+  background: var(--panel);
+  border: 1px solid var(--focus);
+  border-radius: 4px;
 }
 .side-empty {
   padding: 20px 16px;

@@ -1319,6 +1319,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
           onReshape={annotProps.onReshapeAnnot}
           zoom={zoom}
           interactive={annotProps.tool === 'select'}
+          linkMode={annotProps.tool === 'link'}
           selectedId={annotProps.selectedAnnot}
           editingId={annotProps.editingAnnot}
           touched={annotProps.touchedAnnots}

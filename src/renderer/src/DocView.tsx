@@ -62,6 +62,8 @@ import { Presentation } from './Presentation'
 import { annotsFromImported } from './importMap'
 import { addBackground, addHeaderFooter, addWatermark, cropPages, marksPresent, removeMarks, resizePages, uncropPages, type MarkKind } from './pageMarks'
 import { PageMarksDialog, type MarksMode, type MarksRequest } from './PageMarksDialog'
+import { readLabelRanges, writeLabelRanges, writeOutline, type BookmarkNode, type LabelRange } from './outlineEdit'
+import { PageLabelsDialog } from './PageLabelsDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
 import { ComparePanel } from './ComparePanel'
 import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
@@ -91,6 +93,7 @@ import {
   FileOutput,
   FilePlus2,
   Files,
+  Tags,
   FolderOpen,
   Hand,
   Highlighter,
@@ -370,6 +373,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
   }
   const [pageLabels, setPageLabels] = useState<string[] | null>(null)
+  const [labelRanges, setLabelRanges] = useState<LabelRange[] | null>(null)
+  const openPageLabels = async () => {
+    try {
+      setLabelRanges(await readLabelRanges(bytes))
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not read the page labels: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
 
   useEffect(() => {
     const c = new PdfClient()
@@ -839,8 +850,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     [history.commit, touch]
   )
 
+  const [linkDraft, setLinkDraft] = useState<{ page: number; rect: { x: number; y: number; w: number; h: number }; to: 'uri' | 'page'; uri: string; page1: string; id?: number } | null>(null)
   const editAnnot = useCallback(
     (id: number | null) => {
+      const link = id === null ? undefined : annotsRef.current.find((a) => a.id === id && a.kind === 'link')
+      if (link) {
+        setLinkDraft({
+          id: link.id,
+          page: link.page,
+          rect: link.rects[0],
+          to: link.linkUri !== undefined ? 'uri' : 'page',
+          uri: link.linkUri ?? 'https://',
+          page1: String((link.linkPage ?? 0) + 1)
+        })
+        return
+      }
       if (id !== null) touch(id)
       setEditingAnnot(id)
     },
@@ -1070,6 +1094,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     [busy, saving, password, annotsDirty, bytes, annots, deleted, swapBytes] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
+  // Bookmark edits come quicker than the document reloads: keep the latest tree and write it when free.
+  const outlineWant = useRef<BookmarkNode[] | null>(null)
+  const [outlineTick, setOutlineTick] = useState(0)
+  const editOutline = useCallback((tree: BookmarkNode[]) => {
+    outlineWant.current = tree
+    setOutlineTick((t) => t + 1)
+  }, [])
+  useEffect(() => {
+    const t = outlineWant.current
+    if (!t || busy || saving) return
+    outlineWant.current = null
+    void applyPageEdit((b) => writeOutline(b, t), 'Bookmarks updated')
+  }, [outlineTick, busy, saving, applyPageEdit])
+
   const undoPageEdit = useCallback(() => {
     const prev = pageUndo[pageUndo.length - 1]
     if (!prev || busy) return
@@ -1289,7 +1327,6 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   useEffect(() => onPageClip(() => setHasPageClip(getPageClip() !== null)), [])
 
   // ---- Links ----------------------------------------------------------------------------------------
-  const [linkDraft, setLinkDraft] = useState<{ page: number; rect: { x: number; y: number; w: number; h: number }; to: 'uri' | 'page'; uri: string; page1: string } | null>(null)
   const finishLink = () => {
     const d = linkDraft
     if (!d) return
@@ -1302,11 +1339,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setNotice({ kind: 'error', text: 'Enter a web address starting with https:// (or a mailto: address).' })
       return
     }
+    setLinkDraft(null)
+    if (d.id !== undefined) {
+      const id = d.id
+      touch(id)
+      history.commit((list) => list.map((x) => (x.id === id ? { ...x, linkPage: d.to === 'page' ? target : undefined, linkUri: d.to === 'uri' ? d.uri.trim() : undefined } : x)))
+      return
+    }
     const a = newAnnot('link', d.page, [d.rect])
     if (d.to === 'page') a.linkPage = target
     else a.linkUri = d.uri.trim()
     history.commit((list) => [...list, a])
-    setLinkDraft(null)
     setTool('select')
   }
 
@@ -1993,6 +2036,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Files} label="Merge" onClick={mergeFiles} disabled={!pages.length || busy} title="Merge: add the pages of other PDFs to the end" />
                 <RB big icon={Scissors} label="Split" onClick={() => void runPageOp({ kind: 'split' }, opPages)} disabled={!pages.length || busy} title="Split into files of a set number of pages" />
               </RGroup>
+              <RGroup label="Numbering">
+                <RB big icon={Tags} label="Page labels" onClick={() => void openPageLabels()} disabled={!pages.length || busy || !!password} title="Set the page numbers readers show (i, ii, 1, 2 …)" />
+              </RGroup>
               <RGroup label="Edit">
                 <RStack>{undoButtons}</RStack>
               </RGroup>
@@ -2202,6 +2248,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         />
       )}
 
+      {labelRanges && (
+        <PageLabelsDialog
+          initial={labelRanges}
+          pageCount={pages.length}
+          currentPage={currentPage}
+          onClose={() => setLabelRanges(null)}
+          onApply={(r) => {
+            setLabelRanges(null)
+            void applyPageEdit((b) => writeLabelRanges(b, r), r.length ? 'Page labels updated' : 'Page labels removed')
+          }}
+        />
+      )}
+
       {linkDraft && (
         <form
           className="page-dialog"
@@ -2221,7 +2280,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           </label>
           <input aria-label="Target page" className="copies" value={linkDraft.page1} disabled={linkDraft.to !== 'page'} onChange={(e) => setLinkDraft({ ...linkDraft, page1: e.target.value })} />
           <button className="primary" type="submit">
-            Add link
+            {linkDraft.id !== undefined ? 'Save link' : 'Add link'}
           </button>
           <button type="button" onClick={() => setLinkDraft(null)}>
             Cancel
@@ -2458,6 +2517,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 layers={layers}
                 isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
                 onToggleLayer={toggleLayer}
+                onEditOutline={password ? undefined : editOutline}
                 comments={
                   <CommentsPane
                     annots={commentAnnots}
