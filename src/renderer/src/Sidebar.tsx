@@ -1,3 +1,4 @@
+import { Bookmark, LayoutGrid } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { OutlineNode, PageSize, PdfClient } from './pdfClient'
 
@@ -34,9 +35,11 @@ export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoT
     <aside className="sidebar" style={{ width }}>
       <div className="sidebar-tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'pages'} onClick={() => onTab('pages')}>
+          <LayoutGrid size={14} strokeWidth={1.8} aria-hidden />
           Pages
         </button>
         <button role="tab" aria-selected={tab === 'bookmarks'} onClick={() => onTab('bookmarks')}>
+          <Bookmark size={14} strokeWidth={1.8} aria-hidden />
           Bookmarks
         </button>
       </div>

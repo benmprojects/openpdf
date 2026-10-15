@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme } from 'electron'
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -40,11 +40,20 @@ app.on('second-instance', async (_e, argv, cwd) => {
   if (ok.length) win.webContents.send('file:open-files', ok)
 })
 
+/** Matches the tab strip's background (--panel-2) and text colours in styles.css. */
+function titleBarColours() {
+  const dark = nativeTheme.shouldUseDarkColors
+  return { color: dark ? '#1d1f22' : '#f3f4f7', symbolColor: dark ? '#e6e8eb' : '#1c2027', height: 38 }
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1f22' : '#e8eaed',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#17181b' : '#e9ebef',
+    // The document tab strip doubles as the title bar; Windows draws its own buttons over the right-hand end.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: titleBarColours(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -70,6 +79,11 @@ function createWindow(): void {
     }
   })
   mainWindow = win
+  const retint = () => {
+    if (!win.isDestroyed()) win.setTitleBarOverlay(titleBarColours())
+  }
+  nativeTheme.on('updated', retint)
+  win.on('closed', () => nativeTheme.off('updated', retint))
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })
@@ -261,6 +275,7 @@ ipcMain.handle('file:initial', async () => {
 
 app.whenReady().then(async () => {
   await loadSettings() // applies the theme before the window paints
+  Menu.setApplicationMenu(null) // the ribbon replaces Electron's default File/Edit/View/Window menu
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

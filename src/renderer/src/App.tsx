@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RecoveryEntry, Settings } from '../../preload'
+import { CircleHelp, FileText, FolderOpen, History, Plus, Settings2, X } from 'lucide-react'
 import { SettingsDialog, ShortcutsDialog } from './AppDialogs'
+import { Logo } from './Logo'
+import { IconButton } from './Ribbon'
 import { DocView, type DocMeta } from './DocView'
 
 interface Tab {
@@ -50,8 +53,11 @@ function RecentList({
         return (
           <li key={p} role="none">
             <button role="menuitem" onClick={() => onOpen(p)} title={p}>
-              <span className="recent-name">{p.slice(cut + 1)}</span>
-              <span className="recent-dir">{p.slice(0, cut)}</span>
+              <FileText className="recent-icon" size={18} strokeWidth={1.6} aria-hidden />
+              <span className="recent-text">
+                <span className="recent-name">{p.slice(cut + 1)}</span>
+                <span className="recent-dir">{p.slice(0, cut)}</span>
+              </span>
             </button>
           </li>
         )
@@ -241,41 +247,39 @@ export function App() {
       }}
       onDrop={onDrop}
     >
-      <div className="tabstrip" role="tablist" aria-label="Open documents">
-        {tabs.map((t) => (
-          <div
-            key={t.id}
-            className={t.id === activeId ? 'tab active' : 'tab'}
-            role="tab"
-            aria-selected={t.id === activeId}
-            title={t.path ?? t.name}
-            onClick={() => setActiveId(t.id)}
-            onAuxClick={(e) => e.button === 1 && close(t.id)}
-          >
-            <span className="tab-name">
-              {t.dirty && (
-                <span className="tab-dirty" title="Unsaved changes" aria-label="Unsaved changes">
-                  •{' '}
-                </span>
-              )}
-              {t.name}
-            </span>
-            <button
-              className="tab-close"
-              aria-label={`Close ${t.name}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                close(t.id)
-              }}
+      <div className="tabstrip">
+        <div className="brand" aria-hidden>
+          <Logo size={18} />
+        </div>
+        <div className="tabs" role="tablist" aria-label="Open documents">
+          {tabs.map((t) => (
+            <div
+              key={t.id}
+              className={t.id === activeId ? 'tab active' : 'tab'}
+              role="tab"
+              aria-selected={t.id === activeId}
+              title={t.path ?? t.name}
+              onClick={() => setActiveId(t.id)}
+              onAuxClick={(e) => e.button === 1 && close(t.id)}
             >
-              ✕
-            </button>
-          </div>
-        ))}
-        <button className="tab-new" onClick={open} title="Open (Ctrl+O)" aria-label="Open file">
-          +
-        </button>
-        <span className="tabstrip-fill" />
+              <FileText className="tab-icon" size={14} strokeWidth={1.8} aria-hidden />
+              <span className="tab-name">{t.name}</span>
+              {t.dirty && <span className="tab-dirty" title="Unsaved changes" aria-label="Unsaved changes" />}
+              <button
+                className="tab-close"
+                aria-label={`Close ${t.name}`}
+                title="Close (Ctrl+W)"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  close(t.id)
+                }}
+              >
+                <X size={13} strokeWidth={2} aria-hidden />
+              </button>
+            </div>
+          ))}
+          <IconButton icon={Plus} className="tab-new" label="Open file" title="Open (Ctrl+O)" onClick={open} />
+        </div>
         <div className="menu-anchor">
           <button
             className="strip-btn"
@@ -284,18 +288,15 @@ export function App() {
             aria-expanded={recentOpen}
             title="Recent files"
           >
-            Recent ▾
+            <History size={15} strokeWidth={1.8} aria-hidden />
+            <span>Recent</span>
           </button>
           {recentOpen && settings && (
             <RecentList paths={settings.recent} onOpen={openRecent} onDismiss={() => setRecentOpen(false)} floating />
           )}
         </div>
-        <button className="strip-btn" onClick={() => setDialog('settings')} disabled={!settings} title="Settings" aria-label="Settings">
-          ⚙
-        </button>
-        <button className="strip-btn" onClick={() => setDialog('shortcuts')} title="Keyboard shortcuts (F1)" aria-label="Keyboard shortcuts">
-          ?
-        </button>
+        <IconButton icon={Settings2} className="strip-btn" label="Settings" onClick={() => setDialog('settings')} disabled={!settings} />
+        <IconButton icon={CircleHelp} className="strip-btn" label="Keyboard shortcuts" title="Keyboard shortcuts (F1)" onClick={() => setDialog('shortcuts')} />
       </div>
       {recovery.length > 0 && (
         <div className="recovery-bar" role="alert">
@@ -334,12 +335,22 @@ export function App() {
           />
         ))}
         {!tabs.length && (
-          <div className="empty">
-            <div>
-              <p>Open a PDF, or drop one here.</p>
-              <button className="primary" onClick={open}>
-                Open…
-              </button>
+          <div className="empty welcome">
+            <div className="welcome-card">
+              <div className="welcome-head">
+                <Logo size={44} />
+                <div>
+                  <h1>OpenPDF</h1>
+                  <p className="muted">Open, read, mark up and organise PDF documents.</p>
+                </div>
+              </div>
+              <div className="welcome-actions">
+                <button className="primary big" onClick={open}>
+                  <FolderOpen size={18} strokeWidth={1.8} aria-hidden />
+                  Open a PDF…
+                </button>
+                <span className="muted small">or drag files onto this window · Ctrl+O</span>
+              </div>
               {!!settings?.recent.length && (
                 <>
                   <h3>Recent files</h3>
