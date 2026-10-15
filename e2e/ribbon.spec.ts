@@ -28,7 +28,8 @@ test('ribbon tabs show their groups and the Organise tab edits the selected page
     const groups: Record<string, string[]> = {
       File: ['Document', 'Output'],
       Home: ['Tools', 'Edit', 'Find', 'Document'],
-      Comment: ['Text markup', 'Notes', 'Drawing', 'Stamp', 'Edit'],
+      Comment: ['Text markup', 'Notes', 'Stamp', 'Edit'],
+      Draw: ['Drawing', 'Edit'],
       Organise: ['Insert and extract', 'Documents', 'Edit'],
       View: ['Panes', 'Zoom', 'Rotate view']
     }

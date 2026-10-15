@@ -70,6 +70,9 @@ export type Tool =
   | 'measure-perimeter'
   | 'measure-area'
   | 'calibrate'
+  | 'polygon'
+  | 'polyline'
+  | 'cloud'
 
 export interface DrawStyle {
   color: string
@@ -198,11 +201,35 @@ export function Viewer({
   const [sel, setSel] = useState<Selection | null>(null)
   const [draft, setDraft] = useState<Annot | null>(null)
   /** The measurement being drawn. */
-  const [measureDraft, setMeasureDraft] = useState<{ kind: MeasureKind | 'calibrate'; page: number; points: Pt[]; cursor: Pt | null } | null>(null)
+  const [measureDraft, setMeasureDraft] = useState<{
+    kind: MeasureKind | 'calibrate' | 'polygon' | 'polyline' | 'cloud'
+    page: number
+    points: Pt[]
+    cursor: Pt | null
+  } | null>(null)
   const measureDraftRef = useRef(measureDraft)
   measureDraftRef.current = measureDraft
-  const measureKind: MeasureKind | 'calibrate' | null =
-    tool === 'measure-distance' ? 'distance' : tool === 'measure-perimeter' ? 'perimeter' : tool === 'measure-area' ? 'area' : tool === 'calibrate' ? 'calibrate' : null
+  // Measuring and the polygon, polyline and cloud tools all place points with clicks.
+  const measureKind: MeasureKind | 'calibrate' | 'polygon' | 'polyline' | 'cloud' | null =
+    tool === 'measure-distance'
+      ? 'distance'
+      : tool === 'measure-perimeter'
+        ? 'perimeter'
+        : tool === 'measure-area'
+          ? 'area'
+          : tool === 'calibrate' || tool === 'polygon' || tool === 'polyline' || tool === 'cloud'
+            ? tool
+            : null
+  /** Finishes a click-placed path: a measurement, or a polygon, polyline or cloud annotation. */
+  const finishPoints = useCallback(
+    (kind: NonNullable<typeof measureKind>, page: number, points: Pt[]) => {
+      if (kind === 'polygon' || kind === 'polyline' || kind === 'cloud') {
+        const style = drawStyleRef.current
+        onCreateShape(withBounds({ id: -1, page, kind, color: style.color, rects: [], text: '', fontSize: 12, lineWidth: style.lineWidth, points: [points] }))
+      } else onMeasure(kind, page, points)
+    },
+    [onCreateShape, onMeasure]
+  )
   useEffect(() => setMeasureDraft(null), [measureKind])
   /** The marquee zoom rectangle, in screen pixels. */
   const [band, setBand] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
@@ -379,9 +406,9 @@ export function Viewer({
         ev.preventDefault()
         ev.stopImmediatePropagation()
         setMeasureDraft(d.points.length > 1 ? { ...d, points: d.points.slice(0, -1) } : null)
-      } else if (ev.key === 'Enter' && (d.kind === 'perimeter' || d.kind === 'area')) {
+      } else if (ev.key === 'Enter' && d.kind !== 'distance' && d.kind !== 'calibrate') {
         ev.preventDefault()
-        if (d.points.length >= (d.kind === 'area' ? 3 : 2)) onMeasure(d.kind, d.page, d.points)
+        if (d.points.length >= (d.kind === 'perimeter' || d.kind === 'polyline' ? 2 : 3)) finishPoints(d.kind, d.page, d.points)
         setMeasureDraft(null)
       }
     }
@@ -391,7 +418,7 @@ export function Viewer({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('keydown', onKey, true)
     }
-  }, [drafting, pages, pointOnPage, onMeasure, snapPt])
+  }, [drafting, pages, pointOnPage, finishPoints, snapPt])
 
   // ---- Rulers and guides ----------------------------------------------------------------------------
   // Rulers measure from the top left corner of the current page as displayed.
@@ -562,15 +589,15 @@ export function Viewer({
         const twoPoint = measureKind === 'distance' || measureKind === 'calibrate'
         // A double click ends a perimeter or area (its second click already added the point).
         if (e.detail >= 2 && d && !twoPoint) {
-          const need = measureKind === 'area' ? 3 : 2
-          if (d.points.length >= need) onMeasure(measureKind, page, d.points)
+          const need = measureKind === 'area' || measureKind === 'polygon' || measureKind === 'cloud' ? 3 : 2
+          if (d.points.length >= need) finishPoints(measureKind, page, d.points)
           setMeasureDraft(null)
           return
         }
         const points = [...(d?.points ?? []), p]
         if (twoPoint && points.length === 2) {
           setMeasureDraft(null)
-          onMeasure(measureKind, page, points)
+          finishPoints(measureKind, page, points)
           return
         }
         setMeasureDraft({ kind: measureKind, page, points, cursor: null })
@@ -800,7 +827,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, onMeasure, snapPt, onEditAnnot]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot]
   )
 
   const ordered = useMemo(() => {
@@ -921,7 +948,19 @@ export function Viewer({
                 annots={annotsByPage.get(i)}
                 draft={draft && draft.page === i ? draft : undefined}
                 measures={measuresByPage.get(i)}
-                measureDraft={measureDraft && measureDraft.page === i ? measureDraft : undefined}
+                measureDraft={
+                  measureDraft && measureDraft.page === i
+                    ? {
+                        ...measureDraft,
+                        kind:
+                          measureDraft.kind === 'polygon' || measureDraft.kind === 'cloud'
+                            ? 'area'
+                            : measureDraft.kind === 'polyline'
+                              ? 'perimeter'
+                              : measureDraft.kind
+                      }
+                    : undefined
+                }
                 measureLabel={measureLabel}
                 grid={aids.grid}
                 guides={shownGuides}

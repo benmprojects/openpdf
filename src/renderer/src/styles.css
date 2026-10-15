@@ -570,10 +570,15 @@ kbd {
   flex-wrap: wrap;
   height: 96px;
   padding: 4px 6px 2px;
-  overflow: hidden;
+  /* Narrow windows scroll the ribbon sideways rather than cutting groups off. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
   border-top: 1px solid var(--border);
 }
 .rgroup {
+  flex: none;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -672,14 +677,23 @@ kbd {
 }
 .rselect {
   align-self: center;
-  max-width: 150px;
+  max-width: 132px;
 }
 .rstyle {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   padding: 0 4px;
+}
+.rstyle-row {
+  display: flex;
+  gap: 4px;
+}
+.rstyle-row .rselect {
+  min-height: 24px;
+  padding: 1px 4px;
+  font-size: 12px;
 }
 .swatches {
   display: flex;
@@ -693,6 +707,14 @@ kbd {
   border-radius: 50%;
   box-shadow: 0 0 0 1px var(--border-strong);
   cursor: pointer;
+}
+.swatch.none {
+  background: linear-gradient(135deg, transparent 45%, #d1242f 45%, #d1242f 55%, transparent 55%), var(--panel);
+}
+.swatches.fill .swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
 }
 .swatch.on {
   box-shadow: 0 0 0 2px var(--text);

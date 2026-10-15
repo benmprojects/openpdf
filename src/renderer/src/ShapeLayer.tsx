@@ -1,4 +1,4 @@
-import { arrowHeadPoints, translated, withBounds, type Annot } from './annotations'
+import { arrowHeadPoints, cloudCurves, dashArray, isVertexKind, translated, withBounds, type Annot } from './annotations'
 
 export type Gesture = { id: number; kind: 'move' | 'resize' | 'reshape'; dx: number; dy: number; index?: number }
 
@@ -51,7 +51,9 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
     const a = displayed(orig, gesture, zoom)
     const ghost = orig.origin !== undefined && !touched.has(orig.id)
     const col = ghost ? 'transparent' : a.color
+    const fillCol = ghost || !a.fill ? 'none' : a.fill
     const lw = a.lineWidth
+    const dash = dashArray(a.dash, lw)?.join(' ')
     const r = a.rects[0]
     const selected = orig.id === selectedId
     const down = (e: React.MouseEvent) => begin(e, orig, 'move')
@@ -63,7 +65,7 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
       const [l, tip, rr] = arrowHeadPoints(p0, p1, lw)
       body = (
         <>
-          <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={col} strokeWidth={lw} strokeLinecap="round" />
+          <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={col} strokeWidth={lw} strokeLinecap="round" strokeDasharray={dash} />
           {a.kind === 'arrow' && (
             <polyline
               points={`${l.x},${l.y} ${tip.x},${tip.y} ${rr.x},${rr.y}`}
@@ -90,6 +92,33 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
           )
         )
       }
+    } else if (isVertexKind(a.kind)) {
+      const pts = a.points![0]
+      let d: string
+      if (a.kind === 'cloud') {
+        const { start, curves } = cloudCurves(pts, lw)
+        d = `M${start.x} ${start.y} ` + curves.map(([c1, c2, p]) => `C${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p.x} ${p.y}`).join(' ') + ' Z'
+      } else d = pts.map((p, k) => `${k ? 'L' : 'M'}${p.x} ${p.y}`).join(' ') + (a.kind === 'polygon' ? ' Z' : '')
+      const closed = a.kind !== 'polyline'
+      body = (
+        <>
+          <path d={d} fill={closed ? fillCol : 'none'} stroke={col} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={dash} />
+          <path d={d} fill={closed ? 'transparent' : 'none'} stroke="transparent" strokeWidth={fat(lw)} pointerEvents={interactive ? (closed ? 'all' : 'stroke') : 'none'} style={cursor} onMouseDown={down} />
+        </>
+      )
+      if (selected && interactive) {
+        pts.forEach((p, index) =>
+          handles.push(
+            <div
+              key={`${orig.id}-v${index}`}
+              className="point-handle"
+              style={{ left: p.x * zoom - 5, top: p.y * zoom - 5 }}
+              onMouseDown={(e) => begin(e, orig, 'reshape', index)}
+              aria-label={`Move corner ${index + 1}`}
+            />
+          )
+        )
+      }
     } else if (a.kind === 'ink') {
       body = (
         <>
@@ -110,14 +139,14 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
       const h = Math.max(1, r.h - lw)
       const shape = (props: React.SVGProps<SVGElement>) =>
         a.kind === 'rectangle' ? (
-          <rect x={r.x + inset} y={r.y + inset} width={w} height={h} fill="none" {...(props as object)} />
+          <rect x={r.x + inset} y={r.y + inset} width={w} height={h} {...(props as object)} />
         ) : (
-          <ellipse cx={r.x + r.w / 2} cy={r.y + r.h / 2} rx={w / 2} ry={h / 2} fill="none" {...(props as object)} />
+          <ellipse cx={r.x + r.w / 2} cy={r.y + r.h / 2} rx={w / 2} ry={h / 2} {...(props as object)} />
         )
       body = (
         <>
-          {shape({ stroke: col, strokeWidth: lw })}
-          {shape({ stroke: 'transparent', strokeWidth: fat(lw), pointerEvents: hit, style: cursor, onMouseDown: down } as never)}
+          {shape({ stroke: col, strokeWidth: lw, fill: fillCol, strokeDasharray: dash, strokeLinecap: 'round' } as never)}
+          {shape({ stroke: 'transparent', fill: a.fill ? 'transparent' : 'none', strokeWidth: fat(lw), pointerEvents: interactive ? (a.fill ? 'all' : 'stroke') : 'none', style: cursor, onMouseDown: down } as never)}
         </>
       )
     } else if (a.kind === 'stamp') {

@@ -33,6 +33,9 @@ const SUBTYPES: Record<string, string> = {
   rectangle: 'Square',
   ellipse: 'Circle',
   ink: 'Ink',
+  polygon: 'Polygon',
+  polyline: 'PolyLine',
+  cloud: 'Polygon',
   stamp: 'Stamp'
 }
 
@@ -68,7 +71,10 @@ describe('writeAnnotations', () => {
     annot('squiggly', { rects: [{ x: 50, y: 500, w: 100, h: 12 }] }),
     annot('caret', { rects: [{ x: 300, y: 500, w: 8, h: 10 }], text: 'insert me' }),
     annot('typewriter', { rects: [{ x: 50, y: 700, w: 20, h: 16 }], text: 'Typed on the page' }),
-    annot('callout', { rects: [{ x: 300, y: 650, w: 160, h: 40 }], points: [[{ x: 250, y: 720 }]], text: 'Look here' })
+    annot('callout', { rects: [{ x: 300, y: 650, w: 160, h: 40 }], points: [[{ x: 250, y: 720 }]], text: 'Look here' }),
+    annot('polygon', { points: [[{ x: 50, y: 750 }, { x: 120, y: 760 }, { x: 90, y: 800 }]], fill: '#fff4c2', dash: 'dashed' }),
+    annot('polyline', { points: [[{ x: 150, y: 750 }, { x: 200, y: 790 }, { x: 240, y: 760 }]] }),
+    annot('cloud', { points: [[{ x: 400, y: 740 }, { x: 520, y: 740 }, { x: 520, y: 800 }, { x: 400, y: 800 }]] })
   ]
 
   it('writes one annotation of each kind and the result reloads', async () => {
@@ -124,5 +130,20 @@ describe('writeAnnotations', () => {
     expect(width).toBeGreaterThan(60)
     expect(co.lookup(PDFName.of('CL'), PDFArray).size()).toBe(4)
     expect(co.lookup(PDFName.of('RD'), PDFArray).size()).toBe(4)
+  })
+
+  it('writes vertices, fill, dash and the cloud border effect', async () => {
+    const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), all))
+    const list = annotsOf(doc)
+    const polys = list.filter((d) => subtype(d) === 'Polygon')
+    expect(polys).toHaveLength(2)
+    const [poly, cloud] = polys
+    expect(poly.lookup(PDFName.of('Vertices'), PDFArray).size()).toBe(6)
+    expect(poly.lookup(PDFName.of('IC'), PDFArray).size()).toBe(3)
+    const bs = poly.lookup(PDFName.of('BS'), PDFDict)
+    expect(bs.lookupMaybe(PDFName.of('S'), PDFName)?.decodeText()).toBe('D')
+    expect(bs.lookup(PDFName.of('D'), PDFArray).size()).toBe(2)
+    expect(cloud.lookup(PDFName.of('BE'), PDFDict).lookupMaybe(PDFName.of('S'), PDFName)?.decodeText()).toBe('C')
+    expect(list.find((d) => subtype(d) === 'PolyLine')!.lookup(PDFName.of('Vertices'), PDFArray).size()).toBe(6)
   })
 })

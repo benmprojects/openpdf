@@ -24,6 +24,8 @@ import {
 import {
   arrowHeadPoints,
   calloutAttach,
+  cloudCurves,
+  dashArray,
   caretRectAfter,
   hexToRgb,
   squigglePoints,
@@ -89,7 +91,21 @@ function userBounds(f: Frame, rects: Rect[]): [number, number, number, number] {
 const n = (v: number) => (Math.round(v * 1000) / 1000).toString()
 const rgb = (hex: string) => hexToRgb(hex).map(n).join(' ')
 const cm = (f: Frame) => `${f.m.map(n).join(' ')} cm`
-const stroke = (a: Annot) => `${rgb(a.color)} RG ${n(a.lineWidth)} w 1 J 1 j`
+const stroke = (a: Annot) => {
+  const d = dashArray(a.dash, a.lineWidth)
+  return `${rgb(a.color)} RG ${n(a.lineWidth)} w 1 J 1 j${d ? ` [${d.map(n).join(' ')}] 0 d` : ''}`
+}
+/** Fill colour operator and the path-painting operator: fill and stroke, or stroke only. */
+const paint = (a: Annot) => (a.fill ? { pre: `${rgb(a.fill)} rg `, op: 'B' } : { pre: '', op: 'S' })
+/** /BS with the line style, and /IC for the fill, shared by the shape kinds. */
+const border = (a: Annot): Record<string, Lit> => {
+  const d = dashArray(a.dash, a.lineWidth)
+  return {
+    BS: d ? { W: a.lineWidth, S: 'D', D: d } : { W: a.lineWidth },
+    Border: [0, 0, a.lineWidth],
+    ...(a.fill ? { IC: hexToRgb(a.fill) } : {})
+  }
+}
 
 /** Replace characters Helvetica (WinAnsi) cannot encode, so a note with e.g. emoji does not abort the save. */
 function winAnsiSafe(font: PDFFont, s: string): string {
@@ -144,6 +160,8 @@ const SUBTYPE_NAMES: Record<number, string> = {
   10: 'Underline',
   11: 'Squiggly',
   12: 'StrikeOut',
+  7: 'Polygon',
+  8: 'PolyLine',
   13: 'Stamp',
   14: 'Caret',
   15: 'Ink'
@@ -322,21 +340,20 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
         Subtype: 'Line',
         L: [...toUser(f, p0.x, p0.y), ...toUser(f, p1.x, p1.y)],
         LE: ['None', a.kind === 'arrow' ? 'OpenArrow' : 'None'],
-        BS: { W: a.lineWidth },
-        Border: [0, 0, a.lineWidth],
+        ...border(a),
         Subj: PDFHexString.fromText(a.kind === 'arrow' ? 'Arrow' : 'Line'),
         AP: { N: ap }
       }
     } else if (a.kind === 'rectangle') {
       const r = a.rects[0]
       const i = a.lineWidth / 2
-      const body = `${stroke(a)} ${n(r.x + i)} ${n(r.y + i)} ${n(r.w - a.lineWidth)} ${n(r.h - a.lineWidth)} re S`
+      const pt = paint(a)
+      const body = `${stroke(a)} ${pt.pre}${n(r.x + i)} ${n(r.y + i)} ${n(r.w - a.lineWidth)} ${n(r.h - a.lineWidth)} re ${pt.op}`
       const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
       dict = {
         ...base,
         Subtype: 'Square',
-        BS: { W: a.lineWidth },
-        Border: [0, 0, a.lineWidth],
+        ...border(a),
         Subj: PDFHexString.fromText('Rectangle'),
         AP: { N: ap }
       }
@@ -347,19 +364,40 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
       const cx = r.x + r.w / 2
       const cy = r.y + r.h / 2
       const k = 0.5522847498
+      const pt = paint(a)
       const body =
-        `${stroke(a)} ${n(cx + rx)} ${n(cy)} m ` +
+        `${stroke(a)} ${pt.pre}${n(cx + rx)} ${n(cy)} m ` +
         `${n(cx + rx)} ${n(cy + k * ry)} ${n(cx + k * rx)} ${n(cy + ry)} ${n(cx)} ${n(cy + ry)} c ` +
         `${n(cx - k * rx)} ${n(cy + ry)} ${n(cx - rx)} ${n(cy + k * ry)} ${n(cx - rx)} ${n(cy)} c ` +
         `${n(cx - rx)} ${n(cy - k * ry)} ${n(cx - k * rx)} ${n(cy - ry)} ${n(cx)} ${n(cy - ry)} c ` +
-        `${n(cx + k * rx)} ${n(cy - ry)} ${n(cx + rx)} ${n(cy - k * ry)} ${n(cx + rx)} ${n(cy)} c S`
+        `${n(cx + k * rx)} ${n(cy - ry)} ${n(cx + rx)} ${n(cy - k * ry)} ${n(cx + rx)} ${n(cy)} c ${pt.op}`
       const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
       dict = {
         ...base,
         Subtype: 'Circle',
-        BS: { W: a.lineWidth },
-        Border: [0, 0, a.lineWidth],
+        ...border(a),
         Subj: PDFHexString.fromText('Ellipse'),
+        AP: { N: ap }
+      }
+    } else if (a.kind === 'polygon' || a.kind === 'polyline' || a.kind === 'cloud') {
+      const pts = a.points![0]
+      const closed = a.kind !== 'polyline'
+      const pt = closed ? paint(a) : { pre: '', op: 'S' }
+      let path: string
+      if (a.kind === 'cloud') {
+        const { start, curves } = cloudCurves(pts, a.lineWidth)
+        path = `${n(start.x)} ${n(start.y)} m ` + curves.map(([c1, c2, p]) => `${n(c1.x)} ${n(c1.y)} ${n(c2.x)} ${n(c2.y)} ${n(p.x)} ${n(p.y)} c`).join(' ') + ' h'
+      } else {
+        path = pts.map((p, i) => `${n(p.x)} ${n(p.y)} ${i ? 'l' : 'm'}`).join(' ') + (closed ? ' h' : '')
+      }
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${stroke(a)} ${pt.pre}${path} ${pt.op} Q`)
+      dict = {
+        ...base,
+        Subtype: a.kind === 'polyline' ? 'PolyLine' : 'Polygon',
+        Vertices: pts.flatMap((p) => toUser(f, p.x, p.y)),
+        ...border(a),
+        ...(a.kind === 'cloud' ? { BE: { S: 'C', I: 1 } } : {}),
+        Subj: PDFHexString.fromText(a.kind === 'cloud' ? 'Cloud' : a.kind === 'polyline' ? 'Polyline' : 'Polygon'),
         AP: { N: ap }
       }
     } else if (a.kind === 'ink') {

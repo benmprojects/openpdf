@@ -153,6 +153,8 @@ export interface ImportedAnnot {
   points?: Pt[][]
   /** Annotation /Rect in user space: left, bottom, right, top. Used to re-find the object when saving. */
   rect: [number, number, number, number]
+  /** Interior colour of a filled shape. */
+  fill?: string
 }
 
 const ANNOT_KINDS: Record<number, AnnotKind> = {
@@ -161,6 +163,8 @@ const ANNOT_KINDS: Record<number, AnnotKind> = {
   4: 'line',
   5: 'rectangle',
   6: 'ellipse',
+  7: 'polygon',
+  8: 'polyline',
   9: 'highlight',
   10: 'underline',
   11: 'squiggly',
@@ -197,6 +201,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
   const keySubj = cString(m, 'Subj')
   const keyLabel = cString(m, 'OPLabel')
   const keyIT = cString(m, 'IT')
+  const keyBE = cString(m, 'BE')
   const out: ImportedAnnot[] = []
 
   const toDisplay = (x: number, y: number): [number, number] => {
@@ -244,7 +249,25 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
           points = [[toDisplay(g.getFloat32(scratch + 16, true), g.getFloat32(scratch + 20, true)), toDisplay(g.getFloat32(scratch + 24, true), g.getFloat32(scratch + 28, true))].map(([x, y]) => ({ x, y }))]
           kind = subj === 'Arrow' ? 'arrow' : 'line'
         } else if (kind === 'rectangle' || kind === 'ellipse') {
-          if (m._FPDFAnnot_GetColor(annot, 1, scratch + 32, scratch + 36, scratch + 40, scratch + 44)) continue // filled
+          // Filled shapes are taken on too; the interior colour is read below.
+        } else if (kind === 'polygon' || kind === 'polyline') {
+          const count = m._FPDFAnnot_GetVertices(annot, 0, 0)
+          if (count < 2) continue
+          const buf = m.wasmExports.malloc(count * 8)
+          try {
+            m._FPDFAnnot_GetVertices(annot, buf, count)
+            const g = new DataView(m.HEAPU8.buffer)
+            const path: Pt[] = []
+            for (let q = 0; q < count; q++) {
+              const [x, y] = toDisplay(g.getFloat32(buf + q * 8, true), g.getFloat32(buf + q * 8 + 4, true))
+              path.push({ x, y })
+            }
+            points = [path]
+          } finally {
+            m.wasmExports.free(buf)
+          }
+          // A polygon with a border effect is a cloud.
+          if (kind === 'polygon' && m._FPDFAnnot_HasKey(annot, keyBE)) kind = 'cloud'
         } else if (kind === 'stamp') {
           label = readString(annot, keyLabel)
           if (!label) continue
@@ -275,7 +298,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
           }
           if (!points.length) continue
         }
-        if (kind === 'line' || kind === 'arrow' || kind === 'rectangle' || kind === 'ellipse' || kind === 'ink' || kind === 'stamp') {
+        if (kind === 'line' || kind === 'arrow' || kind === 'rectangle' || kind === 'ellipse' || kind === 'ink' || kind === 'stamp' || kind === 'polygon' || kind === 'polyline' || kind === 'cloud') {
           lineWidth = 2
           if (m._FPDFAnnot_GetBorder(annot, scratch + 48, scratch + 52, scratch + 56)) {
             const w = new DataView(m.HEAPU8.buffer).getFloat32(scratch + 56, true)
@@ -306,6 +329,12 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
           color = `#${hex2(c.getUint32(scratch + 32, true))}${hex2(c.getUint32(scratch + 36, true))}${hex2(c.getUint32(scratch + 40, true))}`
         }
 
+        let fill: string | undefined
+        if ((kind === 'rectangle' || kind === 'ellipse' || kind === 'polygon' || kind === 'cloud') && m._FPDFAnnot_GetColor(annot, 1, scratch + 32, scratch + 36, scratch + 40, scratch + 44)) {
+          const c = new DataView(m.HEAPU8.buffer)
+          fill = `#${hex2(c.getUint32(scratch + 32, true))}${hex2(c.getUint32(scratch + 36, true))}${hex2(c.getUint32(scratch + 40, true))}`
+        }
+
         let fontSize = 12
         if (kind === 'textbox' || kind === 'typewriter') {
           const da = readString(annot, keyDA)
@@ -328,7 +357,8 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
           fontSize,
           lineWidth,
           points,
-          rect
+          rect,
+          fill
         })
       } finally {
         m._FPDFPage_CloseAnnot(annot)
@@ -341,6 +371,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
     m.wasmExports.free(keySubj)
     m.wasmExports.free(keyLabel)
     m.wasmExports.free(keyIT)
+    m.wasmExports.free(keyBE)
   }
   return out
 }

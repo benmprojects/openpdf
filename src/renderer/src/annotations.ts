@@ -18,6 +18,10 @@ export type AnnotKind =
   | 'rectangle'
   | 'ellipse'
   | 'ink'
+  | 'polygon'
+  | 'polyline'
+  /** A polygon with a scalloped ("cloudy") border, for marking up areas on drawings. */
+  | 'cloud'
   | 'stamp'
 
 export interface Pt {
@@ -47,6 +51,10 @@ export interface Annot {
   points?: Pt[][]
   /** Strikeout only: the struck text is to be replaced by `text` (saved as a caret grouped with the strikeout). */
   replace?: boolean
+  /** Interior colour of rectangles, ellipses, polygons and clouds; none when unset. */
+  fill?: string
+  /** Line style of shapes; solid when unset. */
+  dash?: 'dashed' | 'dotted'
   /** Set when the annotation was already in the file: where to find it again when saving. */
   origin?: {
     /** Position in the page's /Annots array. */
@@ -60,7 +68,7 @@ export interface Annot {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null])
 }
 
 export const NOTE_SIZE = 22
@@ -86,8 +94,58 @@ export const LINE_WIDTHS = [1, 2, 4, 6]
 export const DEFAULT_LINE_WIDTH = 2
 export const STAMP_LABELS = ['APPROVED', 'NOT APPROVED', 'DRAFT', 'FINAL', 'CONFIDENTIAL', 'FOR COMMENT', 'REVIEWED']
 
-export const isPathKind = (k: AnnotKind) => k === 'line' || k === 'arrow' || k === 'ink'
+export const isPathKind = (k: AnnotKind) => k === 'line' || k === 'arrow' || k === 'ink' || isVertexKind(k)
+/** Kinds drawn through a list of clicked corners. */
+export const isVertexKind = (k: AnnotKind) => k === 'polygon' || k === 'polyline' || k === 'cloud'
 export const isShapeKind = (k: AnnotKind) => isPathKind(k) || k === 'rectangle' || k === 'ellipse'
+/** Kinds that can have an interior colour. */
+export const canFill = (k: AnnotKind) => k === 'rectangle' || k === 'ellipse' || k === 'polygon' || k === 'cloud'
+/** Kinds that can have a dashed or dotted line. */
+export const canDash = (k: AnnotKind) => isShapeKind(k) && k !== 'ink'
+
+/** Dash pattern for a line style at a width, in points (PDF /D and SVG stroke-dasharray). */
+export function dashArray(dash: Annot['dash'], lineWidth: number): number[] | null {
+  if (dash === 'dashed') return [lineWidth * 3 + 2, lineWidth * 2 + 2]
+  if (dash === 'dotted') return [0.01, lineWidth * 2 + 1]
+  return null
+}
+
+/** Size of one cloud scallop for a line width. */
+export const cloudBump = (lineWidth: number) => Math.max(8, lineWidth * 4 + 4)
+
+/**
+ * The scalloped border of a cloud, as cubic Bézier segments from `start`: each edge is split into bumps that bulge
+ * outwards, each a half circle (approximated with control points 4/3 of the radius out).
+ */
+export function cloudCurves(pts: Pt[], lineWidth: number): { start: Pt; curves: [Pt, Pt, Pt][] } {
+  let area = 0
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]
+    const b = pts[(i + 1) % pts.length]
+    area += a.x * b.y - b.x * a.y
+  }
+  const out = area >= 0 ? 1 : -1
+  const curves: [Pt, Pt, Pt][] = []
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]
+    const b = pts[(i + 1) % pts.length]
+    const len = Math.hypot(b.x - a.x, b.y - a.y)
+    if (len < 0.01) continue
+    const k = Math.max(1, Math.round(len / cloudBump(lineWidth)))
+    const ux = (b.x - a.x) / len
+    const uy = (b.y - a.y) / len
+    const nx = uy * out
+    const ny = -ux * out
+    const step = len / k
+    const h = (4 / 3) * (step / 2)
+    for (let j = 0; j < k; j++) {
+      const p0 = { x: a.x + ux * step * j, y: a.y + uy * step * j }
+      const p1 = { x: a.x + ux * step * (j + 1), y: a.y + uy * step * (j + 1) }
+      curves.push([{ x: p0.x + nx * h, y: p0.y + ny * h }, { x: p1.x + nx * h, y: p1.y + ny * h }, p1])
+    }
+  }
+  return { start: pts[0], curves }
+}
 /** Kinds whose size can be changed with the corner handle. */
 export const isResizable = (k: AnnotKind) => k === 'textbox' || k === 'rectangle' || k === 'ellipse' || k === 'stamp'
 
@@ -161,7 +219,12 @@ export function pointsBounds(paths: Pt[][], pad: number): Rect {
 
 /** Line, arrow and ink keep their geometry in `points`; `rects[0]` is the box around them. */
 export function pathBounds(kind: AnnotKind, lineWidth: number, points: Pt[][]): Rect {
-  const pad = kind === 'arrow' ? Math.max(lineWidth / 2, arrowHeadLength(lineWidth) * 0.6) : lineWidth / 2
+  const pad =
+    kind === 'arrow'
+      ? Math.max(lineWidth / 2, arrowHeadLength(lineWidth) * 0.6)
+      : kind === 'cloud'
+        ? lineWidth / 2 + cloudBump(lineWidth) * 0.7
+        : lineWidth / 2
   return pointsBounds(points, pad)
 }
 
@@ -185,6 +248,9 @@ export function defaultColor(kind: AnnotKind): string {
     case 'rectangle':
     case 'ellipse':
     case 'ink':
+    case 'polygon':
+    case 'polyline':
+    case 'cloud':
     case 'stamp':
       return '#e5322d'
     case 'highlight':
@@ -232,6 +298,9 @@ export function annotLabel(kind: AnnotKind): string {
     rectangle: 'Rectangle',
     ellipse: 'Ellipse',
     ink: 'Pencil',
+    polygon: 'Polygon',
+    polyline: 'Polyline',
+    cloud: 'Cloud',
     stamp: 'Stamp'
   }[kind]
 }

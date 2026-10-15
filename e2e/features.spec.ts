@@ -61,7 +61,7 @@ test('page labels, attachments and layers', async () => {
 
     // Layers: "Hidden layer" starts off. Make an unsaved annotation first; toggling layers must keep it.
     await win.locator('.scroller').evaluate((el) => (el.scrollTop = 0))
-    await win.getByRole('tab', { name: 'Comment' }).click()
+    await win.getByRole('tab', { name: 'Draw' }).click()
     await win.getByRole('button', { name: 'Rectangle' }).click()
     const p0 = (await win.locator('.page').first().boundingBox())!
     await win.mouse.move(p0.x + p0.width * 0.55, p0.y + 40)

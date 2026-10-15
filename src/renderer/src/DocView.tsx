@@ -10,6 +10,8 @@ import {
   STAMP_LABELS,
   defaultColor,
   isShapeKind,
+  canDash,
+  canFill,
   signature,
   stampSize,
   TEXTBOX_PADDING,
@@ -60,6 +62,8 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Hexagon,
+  Cloud,
   Keyboard,
   MessageSquareShare,
   Waves,
@@ -156,15 +160,19 @@ interface Props {
   jump?: SearchJump
 }
 
-type RibbonTab = 'file' | 'home' | 'comment' | 'measure' | 'organise' | 'view'
+type RibbonTab = 'file' | 'home' | 'comment' | 'draw' | 'measure' | 'organise' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
   ['home', 'Home'],
   ['comment', 'Comment'],
+  ['draw', 'Draw'],
   ['measure', 'Measure'],
   ['organise', 'Organise'],
   ['view', 'View']
 ]
+
+/** Fill colours: light tints that keep the page readable underneath. */
+const FILL_COLORS = ['#fde2e1', '#fff4c2', '#dff5e1', '#dcecff', '#efe3ff', '#ffffff']
 
 const LENGTH_UNITS = ['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi']
 
@@ -360,10 +368,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [editingAnnot, setEditingAnnot] = useState<number | null>(null)
   const [hasTextSelection, setHasTextSelection] = useState(false)
   const [colors, setColors] = useState<Record<AnnotKind, string>>(() => {
-    const kinds: AnnotKind[] = ['highlight', 'underline', 'strikeout', 'squiggly', 'caret', 'note', 'textbox', 'typewriter', 'callout', 'line', 'arrow', 'rectangle', 'ellipse', 'ink', 'stamp']
+    const kinds: AnnotKind[] = ['highlight', 'underline', 'strikeout', 'squiggly', 'caret', 'note', 'textbox', 'typewriter', 'callout', 'line', 'arrow', 'rectangle', 'ellipse', 'ink', 'polygon', 'polyline', 'cloud', 'stamp']
     return Object.fromEntries(kinds.map((k) => [k, defaultColor(k)])) as Record<AnnotKind, string>
   })
   const [drawWidth, setDrawWidth] = useState(DEFAULT_LINE_WIDTH)
+  // Fill and line style chosen per shape kind, applied to new shapes.
+  const [fills, setFills] = useState<Partial<Record<AnnotKind, string>>>({})
+  const [dashes, setDashes] = useState<Partial<Record<AnnotKind, 'dashed' | 'dotted'>>>({})
+  const fillsRef = useRef(fills)
+  fillsRef.current = fills
+  const dashesRef = useRef(dashes)
+  dashesRef.current = dashes
   const [stampLabel, setStampLabel] = useState(STAMP_LABELS[0])
   const [lastMarkup, setLastMarkup] = useState<AnnotKind>('highlight')
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
@@ -416,6 +431,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               fontSize: r.fontSize,
               lineWidth: r.lineWidth,
               points: r.points,
+              fill: r.fill,
               origin: { index: r.index, subtype: r.subtype, rect: r.rect }
             }
             imported.push(a)
@@ -563,7 +579,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const createShape = useCallback(
     (shape: Omit<Annot, 'id'>) => {
-      const a: Annot = { ...shape, id: nextAnnotId.current++ }
+      const a: Annot = {
+        ...shape,
+        id: nextAnnotId.current++,
+        ...(canFill(shape.kind) && fillsRef.current[shape.kind] ? { fill: fillsRef.current[shape.kind] } : {}),
+        ...(canDash(shape.kind) && dashesRef.current[shape.kind] ? { dash: dashesRef.current[shape.kind] } : {})
+      }
       history.commit((list) => [...list, a])
       setSelectedAnnot(a.id)
       // A new callout goes straight to typing its text.
@@ -692,6 +713,24 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (selected && (isShapeKind(selected.kind) || selected.kind === 'stamp')) {
       touch(selected.id)
       history.commit((list) => list.map((a) => (a.id === selected.id ? withBounds({ ...a, lineWidth: w }) : a)))
+    }
+  }
+
+
+  const activeFill = selected ? selected.fill : fills[swatchKind]
+  const activeDash = selected ? selected.dash : dashes[swatchKind]
+  const pickFill = (c: string | undefined) => {
+    setFills((f) => ({ ...f, [swatchKind]: c }))
+    if (selected && canFill(selected.kind)) {
+      touch(selected.id)
+      history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, fill: c } : a)))
+    }
+  }
+  const pickDash = (d: 'dashed' | 'dotted' | undefined) => {
+    setDashes((x) => ({ ...x, [swatchKind]: d }))
+    if (selected && canDash(selected.kind)) {
+      touch(selected.id)
+      history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, dash: d } : a)))
     }
   }
 
@@ -1215,6 +1254,57 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       />
     </>
   )
+  /** Colour, fill, line style and width, and Delete/Undo/Redo: shared by the Comment and Draw tabs. */
+  const styleAndEdit = (
+    <>
+              <RGroup label={`${annotLabel(swatchKind)} style`}>
+        <div className="rstyle">
+          <span className="swatches" role="group" aria-label={`${annotLabel(swatchKind)} colour`}>
+            {colorChoices(swatchKind).map((c) => (
+              <button
+                key={c}
+                className={c === activeColor ? 'swatch on' : 'swatch'}
+                style={{ background: c }}
+                onClick={() => pickColor(c)}
+                aria-label={`Colour ${c}`}
+                aria-pressed={c === activeColor}
+              />
+            ))}
+          </span>
+          {canFill(swatchKind) && (
+            <span className="swatches fill" role="group" aria-label="Fill colour">
+              <button className={!activeFill ? 'swatch none on' : 'swatch none'} onClick={() => pickFill(undefined)} aria-label="No fill" aria-pressed={!activeFill} title="No fill" />
+              {FILL_COLORS.map((c) => (
+                <button key={c} className={c === activeFill ? 'swatch on' : 'swatch'} style={{ background: c }} onClick={() => pickFill(c)} aria-label={`Fill ${c}`} aria-pressed={c === activeFill} title="Fill colour" />
+              ))}
+            </span>
+          )}
+          <div className="rstyle-row">
+          {canDash(swatchKind) && (
+            <select className="rselect" value={activeDash ?? 'solid'} onChange={(e) => pickDash(e.target.value === 'solid' ? undefined : (e.target.value as 'dashed' | 'dotted'))} aria-label="Line style" title="Line style">
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+            </select>
+          )}
+          {showWidth && (
+            <select className="rselect" value={activeWidth} onChange={(e) => pickWidth(Number(e.target.value))} aria-label="Line width" title="Line width">
+              {(LINE_WIDTHS.includes(activeWidth) ? LINE_WIDTHS : [...LINE_WIDTHS, activeWidth].sort((a, b) => a - b)).map((w) => (
+                <option key={w} value={w}>
+                  {w} pt
+                </option>
+              ))}
+            </select>
+          )}
+          </div>
+        </div>
+      </RGroup>
+      <RGroup label="Edit">
+        <RB big icon={Trash2} label="Delete" onClick={() => selected && removeAnnot(selected.id)} disabled={!selected} title="Delete the selected annotation (Delete)" />
+        <RStack>{undoButtons}</RStack>
+      </RGroup>
+    </>
+  )
 
   return (
     <div className="docview" style={{ display: active ? 'flex' : 'none' }}>
@@ -1295,17 +1385,6 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={MessageSquareShare} label="Callout" onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title="Callout: drag from the point to call out to where the text box goes" />
                 </RStack>
               </RGroup>
-              <RGroup label="Drawing">
-                <RStack>
-                  <RB icon={Slash} label="Line" onClick={() => setTool(tool === 'line' ? 'select' : 'line')} disabled={!pages.length} pressed={tool === 'line'} title="Draw a line: drag. Hold Shift for 45 degree steps" />
-                  <RB icon={MoveUpRight} label="Arrow" onClick={() => setTool(tool === 'arrow' ? 'select' : 'arrow')} disabled={!pages.length} pressed={tool === 'arrow'} title="Draw an arrow: drag. Hold Shift for 45 degree steps" />
-                </RStack>
-                <RStack>
-                  <RB icon={Square} label="Rectangle" onClick={() => setTool(tool === 'rectangle' ? 'select' : 'rectangle')} disabled={!pages.length} pressed={tool === 'rectangle'} title="Draw a rectangle: drag. Hold Shift for a square" />
-                  <RB icon={Circle} label="Ellipse" onClick={() => setTool(tool === 'ellipse' ? 'select' : 'ellipse')} disabled={!pages.length} pressed={tool === 'ellipse'} title="Draw an ellipse: drag. Hold Shift for a circle" />
-                </RStack>
-                <RB big icon={Pencil} label="Pencil" onClick={() => setTool(tool === 'ink' ? 'select' : 'ink')} disabled={!pages.length} pressed={tool === 'ink'} title="Draw freehand: drag" />
-              </RGroup>
               <RGroup label="Stamp">
                 <RB big icon={StampIcon} label="Stamp" onClick={() => setTool(tool === 'stamp' ? 'select' : 'stamp')} disabled={!pages.length} pressed={tool === 'stamp'} title="Place a stamp: click on the page" />
                 <select className="rselect" value={selected?.kind === 'stamp' ? selected.text : stampLabel} onChange={(e) => pickStamp(e.target.value)} aria-label="Stamp text">
@@ -1316,35 +1395,28 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   ))}
                 </select>
               </RGroup>
-              <RGroup label={`${annotLabel(swatchKind)} style`}>
-                <div className="rstyle">
-                  <span className="swatches" role="group" aria-label={`${annotLabel(swatchKind)} colour`}>
-                    {colorChoices(swatchKind).map((c) => (
-                      <button
-                        key={c}
-                        className={c === activeColor ? 'swatch on' : 'swatch'}
-                        style={{ background: c }}
-                        onClick={() => pickColor(c)}
-                        aria-label={`Colour ${c}`}
-                        aria-pressed={c === activeColor}
-                      />
-                    ))}
-                  </span>
-                  {showWidth && (
-                    <select className="rselect" value={activeWidth} onChange={(e) => pickWidth(Number(e.target.value))} aria-label="Line width" title="Line width">
-                      {(LINE_WIDTHS.includes(activeWidth) ? LINE_WIDTHS : [...LINE_WIDTHS, activeWidth].sort((a, b) => a - b)).map((w) => (
-                        <option key={w} value={w}>
-                          {w} pt
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
+              {styleAndEdit}
+            </>
+          )}
+          {ribbon === 'draw' && (
+            <>
+              <RGroup label="Drawing">
+                <RStack>
+                  <RB icon={Slash} label="Line" onClick={() => setTool(tool === 'line' ? 'select' : 'line')} disabled={!pages.length} pressed={tool === 'line'} title="Draw a line: drag. Hold Shift for 45 degree steps" />
+                  <RB icon={MoveUpRight} label="Arrow" onClick={() => setTool(tool === 'arrow' ? 'select' : 'arrow')} disabled={!pages.length} pressed={tool === 'arrow'} title="Draw an arrow: drag. Hold Shift for 45 degree steps" />
+                </RStack>
+                <RStack>
+                  <RB icon={Hexagon} label="Polygon" onClick={() => setTool(tool === 'polygon' ? 'select' : 'polygon')} disabled={!pages.length} pressed={tool === 'polygon'} title="Polygon: click the corners, double-click or Enter to finish" />
+                </RStack>
+                <RStack>
+                  <RB icon={Square} label="Rectangle" onClick={() => setTool(tool === 'rectangle' ? 'select' : 'rectangle')} disabled={!pages.length} pressed={tool === 'rectangle'} title="Draw a rectangle: drag. Hold Shift for a square" />
+                  <RB icon={Circle} label="Ellipse" onClick={() => setTool(tool === 'ellipse' ? 'select' : 'ellipse')} disabled={!pages.length} pressed={tool === 'ellipse'} title="Draw an ellipse: drag. Hold Shift for a circle" />
+                  <RB icon={Spline} label="Polyline" onClick={() => setTool(tool === 'polyline' ? 'select' : 'polyline')} disabled={!pages.length} pressed={tool === 'polyline'} title="Polyline: click the points, double-click or Enter to finish" />
+                </RStack>
+                <RB big icon={Cloud} label="Cloud" onClick={() => setTool(tool === 'cloud' ? 'select' : 'cloud')} disabled={!pages.length} pressed={tool === 'cloud'} title="Revision cloud: click the corners, double-click or Enter to finish" />
+                <RB big icon={Pencil} label="Pencil" onClick={() => setTool(tool === 'ink' ? 'select' : 'ink')} disabled={!pages.length} pressed={tool === 'ink'} title="Draw freehand: drag" />
               </RGroup>
-              <RGroup label="Edit">
-                <RB big icon={Trash2} label="Delete" onClick={() => selected && removeAnnot(selected.id)} disabled={!selected} title="Delete the selected annotation (Delete)" />
-                <RStack>{undoButtons}</RStack>
-              </RGroup>
+              {styleAndEdit}
             </>
           )}
           {ribbon === 'measure' && (
