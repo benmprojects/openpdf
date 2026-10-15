@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { RecoveryEntry, Settings } from '../main/settings'
+
+export type { RecoveryEntry, Settings }
 
 export interface OpenedFile {
   name: string
@@ -25,7 +28,23 @@ const api = {
     ipcRenderer.invoke('print:page', job, n, png, w, h),
   printRun: (job: string, opts: { copies: number; fit: boolean; count: number }): Promise<{ ok: boolean; error?: string; pdfPath?: string }> =>
     ipcRenderer.invoke('print:run', job, opts),
-  printCancel: (job: string): Promise<void> => ipcRenderer.invoke('print:cancel', job)
+  printCancel: (job: string): Promise<void> => ipcRenderer.invoke('print:cancel', job),
+  /** Resolves null if the file is gone (it is then dropped from the recent list). */
+  openRecent: (path: string): Promise<OpenedFile | null> => ipcRenderer.invoke('file:open-recent', path),
+  /** Files opened from outside while the app runs (Explorer, file association). Returns an unsubscribe. */
+  onOpenFiles: (cb: (files: OpenedFile[]) => void): (() => void) => {
+    const h = (_e: unknown, files: OpenedFile[]) => cb(files)
+    ipcRenderer.on('file:open-files', h)
+    return () => ipcRenderer.removeListener('file:open-files', h)
+  },
+  getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
+  setSettings: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:set', patch),
+  recoverySave: (key: string, meta: { name: string; path?: string }, data: Uint8Array): Promise<void> =>
+    ipcRenderer.invoke('recovery:save', key, meta, data),
+  recoveryClear: (key: string): Promise<void> => ipcRenderer.invoke('recovery:clear', key),
+  recoveryList: (): Promise<RecoveryEntry[]> => ipcRenderer.invoke('recovery:list'),
+  recoveryRead: (key: string): Promise<Uint8Array> => ipcRenderer.invoke('recovery:read', key),
+  recoveryClearAll: (): Promise<void> => ipcRenderer.invoke('recovery:clear-all')
 }
 
 contextBridge.exposeInMainWorld('openpdf', api)

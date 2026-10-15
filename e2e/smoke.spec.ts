@@ -15,7 +15,7 @@ test('opens, finds, rotates the view and prints', async () => {
   const app = await electron.launch({
     args: ['.', pdfPath],
     cwd: root,
-    env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_PRINT: printPath }
+    env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_PRINT: printPath, OPENPDF_E2E_USERDATA: join(dir, 'userdata') }
   })
   try {
     const win = await app.firstWindow()

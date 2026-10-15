@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { RecoveryEntry, Settings } from '../../preload'
+import { SettingsDialog, ShortcutsDialog } from './AppDialogs'
 import { DocView, type DocMeta } from './DocView'
 
 interface Tab {
@@ -8,12 +10,54 @@ interface Tab {
   data: Uint8Array
   /** Has annotations that are not saved yet. */
   dirty: boolean
+  recovered?: boolean
 }
 
 interface Incoming {
   name: string
   path?: string
   data: Uint8Array
+  recovered?: boolean
+}
+
+function RecentList({
+  paths,
+  onOpen,
+  onDismiss,
+  floating
+}: {
+  paths: string[]
+  onOpen: (path: string) => void
+  onDismiss?: () => void
+  floating?: boolean
+}) {
+  useEffect(() => {
+    if (!onDismiss) return
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !(e.target as HTMLElement).closest('.menu-anchor')) onDismiss()
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', close)
+    }
+  }, [onDismiss])
+  return (
+    <ul className={floating ? 'recent-list floating' : 'recent-list'} role="menu" aria-label="Recent files">
+      {paths.map((p) => {
+        const cut = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'))
+        return (
+          <li key={p} role="none">
+            <button role="menuitem" onClick={() => onOpen(p)} title={p}>
+              <span className="recent-name">{p.slice(cut + 1)}</span>
+              <span className="recent-dir">{p.slice(0, cut)}</span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
 }
 
 export function App() {
@@ -21,6 +65,10 @@ export function App() {
   const [activeId, setActiveId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [dialog, setDialog] = useState<'settings' | 'shortcuts' | null>(null)
+  const [recentOpen, setRecentOpen] = useState(false)
+  const [recovery, setRecovery] = useState<RecoveryEntry[]>([])
   const nextId = useRef(1)
   const tabsRef = useRef(tabs)
   tabsRef.current = tabs
@@ -33,12 +81,12 @@ export function App() {
     const fresh: Tab[] = []
     for (const f of files) {
       // A file that is already open is brought to the front instead of opening a second copy.
-      const existing = f.path ? tabsRef.current.find((t) => t.path === f.path) : undefined
+      const existing = f.path && !f.recovered ? tabsRef.current.find((t) => t.path === f.path) : undefined
       if (existing) {
         focus = existing.id
         continue
       }
-      const tab: Tab = { id: nextId.current++, name: f.name, path: f.path, data: f.data, dirty: false }
+      const tab: Tab = { id: nextId.current++, name: f.name, path: f.path, data: f.data, dirty: !!f.recovered, recovered: f.recovered }
       fresh.push(tab)
       focus = tab.id
     }
@@ -49,7 +97,63 @@ export function App() {
   const open = useCallback(async () => {
     setError(null)
     addFiles(await window.openpdf.openFileDialog())
+    window.openpdf.getSettings().then(setSettings)
   }, [addFiles])
+
+  const openRecent = useCallback(
+    async (path: string) => {
+      setRecentOpen(false)
+      setError(null)
+      const f = await window.openpdf.openRecent(path)
+      if (f) addFiles([f])
+      else setError(`${path} could not be opened, so it was removed from the recent list.`)
+      setSettings(await window.openpdf.getSettings())
+    },
+    [addFiles]
+  )
+
+  const changeSettings = useCallback((patch: Partial<Settings>) => {
+    setSettings((s) => (s ? { ...s, ...patch } : s))
+    void window.openpdf.setSettings(patch).then(setSettings)
+  }, [])
+
+  // Opening, saving and closing documents change the recent list in the main process; fetch it again then.
+  const pathsKey = tabs.map((t) => t.path ?? '').join('|')
+  useEffect(() => {
+    window.openpdf.getSettings().then(setSettings)
+  }, [pathsKey])
+
+  const setSidebarWidth = useCallback((w: number) => changeSettings({ sidebarWidth: w }), [changeSettings])
+
+  // Settings, files opened from Explorer while running, and documents left over from a crash.
+  useEffect(() => {
+    window.openpdf.getSettings().then(setSettings)
+    window.openpdf.recoveryList().then(setRecovery)
+    return window.openpdf.onOpenFiles((files) => {
+      addFiles(files)
+      window.openpdf.getSettings().then(setSettings)
+    })
+  }, [addFiles])
+
+  const restoreRecovered = async () => {
+    const list = recovery
+    setRecovery([])
+    const files: Incoming[] = []
+    for (const r of list) {
+      try {
+        files.push({ name: r.name, path: r.path, data: await window.openpdf.recoveryRead(r.key), recovered: true })
+      } catch {
+        // A snapshot that cannot be read is skipped.
+      }
+    }
+    await window.openpdf.recoveryClearAll()
+    addFiles(files)
+  }
+
+  const discardRecovered = () => {
+    setRecovery([])
+    void window.openpdf.recoveryClearAll()
+  }
 
   const updateMeta = useCallback((id: number, meta: DocMeta) => {
     setTabs((list) => {
@@ -89,6 +193,11 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F1') {
+        e.preventDefault()
+        setDialog('shortcuts')
+        return
+      }
       if (!(e.ctrlKey || e.metaKey)) return
       const k = e.key.toLowerCase()
       if (k === 'o') {
@@ -166,15 +275,61 @@ export function App() {
         <button className="tab-new" onClick={open} title="Open (Ctrl+O)" aria-label="Open file">
           +
         </button>
+        <span className="tabstrip-fill" />
+        <div className="menu-anchor">
+          <button
+            className="strip-btn"
+            onClick={() => setRecentOpen((o) => !o)}
+            disabled={!settings?.recent.length}
+            aria-expanded={recentOpen}
+            title="Recent files"
+          >
+            Recent ▾
+          </button>
+          {recentOpen && settings && (
+            <RecentList paths={settings.recent} onOpen={openRecent} onDismiss={() => setRecentOpen(false)} floating />
+          )}
+        </div>
+        <button className="strip-btn" onClick={() => setDialog('settings')} disabled={!settings} title="Settings" aria-label="Settings">
+          ⚙
+        </button>
+        <button className="strip-btn" onClick={() => setDialog('shortcuts')} title="Keyboard shortcuts (F1)" aria-label="Keyboard shortcuts">
+          ?
+        </button>
       </div>
+      {recovery.length > 0 && (
+        <div className="recovery-bar" role="alert">
+          <span>
+            OpenPDF closed unexpectedly. Unsaved work was recovered for {recovery.map((r) => r.name).join(', ')}.
+          </span>
+          <button className="primary" onClick={() => void restoreRecovered()}>
+            Restore
+          </button>
+          <button onClick={discardRecovered}>Discard</button>
+        </div>
+      )}
       {error && (
         <div className="error" role="alert">
           {error}
         </div>
       )}
+      {dialog === 'settings' && settings && <SettingsDialog settings={settings} onChange={changeSettings} onClose={() => setDialog(null)} />}
+      {dialog === 'shortcuts' && <ShortcutsDialog onClose={() => setDialog(null)} />}
       <main className="content">
         {tabs.map((t) => (
-          <DocView key={t.id} id={t.id} data={t.data} name={t.name} path={t.path} active={t.id === activeId} onMeta={updateMeta} />
+          <DocView
+            key={t.id}
+            id={t.id}
+            data={t.data}
+            name={t.name}
+            path={t.path}
+            active={t.id === activeId}
+            onMeta={updateMeta}
+            recovered={t.recovered}
+            autosaveMinutes={settings?.autosaveMinutes ?? 0}
+            sidebarWidth={settings?.sidebarWidth ?? 220}
+            onSidebarWidth={setSidebarWidth}
+          />
         ))}
         {!tabs.length && (
           <div className="empty">
@@ -183,6 +338,12 @@ export function App() {
               <button className="primary" onClick={open}>
                 Open…
               </button>
+              {!!settings?.recent.length && (
+                <>
+                  <h3>Recent files</h3>
+                  <RecentList paths={settings.recent} onOpen={openRecent} />
+                </>
+              )}
             </div>
           </div>
         )}

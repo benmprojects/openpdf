@@ -1,13 +1,50 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
+import {
+  addRecent,
+  clearAllRecovery,
+  clearRecovery,
+  listRecovery,
+  loadSettings,
+  readRecovery,
+  removeRecent,
+  saveRecovery,
+  updateSettings,
+  type Settings
+} from './settings'
+
+/**
+ * Test hook: with OPENPDF_E2E=1 the file dialogs are answered from environment variables instead of being
+ * shown, so end-to-end checks can drive insert, merge, extract and split. Does nothing in normal use.
+ * OPENPDF_E2E_USERDATA points settings, recent files and recovery at a scratch folder.
+ */
+const e2e = process.env.OPENPDF_E2E === '1'
+if (e2e && process.env.OPENPDF_E2E_USERDATA) app.setPath('userData', process.env.OPENPDF_E2E_USERDATA)
+
+// One window: opening a PDF from Explorer while the app runs adds a tab to the running window.
+if (!e2e && !app.requestSingleInstanceLock()) app.quit()
+
+let mainWindow: BrowserWindow | null = null
+
+const pdfArgs = (argv: string[]) => argv.slice(1).filter((a) => a.toLowerCase().endsWith('.pdf') && !a.startsWith('-'))
+
+app.on('second-instance', async (_e, argv, cwd) => {
+  const win = mainWindow
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.focus()
+  const files = await Promise.all(pdfArgs(argv).map((p) => openForUser(resolve(cwd, p)).catch(() => null)))
+  const ok = files.filter((f) => f !== null)
+  if (ok.length) win.webContents.send('file:open-files', ok)
+})
 
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
-    backgroundColor: '#1e1f22',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1f22' : '#e8eaed',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -25,7 +62,15 @@ function createWindow(): void {
       message: 'Some documents have unsaved annotations.',
       detail: 'Closing now discards them.'
     })
-    if (choice === 0) e.preventDefault()
+    if (choice === 0) {
+      // Discarding on purpose: the recovery snapshots of those documents must not come back next time.
+      void clearAllRecovery()
+      e.preventDefault()
+    }
+  })
+  mainWindow = win
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
   })
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else win.loadFile(join(__dirname, '../renderer/index.html'))
@@ -36,11 +81,12 @@ async function readPdf(path: string) {
   return { name: basename(path), path, data: new Uint8Array(data) }
 }
 
-/**
- * Test hook: with OPENPDF_E2E=1 the file dialogs are answered from environment variables instead of being
- * shown, so end-to-end checks can drive insert, merge, extract and split. Does nothing in normal use.
- */
-const e2e = process.env.OPENPDF_E2E === '1'
+/** Reads a PDF the user opened as a document (not one inserted into another), and remembers it as recent. */
+async function openForUser(path: string) {
+  const f = await readPdf(path)
+  await addRecent(path).catch(() => {})
+  return f
+}
 
 ipcMain.handle('file:open-dialog', async () => {
   if (e2e && process.env.OPENPDF_E2E_OPEN) return Promise.all(process.env.OPENPDF_E2E_OPEN.split(';').map(readPdf))
@@ -49,8 +95,31 @@ ipcMain.handle('file:open-dialog', async () => {
     filters: [{ name: 'PDF documents', extensions: ['pdf'] }]
   })
   if (res.canceled) return []
-  return Promise.all(res.filePaths.map(readPdf))
+  return Promise.all(res.filePaths.map(openForUser))
 })
+
+/** Opens a recent file; one that has gone missing is dropped from the list and reported as null. */
+ipcMain.handle('file:open-recent', async (_e, path: string) => {
+  const s = await loadSettings()
+  if (!s.recent.includes(path)) throw new Error('Not a recent file')
+  try {
+    return await openForUser(path)
+  } catch {
+    await removeRecent(path)
+    return null
+  }
+})
+
+ipcMain.handle('settings:get', () => loadSettings())
+ipcMain.handle('settings:set', (_e, patch: Partial<Settings>) => updateSettings(patch))
+
+ipcMain.handle('recovery:save', (_e, key: string, meta: { name: string; path?: string }, data: Uint8Array) =>
+  saveRecovery(key, meta, data)
+)
+ipcMain.handle('recovery:clear', (_e, key: string) => clearRecovery(key))
+ipcMain.handle('recovery:list', () => listRecovery())
+ipcMain.handle('recovery:read', (_e, key: string) => readRecovery(key))
+ipcMain.handle('recovery:clear-all', () => clearAllRecovery())
 
 ipcMain.handle('file:read', (_e, path: string) => readPdf(path))
 
@@ -63,15 +132,21 @@ async function writePdf(path: string, data: Uint8Array) {
   return { name: basename(path), path }
 }
 
-ipcMain.handle('file:save', (_e, path: string, data: Uint8Array) => writePdf(path, data))
+async function writeDocument(path: string, data: Uint8Array) {
+  const saved = await writePdf(path, data)
+  await addRecent(saved.path).catch(() => {})
+  return saved
+}
+
+ipcMain.handle('file:save', (_e, path: string, data: Uint8Array) => writeDocument(path, data))
 
 ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array) => {
-  if (e2e && process.env.OPENPDF_E2E_SAVE) return writePdf(process.env.OPENPDF_E2E_SAVE, data)
+  if (e2e && process.env.OPENPDF_E2E_SAVE) return writeDocument(process.env.OPENPDF_E2E_SAVE, data)
   const win = BrowserWindow.fromWebContents(e.sender)
   const opts = { defaultPath: suggestedName, filters: [{ name: 'PDF documents', extensions: ['pdf'] }] }
   const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
   if (res.canceled || !res.filePath) return null
-  return writePdf(res.filePath, data)
+  return writeDocument(res.filePath, data)
 })
 
 /** Asks for a folder, then writes each file into it without overwriting: a clash gets " (2)" and so on. */
@@ -179,11 +254,12 @@ ipcMain.handle('print:run', async (e, id: string, opts: { copies: number; fit: b
 
 // PDF paths passed on the command line (e.g. file association or `openpdf a.pdf b.pdf`).
 ipcMain.handle('file:initial', async () => {
-  const paths = process.argv.slice(1).filter((a) => a.toLowerCase().endsWith('.pdf'))
-  return Promise.all(paths.map(readPdf))
+  const files = await Promise.all(pdfArgs(process.argv).map((p) => openForUser(resolve(p)).catch(() => null)))
+  return files.filter((f) => f !== null)
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await loadSettings() // applies the theme before the window paints
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

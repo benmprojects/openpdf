@@ -24,11 +24,12 @@ interface Props {
   onGoTo: (page: number) => void
   onPageOp: (op: PageOp, pages: number[]) => void
   busy: boolean
+  width: number
 }
 
-export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy }: Props) {
+export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy, width }: Props) {
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width }}>
       <div className="sidebar-tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'pages'} onClick={() => onTab('pages')}>
           Pages

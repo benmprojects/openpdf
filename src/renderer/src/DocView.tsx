@@ -56,7 +56,17 @@ interface Props {
   active: boolean
   /** Must be a stable function; it is called from effects. */
   onMeta: (id: number, meta: DocMeta) => void
+  /** Restored from a crash-recovery snapshot: starts out unsaved. */
+  recovered?: boolean
+  /** Minutes between crash-recovery snapshots; 0 turns them off. */
+  autosaveMinutes: number
+  sidebarWidth: number
+  /** Called when the user finishes dragging the side pane's edge. */
+  onSidebarWidth: (w: number) => void
 }
+
+/** Tells this window's recovery snapshots apart from those left by an earlier run. */
+const SESSION = Math.random().toString(36).slice(2, 10)
 
 /** [0,1,2,4] -> "1-3, 5" */
 function compactRanges(pages: number[]): string {
@@ -70,14 +80,16 @@ function compactRanges(pages: number[]): string {
   return out.join(', ')
 }
 
-export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta }: Props) {
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth }: Props) {
+  const [paneWidth, setPaneWidth] = useState(sidebarWidth)
+  useEffect(() => setPaneWidth(sidebarWidth), [sidebarWidth])
   const onMeta = useCallback((meta: DocMeta) => reportMeta(docId, meta), [docId, reportMeta])
   // The bytes currently shown. They change after a save, which reloads the document with the annotations baked in.
   const [bytes, setBytes] = useState(data)
   // Page edits (rotate, delete, move, insert) rewrite the whole file. Each is applied at once and the previous bytes
   // are kept so it can be undone. Pending annotation edits are written into the file first, so undoing a page edit
   // brings back the annotations as ordinary saved ones, not as editable overlay changes.
-  const [savedBytes, setSavedBytes] = useState(data)
+  const [savedBytes, setSavedBytes] = useState(() => (recovered ? new Uint8Array(0) : data))
   const [pageUndo, setPageUndo] = useState<Uint8Array[]>([])
   const [pageRedo, setPageRedo] = useState<Uint8Array[]>([])
   const [pageDialog, setPageDialog] = useState<{ kind: 'extract' | 'split'; pages: number[] } | null>(null)
@@ -237,6 +249,30 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const annotsDirty = deleted.length > 0 || annots.some(changed)
   const dirty = annotsDirty || bytes !== savedBytes
   useEffect(() => onMeta({ dirty }), [dirty, onMeta])
+
+  // ---- Crash recovery -------------------------------------------------------------------------------
+  // While there are unsaved changes, write a snapshot (annotations included) every few minutes. A save or a
+  // close removes it; after a crash the app offers it back on the next start.
+  const recoveryKey = `${SESSION}-${docId}`
+  const snapshot = useRef<() => Promise<Uint8Array>>(async () => bytes)
+  snapshot.current = async () => (annotsDirty && !password ? writeAnnotations(bytes, annots.filter(changed), deleted) : bytes)
+  const metaRef = useRef({ name, path })
+  metaRef.current = { name, path }
+  useEffect(() => {
+    if (!dirty) {
+      void window.openpdf.recoveryClear(recoveryKey).catch(() => {})
+      return
+    }
+    if (!autosaveMinutes) return
+    const t = setInterval(() => {
+      snapshot
+        .current()
+        .then((out) => window.openpdf.recoverySave(recoveryKey, metaRef.current, out))
+        .catch(() => {})
+    }, autosaveMinutes * 60_000)
+    return () => clearInterval(t)
+  }, [dirty, autosaveMinutes, recoveryKey])
+  useEffect(() => () => void window.openpdf.recoveryClear(recoveryKey).catch(() => {}), [recoveryKey])
 
   useEffect(() => {
     if (!notice || notice.kind === 'error') return
@@ -1131,6 +1167,32 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onGoTo={goTo}
                 onPageOp={(op, sel) => void runPageOp(op, sel)}
                 busy={busy}
+                width={paneWidth}
+              />
+            )}
+            {sidebar && (
+              <div
+                className="splitter"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize side pane"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  const startX = e.clientX
+                  const startW = paneWidth
+                  let w = startW
+                  const move = (ev: MouseEvent) => {
+                    w = Math.min(600, Math.max(140, startW + ev.clientX - startX))
+                    setPaneWidth(w)
+                  }
+                  const up = () => {
+                    window.removeEventListener('mousemove', move)
+                    window.removeEventListener('mouseup', up)
+                    onSidebarWidth(w)
+                  }
+                  window.addEventListener('mousemove', move)
+                  window.addEventListener('mouseup', up)
+                }}
               />
             )}
             <Viewer
