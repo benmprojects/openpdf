@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { Place } from '../../shared/places'
 import type { RecoveryEntry, Settings } from '../../preload'
-import { CircleHelp, FileSearch, FileText, FolderOpen, History, Plus, Settings2, X } from 'lucide-react'
+import { Cloud, CircleHelp, FileSearch, FileText, FolderOpen, History, Plus, Settings2, X } from 'lucide-react'
 import { SettingsDialog, ShortcutsDialog } from './AppDialogs'
 import type { SearchSource } from './multiSearch'
 import { SearchPanel, type SearchJump } from './SearchPanel'
@@ -70,6 +71,37 @@ function RecentList({
   )
 }
 
+function PlacesList({ places, onPick, onDismiss }: { places: Place[] | null; onPick: (p: Place) => void; onDismiss: () => void }) {
+  useEffect(() => {
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !(e.target as HTMLElement).closest('.menu-anchor')) onDismiss()
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('keydown', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', close)
+    }
+  }, [onDismiss])
+  return (
+    <ul className="recent-list floating" role="menu" aria-label="Places">
+      {places === null && <li className="muted" style={{ padding: '8px 12px' }}>Looking for synced folders…</li>}
+      {places?.length === 0 && <li className="muted" style={{ padding: '8px 12px' }}>No synced OneDrive, SharePoint, Google Drive or Dropbox folders were found.</li>}
+      {places?.map((p) => (
+        <li key={p.path} role="none">
+          <button role="menuitem" onClick={() => onPick(p)} title={p.path}>
+            <Cloud className="recent-icon" size={18} strokeWidth={1.6} aria-hidden />
+            <span className="recent-text">
+              <span className="recent-name">{p.label}</span>
+              <span className="recent-dir">{p.path}</span>
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 const NO_DEFAULTS = {}
 const NO_PRESETS: [] = []
 
@@ -81,6 +113,8 @@ export function App() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [dialog, setDialog] = useState<'settings' | 'shortcuts' | null>(null)
   const [recentOpen, setRecentOpen] = useState(false)
+  const [placesOpen, setPlacesOpen] = useState(false)
+  const [places, setPlaces] = useState<Place[] | null>(null)
   const [recovery, setRecovery] = useState<RecoveryEntry[]>([])
   const [searchPanel, setSearchPanel] = useState(false)
   const jumpKey = useRef(1)
@@ -313,6 +347,31 @@ export function App() {
             </div>
           ))}
           <IconButton icon={Plus} className="tab-new" label="Open file" title="Open (Ctrl+O)" onClick={open} />
+        </div>
+        <div className="menu-anchor">
+          <button
+            className="strip-btn"
+            onClick={() => {
+              setPlacesOpen((o) => !o)
+              void window.openpdf.places().then(setPlaces, () => setPlaces([]))
+            }}
+            aria-expanded={placesOpen}
+            title="Open from OneDrive, SharePoint, Google Drive or Dropbox folders synced to this computer"
+          >
+            <Cloud size={15} strokeWidth={1.8} aria-hidden />
+            <span>Places</span>
+          </button>
+          {placesOpen && (
+            <PlacesList
+              places={places}
+              onPick={async (p) => {
+                setPlacesOpen(false)
+                setError(null)
+                addFiles(await window.openpdf.openFileDialog(p.path))
+              }}
+              onDismiss={() => setPlacesOpen(false)}
+            />
+          )}
         </div>
         <div className="menu-anchor">
           <button

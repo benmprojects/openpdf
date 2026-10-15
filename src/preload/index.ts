@@ -8,6 +8,7 @@ import type { OcrResult } from '../main/ocr'
 import type { ScanOptions, ScannerInfo } from '../main/scan'
 import type { BatchAction } from '../renderer/src/batch'
 import type { CatalogueEntry, InstalledPlugin } from '../main/plugins'
+import type { Place } from '../shared/places'
 import type { PluginManifest } from '../shared/plugins'
 
 export type { ImageStamp }
@@ -21,7 +22,10 @@ export interface OpenedFile {
 }
 
 const api = {
-  openFileDialog: (): Promise<OpenedFile[]> => ipcRenderer.invoke('file:open-dialog'),
+  /** The Open dialog, starting in a folder when one is given. */
+  openFileDialog: (startIn?: string): Promise<OpenedFile[]> => ipcRenderer.invoke('file:open-dialog', startIn),
+  /** Synced cloud folders (OneDrive, SharePoint, Google Drive, Dropbox) found on this computer. */
+  places: (): Promise<Place[]> => ipcRenderer.invoke('places:list'),
   initialFiles: (): Promise<OpenedFile[]> => ipcRenderer.invoke('file:initial'),
   readFile: (path: string): Promise<OpenedFile> => ipcRenderer.invoke('file:read', path),
   /** Overwrites the PDF at `path`. */

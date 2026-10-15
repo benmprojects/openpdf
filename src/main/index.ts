@@ -11,6 +11,8 @@ import { findLibreOffice, htmlToPdf, officeToPdf, screenshot } from './convert'
 import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
 import { deleteAction, expandPdfs, listActions, readPdf as readBatchPdf, saveAction, writeResult } from './batchIo'
 import { HELP, loadAction, parseCli } from './cli'
+import { listPlaces } from './places'
+import type { Place } from '../shared/places'
 import { fetchCatalogue, installFromCatalogue, installFromFolder, installFromZip, listPlugins, uninstallPlugin, type CatalogueEntry } from './plugins'
 import type { BatchAction } from '../renderer/src/batch'
 import { listScanners, scan, type ScanOptions } from './scan'
@@ -133,9 +135,17 @@ async function openForUser(path: string) {
   return f
 }
 
-ipcMain.handle('file:open-dialog', async () => {
+/** Synced cloud folders (OneDrive, SharePoint, Google Drive, Dropbox) to offer as places. Tests supply a list. */
+ipcMain.handle('places:list', async () => {
+  if (e2e && process.env.OPENPDF_E2E_PLACES) return JSON.parse(process.env.OPENPDF_E2E_PLACES) as Place[]
+  return listPlaces()
+})
+
+ipcMain.handle('file:open-dialog', async (_e, startIn?: unknown) => {
+  if (e2e && process.env.OPENPDF_E2E_OPENDIR_LOG) await writeFile(process.env.OPENPDF_E2E_OPENDIR_LOG, typeof startIn === 'string' ? startIn : '')
   if (e2e && process.env.OPENPDF_E2E_OPEN) return Promise.all(process.env.OPENPDF_E2E_OPEN.split(';').map(readPdf))
   const res = await dialog.showOpenDialog({
+    ...(typeof startIn === 'string' && startIn ? { defaultPath: startIn } : {}),
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'PDF documents', extensions: ['pdf'] }]
   })

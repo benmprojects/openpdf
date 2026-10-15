@@ -98,7 +98,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Portfolios/packages, embedded files (Attachments pane: add, save all, remove; Convert > Portfolio makes a package with a cover page and a /Collection entry; portfolios open on their file list)
 - [ ] 3D, multimedia and rich media playback (low priority)
 - [x] Plugin API and extension store (File > Plugins: sandboxed script plugins that return batch steps within the permissions in their manifest; install from a folder, a zip or a catalogue with SHA-256 checking, no catalogue is hosted by this project, the address is the user's)
-- [ ] Optional cloud connectors (OneDrive, SharePoint, Google Drive)
+- [x] Optional cloud connectors (OneDrive, SharePoint, Google Drive) (Places menu: synced OneDrive, SharePoint, Google Drive and Dropbox folders found on the computer, opened as real folders. No direct API connection: that needs an app registration with each provider)
 
 ## Phase 9: Polish and release
 - [x] Performance targets: open a 500-page file under 2 s to first page; memory cap on huge files (`e2e/perf.spec.ts`: about 0.5 s for 500 pages and 0.3 s for a page with 2000 annotations; renderer about 400 MB after scrolling all 500 pages, test limit 1.5 GB)

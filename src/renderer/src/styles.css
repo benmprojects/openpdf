@@ -2668,3 +2668,9 @@ button.compare-item:hover {
   gap: 8px;
   margin: 6px 0;
 }
+
+.recent-list.floating[aria-label="Places"] {
+  max-height: 60vh;
+  overflow: auto;
+  min-width: 340px;
+}
