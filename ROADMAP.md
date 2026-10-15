@@ -82,7 +82,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Redaction (mark an area, selected text or search results; applying removes the text, images and shapes from the page content and deletes annotations under the marks) and metadata sanitise (Redact tab > Hidden information). Limits: text goes a whole line at a time; an image partly under a mark is removed whole; pages that draw form XObjects are flagged, not cleaned
 - [x] Digital signatures: create, validate, timestamp, certificate store (Sign tab: certificates from the Windows store or a .pfx file, RFC 3161 time-stamp, validity and trust shown in a panel and a banner). Not done: certificate-based (public-key) encryption, signing encrypted files, long-term validation (LTV/revocation), ECDSA time-stamps untested
 - [x] Visible signature appearances; certify documents (draw a box for a visible signature; certify with no changes, form filling, or comments allowed)
-- [ ] Verify PDF/A and PDF/UA compliance flags
+- [x] Verify PDF/A and PDF/UA compliance flags (File > Standards: the XMP claim and basic checks; not a full validator)
 
 ## Phase 7: OCR and conversion (P1)
 - [ ] OCR scanned pages to searchable text (Tesseract WASM, multiple languages)

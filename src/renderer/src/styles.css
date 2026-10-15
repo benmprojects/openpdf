@@ -2567,3 +2567,22 @@ button.compare-item:hover {
 .sig-details dd {
   margin: 0;
 }
+
+/* PDF standards checks */
+.std-list {
+  list-style: none;
+  margin: 4px 0 12px;
+  padding: 0;
+}
+.std-list li {
+  padding: 2px 0;
+}
+.std-pass span:first-child {
+  color: #1c8a3a;
+}
+.std-warn span:first-child {
+  color: #c77d00;
+}
+.std-fail span:first-child {
+  color: #d3302b;
+}

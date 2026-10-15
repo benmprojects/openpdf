@@ -53,6 +53,8 @@ import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from 
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, rangeRects, type Match } from './textLogic'
 import { SanitiseDialog } from './SanitiseDialog'
+import { StandardsDialog } from './StandardsDialog'
+import { checkStandards, type StandardsReport } from './standards'
 import { SignDialog, type SignRequest } from './SignDialog'
 import { SignaturesDialog, signatureState, type SignatureRow } from './SignaturesDialog'
 import { addTimestamp, buildTimestampRequest, prepareSignature, readSignatures, verifySignature } from './sign'
@@ -211,6 +213,7 @@ import {
   Strikethrough,
   Trash2,
   Type,
+  BadgeCheck,
   EyeOff,
   FileSignature,
   ShieldAlert,
@@ -455,6 +458,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [labelRanges, setLabelRanges] = useState<LabelRange[] | null>(null)
   const [optimising, setOptimising] = useState(false)
   const [docProps, setDocProps] = useState<DocProps | null>(null)
+  const [standards, setStandards] = useState<StandardsReport | null>(null)
+  const openStandards = async () => {
+    try {
+      setStandards(await checkStandards(annotsDirty ? await applyEdits(bytes) : bytes))
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not check the document: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   const openDocProps = async () => {
     try {
       setDocProps(await readProps(bytes))
@@ -2509,6 +2520,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
               <RGroup label="Info">
                 <RB big icon={FileText} label="Properties" onClick={() => void openDocProps()} disabled={!pages.length || busy || locked} title="Title, author, keywords and other document properties" />
+                <RB big icon={BadgeCheck} label="Standards" onClick={() => void openStandards()} disabled={!pages.length || busy} title="What the file declares about PDF/A and PDF/UA, with basic checks" />
               </RGroup>
               <RGroup label="Output">
                 <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
@@ -3129,6 +3141,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </Modal>
       )}
 
+      {standards && <StandardsDialog report={standards} onClose={() => setStandards(null)} />}
       {docProps && (
         <DocPropsDialog
           initial={docProps}
