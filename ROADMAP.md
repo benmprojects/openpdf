@@ -60,7 +60,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Crop (margins or crop tool, remove cropping), resize to a paper size (scale to fit), headers and footers with codes, Bates numbering, page numbers (Layout tab; marks are tagged so they can be removed)
 - [x] Watermarks (text or picture, angle, opacity, over or behind) and backgrounds (colour or picture), removable
 - [x] Bookmarks, page labels and link editing
-- [ ] Optimise and compress, linearise, remove unused objects
+- [x] Optimise and compress, linearise, remove unused objects
 - [ ] Document properties and metadata editing, XMP
 
 ## Phase 4: Content editing (P0/P1)

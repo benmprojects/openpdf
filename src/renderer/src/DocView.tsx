@@ -64,6 +64,8 @@ import { addBackground, addHeaderFooter, addWatermark, cropPages, marksPresent, 
 import { PageMarksDialog, type MarksMode, type MarksRequest } from './PageMarksDialog'
 import { readLabelRanges, writeLabelRanges, writeOutline, type BookmarkNode, type LabelRange } from './outlineEdit'
 import { PageLabelsDialog } from './PageLabelsDialog'
+import { optimise, type OptimiseOptions } from './optimise'
+import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
 import { ComparePanel } from './ComparePanel'
 import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
@@ -94,6 +96,7 @@ import {
   FilePlus2,
   Files,
   Tags,
+  Gauge,
   FolderOpen,
   Hand,
   Highlighter,
@@ -374,6 +377,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }
   const [pageLabels, setPageLabels] = useState<string[] | null>(null)
   const [labelRanges, setLabelRanges] = useState<LabelRange[] | null>(null)
+  const [optimising, setOptimising] = useState(false)
+  const runOptimise = async (o: OptimiseOptions) => {
+    setOptimising(false)
+    let before = 0
+    let summary = ''
+    await applyPageEdit(async (b) => {
+      before = b.length
+      const r = await optimise(b, o)
+      const parts = [r.images && `${r.images} picture${r.images === 1 ? '' : 's'} reduced`, r.thumbnails && `${r.thumbnails} thumbnail${r.thumbnails === 1 ? '' : 's'} removed`].filter(Boolean)
+      const pct = Math.round((1 - r.bytes.length / before) * 100)
+      summary = `Optimised: ${formatSize(before)} to ${formatSize(r.bytes.length)} (${pct >= 0 ? `${pct}% smaller` : `${-pct}% larger`})${parts.length ? `; ${parts.join(', ')}` : ''}`
+      return r.bytes
+    })
+    if (summary) setNotice({ kind: 'info', text: summary })
+  }
   const openPageLabels = async () => {
     try {
       setLabelRanges(await readLabelRanges(bytes))
@@ -2036,6 +2054,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Files} label="Merge" onClick={mergeFiles} disabled={!pages.length || busy} title="Merge: add the pages of other PDFs to the end" />
                 <RB big icon={Scissors} label="Split" onClick={() => void runPageOp({ kind: 'split' }, opPages)} disabled={!pages.length || busy} title="Split into files of a set number of pages" />
               </RGroup>
+              <RGroup label="Optimise">
+                <RB big icon={Gauge} label="Optimise" onClick={() => setOptimising(true)} disabled={!pages.length || busy || !!password} title="Make the file smaller: reduce pictures, compress, remove unused objects, linearise" />
+              </RGroup>
               <RGroup label="Numbering">
                 <RB big icon={Tags} label="Page labels" onClick={() => void openPageLabels()} disabled={!pages.length || busy || !!password} title="Set the page numbers readers show (i, ii, 1, 2 …)" />
               </RGroup>
@@ -2247,6 +2268,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           onClose={() => setMarksMode(null)}
         />
       )}
+
+      {optimising && <OptimiseDialog size={bytes.length} onApply={(o) => void runOptimise(o)} onClose={() => setOptimising(false)} />}
 
       {labelRanges && (
         <PageLabelsDialog

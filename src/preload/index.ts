@@ -46,6 +46,9 @@ const api = {
   listPdfs: (dir: string, recursive: boolean): Promise<string[]> => ipcRenderer.invoke('file:list-pdfs', dir, recursive),
   /** Save As dialog for an embedded file; resolves to the written path, or null if cancelled. */
   saveAttachment: (name: string, data: Uint8Array): Promise<string | null> => ipcRenderer.invoke('file:save-attachment', name, data),
+  /** Rewrites a PDF through qpdf in the main process. */
+  qpdf: (data: Uint8Array, o: { objectStreams: boolean; recompress: boolean; removeUnusedResources: boolean; linearise: boolean }): Promise<Uint8Array> =>
+    ipcRenderer.invoke('pdf:qpdf', data, o),
   /** Printing: start a job, send each page as a PNG with its size in points, then print (shows the system dialog). */
   printBegin: (): Promise<string> => ipcRenderer.invoke('print:begin'),
   printPage: (job: string, n: number, png: Uint8Array, w: number, h: number): Promise<void> =>

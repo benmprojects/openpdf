@@ -12,6 +12,7 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 
 ## Current state
 - Phases 0, 1 and 2 complete (see ROADMAP). Phase 3: page organisation, copy/replace/split, Layout tab (headers, footers, numbers, Bates, watermarks, backgrounds, crop, resize), and bookmark, page label and link editing are done.
+- Optimise (Organise tab): `optimise.ts` re-encodes oversized 8-bit grey/RGB images as JPEG (pdf-lib plus canvas; PNG-predicted images are unfiltered first; masks, indexed, CMYK and TIFF-predicted images are left alone) and drops page thumbnails; then `src/main/qpdf.ts` runs qpdf (WASM, `@neslinesli93/qpdf-wasm`, ISC, pinned) over IPC `pdf:qpdf` for object streams, recompression, unused resources and linearising. `OptimiseDialog.tsx` has presets. Undoable like other page edits. Saving writes bytes as-is, so linearisation survives. Install with `npm i --legacy-peer-deps`.
 - Bookmark, page label and link editing:
   - `outlineEdit.ts`: bookmark tree edits (insert, remove, update, move, indent, outdent) and `writeOutline` (a fresh /Outlines tree, every bookmark to the top of its page). `readLabelRanges` / `writeLabelRanges` / `labelFor` for /PageLabels.
   - Bookmarks pane (`Sidebar.tsx`) has an edit toolbar; F2 renames, Delete deletes. The pane shows the edited tree until the rewritten file reads back the same, and DocView queues outline writes (`editOutline`) because edits come faster than reloads.

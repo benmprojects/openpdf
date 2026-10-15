@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
+import { runQpdf } from './qpdf'
 import { addStamps, listStamps, removeStamp } from './stamps'
 import {
   addRecent,
@@ -303,6 +304,16 @@ ipcMain.handle('file:list-pdfs', async (_e, dir: string, recursive: boolean) => 
   await walk(dir, 0)
   return out.sort((a, b) => a.localeCompare(b))
 })
+
+/** Rewrites a PDF through qpdf (object streams, recompression, unused resources, linearising). */
+ipcMain.handle('pdf:qpdf', async (_e, data: Uint8Array, o: Record<string, unknown>) =>
+  runQpdf(new Uint8Array(data), {
+    objectStreams: o.objectStreams === true,
+    recompress: o.recompress === true,
+    removeUnusedResources: o.removeUnusedResources === true,
+    linearise: o.linearise === true
+  })
+)
 
 /** Saves an embedded file under a name the user picks. Any file type; nothing is opened or run. */
 ipcMain.handle('file:save-attachment', async (e, name: string, data: Uint8Array) => {
