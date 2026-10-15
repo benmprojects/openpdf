@@ -61,7 +61,7 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - Lint: some react-hooks rules are relaxed to warnings (see CLAUDE.md).
 
 ## Next steps (strict phase order)
-1. Phase 0 leftover: dockable panes (at least: side pane left or right, plus a bottom comments pane later). Decide a small layout model rather than a docking library unless a permissive one fits.
+1. (Done: side pane docks left or right.)
 2. Phase 1, in ROADMAP order:
    - Marquee zoom; single and two-page modes.
    - Attachments, layers (optional content), page labels.

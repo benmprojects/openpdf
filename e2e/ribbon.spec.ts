@@ -53,6 +53,17 @@ test('ribbon tabs show their groups and the Organise tab edits the selected page
       })
       .toBe(true)
 
+    // Dock the side pane on the right and back.
+    await win.getByRole('tab', { name: 'View' }).click()
+    await win.getByRole('button', { name: 'Dock right' }).click()
+    await expect
+      .poll(async () => ((await win.locator('aside.sidebar').boundingBox())?.x ?? 0) > ((await win.locator('.scroller').boundingBox())?.x ?? 0))
+      .toBe(true)
+    await win.getByRole('button', { name: 'Dock left' }).click()
+    await expect
+      .poll(async () => ((await win.locator('aside.sidebar').boundingBox())?.x ?? 1e9) < ((await win.locator('.scroller').boundingBox())?.x ?? 0))
+      .toBe(true)
+
     // The status bar keeps page navigation and zoom on every tab.
     await expect(win.getByRole('toolbar', { name: 'Page and zoom' }).getByRole('textbox', { name: 'Page number' })).toBeVisible()
     expect(problems).toEqual([])

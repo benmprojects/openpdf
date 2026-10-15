@@ -12,7 +12,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] PDFium WASM worker and render pipeline (tiles above 16 Mpx, DPI-aware, off main thread)
 - [x] Document model, undo/redo, crash-recovery snapshots of unsaved work (no silent autosave to the file itself, on purpose)
 - [x] Ribbon (File, Home, Comment, Organise, View) with icons, status bar, title-bar tab strip, tabbed documents, dark and light themes
-- [ ] Dockable panes (only a resizable side pane so far)
+- [x] Side pane docks left or right, resizable, remembered (floating panes not planned for now)
 - [x] Settings, keyboard shortcut list (F1), recent files, single instance; .pdf file association in the installer config (installer not yet built on this machine)
 - [x] MIT licence, CONTRIBUTING, third-party licence notices (`npm run licences`), CI workflow written
 - [ ] CI run on a remote and a built NSIS installer (local build blocked: Windows refused to run the unsigned NSIS stub, EPERM)

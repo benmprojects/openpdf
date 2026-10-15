@@ -1038,6 +1038,13 @@ kbd {
   font-weight: 600;
   border-bottom-color: var(--accent);
 }
+.body.pane-right {
+  flex-direction: row-reverse;
+}
+.body.pane-right .splitter {
+  border-left: none;
+  border-right: 1px solid var(--border);
+}
 .splitter {
   flex: none;
   width: 5px;

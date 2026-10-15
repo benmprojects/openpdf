@@ -43,6 +43,7 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  PanelRight,
   Pencil,
   Printer,
   Redo2,
@@ -105,6 +106,8 @@ interface Props {
   /** Minutes between crash-recovery snapshots; 0 turns them off. */
   autosaveMinutes: number
   sidebarWidth: number
+  paneSide: 'left' | 'right'
+  onPaneSide: (side: 'left' | 'right') => void
   /** Called when the user finishes dragging the side pane's edge. */
   onSidebarWidth: (w: number) => void
   onOpen: () => void
@@ -135,7 +138,7 @@ function compactRanges(pages: number[]): string {
   return out.join(', ')
 }
 
-export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, onOpen, onCloseDoc }: Props) {
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onCloseDoc }: Props) {
   const [ribbon, setRibbon] = useState<RibbonTab>('home')
   // Pages selected in the thumbnail pane; the Organise tab acts on them, or on the current page if none are.
   const [pageSel, setPageSel] = useState<number[]>([])
@@ -1008,6 +1011,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Panes">
                 <RB big icon={LayoutGrid} label="Pages" onClick={() => setSidebar(sidebar === 'pages' ? null : 'pages')} pressed={sidebar === 'pages'} title="Show or hide page thumbnails" />
                 <RB big icon={Bookmark} label="Bookmarks" onClick={() => setSidebar(sidebar === 'bookmarks' ? null : 'bookmarks')} pressed={sidebar === 'bookmarks'} title="Show or hide bookmarks" />
+                <RStack>
+                  <RB icon={PanelLeft} label="Dock left" onClick={() => onPaneSide('left')} pressed={paneSide === 'left'} title="Dock the side pane on the left" />
+                  <RB icon={PanelRight} label="Dock right" onClick={() => onPaneSide('right')} pressed={paneSide === 'right'} title="Dock the side pane on the right" />
+                </RStack>
               </RGroup>
               <RGroup label="Zoom">
                 <RStack>
@@ -1163,7 +1170,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </form>
       )}
 
-      <div className="body">
+      <div className={paneSide === 'right' ? 'body pane-right' : 'body'}>
         {error ? (
           <div className="error">{error}</div>
         ) : passwordIssue ? (
@@ -1217,7 +1224,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   const startW = paneWidth
                   let w = startW
                   const move = (ev: MouseEvent) => {
-                    w = Math.min(600, Math.max(140, startW + ev.clientX - startX))
+                    const dx = (ev.clientX - startX) * (paneSide === 'right' ? -1 : 1)
+                    w = Math.min(600, Math.max(140, startW + dx))
                     setPaneWidth(w)
                   }
                   const up = () => {

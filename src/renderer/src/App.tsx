@@ -130,6 +130,7 @@ export function App() {
   }, [pathsKey])
 
   const setSidebarWidth = useCallback((w: number) => changeSettings({ sidebarWidth: w }), [changeSettings])
+  const setPaneSide = useCallback((side: 'left' | 'right') => changeSettings({ paneSide: side }), [changeSettings])
 
   // Settings, files opened from Explorer while running, and documents left over from a crash.
   useEffect(() => {
@@ -329,6 +330,8 @@ export function App() {
             recovered={t.recovered}
             autosaveMinutes={settings?.autosaveMinutes ?? 0}
             sidebarWidth={settings?.sidebarWidth ?? 220}
+            paneSide={settings?.paneSide ?? 'left'}
+            onPaneSide={setPaneSide}
             onSidebarWidth={setSidebarWidth}
             onOpen={open}
             onCloseDoc={() => close(t.id)}

@@ -13,6 +13,8 @@ export interface Settings {
   /** Written as the author of new annotations. */
   author: string
   sidebarWidth: number
+  /** Which side of the window the side pane docks to. */
+  paneSide: 'left' | 'right'
 }
 
 const RECENT_MAX = 12
@@ -22,7 +24,8 @@ const defaults = (): Settings => ({
   recent: [],
   autosaveMinutes: 2,
   author: process.env.USERNAME ?? process.env.USER ?? '',
-  sidebarWidth: 220
+  sidebarWidth: 220,
+  paneSide: 'left'
 })
 
 let current: Settings | null = null
@@ -43,7 +46,8 @@ function sanitise(raw: Partial<Settings>): Settings {
     autosaveMinutes:
       typeof raw.autosaveMinutes === 'number' && raw.autosaveMinutes >= 0 && raw.autosaveMinutes <= 60 ? raw.autosaveMinutes : d.autosaveMinutes,
     author: typeof raw.author === 'string' ? raw.author.slice(0, 200) : d.author,
-    sidebarWidth: typeof raw.sidebarWidth === 'number' ? Math.min(600, Math.max(140, raw.sidebarWidth)) : d.sidebarWidth
+    sidebarWidth: typeof raw.sidebarWidth === 'number' ? Math.min(600, Math.max(140, raw.sidebarWidth)) : d.sidebarWidth,
+    paneSide: raw.paneSide === 'right' ? 'right' : 'left'
   }
 }
 
