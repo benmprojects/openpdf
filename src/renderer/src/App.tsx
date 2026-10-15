@@ -376,6 +376,7 @@ export function App() {
             onSidebarWidth={setSidebarWidth}
             onOpen={open}
             onCloseDoc={() => close(t.id)}
+            author={settings?.author ?? ''}
           />
         ))}
         {!tabs.length && (

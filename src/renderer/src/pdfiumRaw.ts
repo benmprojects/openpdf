@@ -155,6 +155,8 @@ export interface ImportedAnnot {
   rect: [number, number, number, number]
   /** Interior colour of a filled shape. */
   fill?: string
+  /** Second line of one of our dated stamps. */
+  stampInfo?: string
 }
 
 const ANNOT_KINDS: Record<number, AnnotKind> = {
@@ -203,6 +205,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
   const keyIT = cString(m, 'IT')
   const keyBE = cString(m, 'BE')
   const keyMeasure = cString(m, 'Measure')
+  const keyInfo = cString(m, 'OPInfo')
   const out: ImportedAnnot[] = []
 
   const toDisplay = (x: number, y: number): [number, number] => {
@@ -361,7 +364,8 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
           lineWidth,
           points,
           rect,
-          fill
+          fill,
+          stampInfo: kind === 'stamp' ? readString(annot, keyInfo) || undefined : undefined
         })
       } finally {
         m._FPDFPage_CloseAnnot(annot)
@@ -376,6 +380,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
     m.wasmExports.free(keyIT)
     m.wasmExports.free(keyBE)
     m.wasmExports.free(keyMeasure)
+    m.wasmExports.free(keyInfo)
   }
   return out
 }

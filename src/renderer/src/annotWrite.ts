@@ -207,6 +207,17 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
   let boldFont: PDFFont | null = null
   const getBold = async () => (boldFont ??= await pdf.embedFont(StandardFonts.HelveticaBold))
   const now = PDFString.fromDate(new Date())
+  // Image stamps: each picture is embedded once, however many times it is stamped.
+  const images = new Map<string, Promise<{ ref: PDFRef }>>()
+  const getImage = (dataUrl: string) => {
+    let p = images.get(dataUrl)
+    if (!p) {
+      const bytes = Uint8Array.from(atob(dataUrl.slice(dataUrl.indexOf(',') + 1)), (c) => c.charCodeAt(0))
+      p = (dataUrl.startsWith('data:image/png') ? pdf.embedPng(bytes) : pdf.embedJpg(bytes)) as Promise<{ ref: PDFRef }>
+      images.set(dataUrl, p)
+    }
+    return p
+  }
 
   // Resolve what to remove before anything is added, so remembered indices still point at the right entries.
   const removals = new Map<number, Set<number>>()
@@ -418,25 +429,53 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
         Subj: PDFHexString.fromText('Pencil'),
         AP: { N: ap }
       }
+    } else if (a.kind === 'stamp' && a.image) {
+      const r = a.rects[0]
+      const img = await getImage(a.image)
+      // Display space has y down, so the unit square is flipped to draw the picture upright.
+      const body = `${n(r.w)} 0 0 ${n(-r.h)} ${n(r.x)} ${n(r.y + r.h)} cm /Im Do`
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, { XObject: { Im: img.ref } })
+      dict = {
+        ...base,
+        Subtype: 'Stamp',
+        Name: 'OpenPDFImageStamp',
+        Subj: PDFHexString.fromText('Image stamp'),
+        Contents: PDFHexString.fromText(a.text),
+        AP: { N: ap }
+      }
     } else if (a.kind === 'stamp') {
       const r = a.rects[0]
       const fnt = await getBold()
       const label = winAnsiSafe(fnt, a.text.toUpperCase())
       const unit = fnt.widthOfTextAtSize(label, 1) || 1
-      const size = Math.max(4, Math.min(r.h * 0.52, (r.w - 14) / unit))
+      const info = a.stampInfo ? winAnsiSafe(fnt, a.stampInfo) : ''
+      // With an info line the label takes the top part of the box and the info line sits under it.
+      const labelH = info ? r.h * 0.62 : r.h
+      const size = Math.max(4, Math.min(labelH * (info ? 0.6 : 0.52), (r.w - 14) / unit))
       const tx = r.x + (r.w - unit * size) / 2
-      const ty = r.y + r.h / 2 + size * 0.35
+      const ty = r.y + labelH / 2 + size * 0.35 + (info ? r.h * 0.04 : 0)
       const i = a.lineWidth / 2
+      let infoOps = ''
+      let resources: Lit = { Font: { HelvB: fnt.ref } }
+      if (info) {
+        const reg = await getFont()
+        const iu = reg.widthOfTextAtSize(info, 1) || 1
+        const isz = Math.max(3, Math.min(r.h * 0.2, (r.w - 10) / iu))
+        infoOps = ` BT /Helv ${n(isz)} Tf ${rgb(a.color)} rg 1 0 0 -1 ${n(r.x + (r.w - iu * isz) / 2)} ${n(r.y + r.h * 0.86)} Tm ${reg.encodeText(info).toString()} Tj ET`
+        resources = { Font: { HelvB: fnt.ref, Helv: reg.ref } }
+      }
       const body =
         `${stroke(a)} ${n(r.x + i)} ${n(r.y + i)} ${n(r.w - a.lineWidth)} ${n(r.h - a.lineWidth)} re S ` +
-        `BT /HelvB ${n(size)} Tf ${rgb(a.color)} rg 1 0 0 -1 ${n(tx)} ${n(ty)} Tm ${fnt.encodeText(label).toString()} Tj ET`
-      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, { Font: { HelvB: fnt.ref } })
+        `BT /HelvB ${n(size)} Tf ${rgb(a.color)} rg 1 0 0 -1 ${n(tx)} ${n(ty)} Tm ${fnt.encodeText(label).toString()} Tj ET` +
+        infoOps
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, resources)
       dict = {
         ...base,
         Subtype: 'Stamp',
         Name: 'OpenPDFStamp',
-        Contents: PDFHexString.fromText(label),
+        Contents: PDFHexString.fromText(info ? `${label}\n${info}` : label),
         OPLabel: PDFHexString.fromText(label),
+        ...(info ? { OPInfo: PDFHexString.fromText(info) } : {}),
         AP: { N: ap }
       }
     } else if (a.kind === 'callout') {

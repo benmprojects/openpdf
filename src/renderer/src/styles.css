@@ -1223,6 +1223,126 @@ kbd {
 .scroller.erase .page {
   cursor: cell;
 }
+.stamp-anchor {
+  position: relative;
+  align-self: center;
+}
+.stamp-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 120px;
+  height: 30px;
+  padding: 2px 8px;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.stamp-current img {
+  max-height: 22px;
+  max-width: 90px;
+}
+.stamp-current span {
+  flex: 1;
+  text-align: left;
+}
+.stamp-picker {
+  position: fixed;
+  z-index: 60;
+  width: 360px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+}
+.stamp-picker h4 {
+  margin: 4px 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.stamp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.stamp-chip {
+  padding: 6px 8px;
+  color: #c8323c;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  background: transparent;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.stamp-chip.on,
+.stamp-chip:hover {
+  background: var(--accent-soft);
+}
+.stamp-dated {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.stamp-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.stamp-image {
+  position: relative;
+}
+.stamp-image > button:first-child,
+.stamp-add {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 56px;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.stamp-image.on > button:first-child {
+  outline: 2px solid var(--focus);
+}
+.stamp-image img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.stamp-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.stamp-add {
+  color: var(--muted);
+  font-size: 11px;
+  gap: 2px;
+}
 .page-row {
   display: flex;
   align-items: center;

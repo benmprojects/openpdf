@@ -55,6 +55,10 @@ export interface Annot {
   fill?: string
   /** Line style of shapes; solid when unset. */
   dash?: 'dashed' | 'dotted'
+  /** Image stamp: the picture as a data: URL (PNG or JPEG). */
+  image?: string
+  /** Text stamp: a second, smaller line, such as who stamped it and when. */
+  stampInfo?: string
   /**
    * Set on measurements: a line (distance), polyline (perimeter) or polygon (area) with the scale used.
    * `factor` is real units per point; `label` is the result as shown, for example "12.5 m".
@@ -73,7 +77,7 @@ export interface Annot {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.image ? a.image.length : null])
 }
 
 export const NOTE_SIZE = 22
@@ -158,9 +162,23 @@ export function arrowHeadLength(lineWidth: number): number {
   return Math.max(9, lineWidth * 4.5)
 }
 
-/** Default size of a stamp for its label: the text sets the width. */
-export function stampSize(label: string): { w: number; h: number } {
-  return { w: Math.round(28 + label.length * 13), h: 36 }
+/** Default size of a stamp for its label: the text sets the width; a second line makes it taller. */
+export function stampSize(label: string, info?: string): { w: number; h: number } {
+  const w = Math.round(28 + label.length * 13)
+  return info ? { w: Math.max(w, Math.round(20 + info.length * 5.6)), h: 46 } : { w, h: 36 }
+}
+
+/** Default size of an image stamp: 150 pt along its longer side, keeping its shape. */
+export function imageStampSize(width: number, height: number): { w: number; h: number } {
+  const s = 150 / Math.max(1, width, height)
+  return { w: Math.max(8, Math.round(width * s)), h: Math.max(8, Math.round(height * s)) }
+}
+
+/** "Name, 15/10/2026 14:05": the second line of a dated stamp, in Australian date order. */
+export function stampInfoLine(author: string, when = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  const date = `${p(when.getDate())}/${p(when.getMonth() + 1)}/${when.getFullYear()} ${p(when.getHours())}:${p(when.getMinutes())}`
+  return author ? `${author}, ${date}` : date
 }
 
 /** The three points of an open arrow head at `to`, as [left barb, tip, right barb]. */

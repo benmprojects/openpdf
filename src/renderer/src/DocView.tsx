@@ -15,6 +15,8 @@ import {
   canFill,
   signature,
   stampSize,
+  imageStampSize,
+  stampInfoLine,
   TEXTBOX_PADDING,
   translated,
   typewriterRect,
@@ -35,6 +37,8 @@ import type { Guide } from './GuideLayer'
 import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
+import { StampPicker, type StampChoice } from './StampPicker'
+import type { ImageStamp } from '../../preload'
 import { Reader, type ReaderState } from './readAloud'
 import type { MeasureKind } from './MeasureLayer'
 import { calibrate, formatArea, formatLength, pathLength, PAPER_MM, polygonArea, readViewports, scaleAt, type Scale, type Viewport } from './measure'
@@ -158,6 +162,8 @@ interface Props {
   onSidebarWidth: (w: number) => void
   onOpen: () => void
   onCloseDoc: () => void
+  /** Settings author name, for dated stamps. */
+  author: string
   /** A search-in-files result to show. */
   jump?: SearchJump
 }
@@ -196,7 +202,7 @@ function compactRanges(pages: number[]): string {
   return out.join(', ')
 }
 
-export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onCloseDoc, jump }: Props) {
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onCloseDoc, jump, author }: Props) {
   const [ribbon, setRibbon] = useState<RibbonTab>('home')
   // Pages selected in the thumbnail pane; the Organise tab acts on them, or on the current page if none are.
   const [pageSel, setPageSel] = useState<number[]>([])
@@ -384,7 +390,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   fillsRef.current = fills
   const dashesRef = useRef(dashes)
   dashesRef.current = dashes
-  const [stampLabel, setStampLabel] = useState(STAMP_LABELS[0])
+  const [stampChoice, setStampChoice] = useState<StampChoice>({ kind: 'text', label: STAMP_LABELS[0] })
+  const [stampDated, setStampDated] = useState(false)
+  const [stampImages, setStampImages] = useState<ImageStamp[]>([])
+  const [stampPickerOpen, setStampPickerOpen] = useState(false)
+  const stampChoiceRef = useRef(stampChoice)
+  stampChoiceRef.current = stampChoice
+  const stampDatedRef = useRef(stampDated)
+  stampDatedRef.current = stampDated
+  useEffect(() => {
+    window.openpdf.listStamps().then(setStampImages).catch(() => {})
+  }, [])
   const [lastMarkup, setLastMarkup] = useState<AnnotKind>('highlight')
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -437,6 +453,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               lineWidth: r.lineWidth,
               points: r.points,
               fill: r.fill,
+              stampInfo: r.stampInfo,
               origin: { index: r.index, subtype: r.subtype, rect: r.rect }
             }
             imported.push(a)
@@ -566,20 +583,30 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setTool('select')
         return
       }
-      const stamp = kind === 'stamp' ? stampSize(stampLabel) : null
+      const choice = stampChoiceRef.current
+      // A dated stamp records who placed it and when, at the moment it is placed.
+      const info = kind === 'stamp' && choice.kind === 'text' && stampDatedRef.current ? stampInfoLine(author) : undefined
+      const stamp =
+        kind !== 'stamp'
+          ? null
+          : choice.kind === 'image'
+            ? imageStampSize(choice.stamp.width, choice.stamp.height)
+            : stampSize(choice.label, info)
       const w = stamp ? stamp.w : kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.w
       const h = stamp ? stamp.h : kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.h
       const left = stamp ? x - w / 2 : x // a stamp is placed centred on the click
       const top = stamp ? y - h / 2 : y
       const rect = { x: Math.max(0, Math.min(size.width - w, left)), y: Math.max(0, Math.min(size.height - h, top)), w, h }
-      const a = newAnnot(kind, page, [rect], stamp ? stampLabel : '')
+      const a = newAnnot(kind, page, [rect], stamp ? (choice.kind === 'image' ? choice.stamp.name : choice.label) : '')
       if (stamp) a.lineWidth = 2
+      if (stamp && choice.kind === 'image') a.image = choice.stamp.dataUrl
+      if (info) a.stampInfo = info
       history.commit((list) => [...list, a])
       setSelectedAnnot(a.id)
       if (!stamp) setEditingAnnot(a.id)
       setTool('select')
     },
-    [pages, colors, stampLabel, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
+    [pages, colors, author, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   /** Eraser: rub out ink on one page. One undo step for the whole stroke. */
@@ -756,14 +783,26 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
   }
 
-  const pickStamp = (label: string) => {
-    setStampLabel(label)
-    if (selected?.kind === 'stamp') {
+  /** Choosing a stamp arms the stamp tool; a text label also relabels the selected text stamp. */
+  const pickStamp = (c: StampChoice) => {
+    setStampChoice(c)
+    setStampPickerOpen(false)
+    if (c.kind === 'text' && selected?.kind === 'stamp' && !selected.image) {
       touch(selected.id)
       history.commit((list) =>
-        list.map((a) => (a.id === selected.id ? { ...a, text: label, rects: [{ ...a.rects[0], w: stampSize(label).w }] } : a))
+        list.map((a) => (a.id === selected.id ? { ...a, text: c.label, rects: [{ ...a.rects[0], w: stampSize(c.label, a.stampInfo).w }] } : a))
       )
-    }
+    } else setTool('stamp')
+  }
+  const addStampImages = async () => {
+    const res = await window.openpdf.addStamps()
+    setStampImages(await window.openpdf.listStamps())
+    if (res.refused.length) setNotice({ kind: 'error', text: `Not added (PNG or JPEG up to 8 MB only): ${res.refused.join(', ')}` })
+  }
+  const removeStampImage = async (id: string) => {
+    await window.openpdf.removeStamp(id)
+    setStampImages(await window.openpdf.listStamps())
+    if (stampChoice.kind === 'image' && stampChoice.stamp.id === id) setStampChoice({ kind: 'text', label: STAMP_LABELS[0] })
   }
 
   const save = useCallback(
@@ -1421,13 +1460,24 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
               <RGroup label="Stamp">
                 <RB big icon={StampIcon} label="Stamp" onClick={() => setTool(tool === 'stamp' ? 'select' : 'stamp')} disabled={!pages.length} pressed={tool === 'stamp'} title="Place a stamp: click on the page" />
-                <select className="rselect" value={selected?.kind === 'stamp' ? selected.text : stampLabel} onChange={(e) => pickStamp(e.target.value)} aria-label="Stamp text">
-                  {STAMP_LABELS.map((l) => (
-                    <option key={l} value={l}>
-                      {l}
-                    </option>
-                  ))}
-                </select>
+                <div className="menu-anchor stamp-anchor">
+                  <button className="stamp-current" onClick={() => setStampPickerOpen((o) => !o)} aria-expanded={stampPickerOpen} aria-label="Choose stamp" title="Choose a stamp">
+                    {stampChoice.kind === 'image' ? <img src={stampChoice.stamp.dataUrl} alt="" /> : <span>{stampChoice.label}</span>}
+                    <ChevronDown size={14} aria-hidden />
+                  </button>
+                  {stampPickerOpen && (
+                    <StampPicker
+                      choice={stampChoice}
+                      dated={stampDated}
+                      images={stampImages}
+                      onPick={pickStamp}
+                      onDated={setStampDated}
+                      onAddImages={() => void addStampImages()}
+                      onRemoveImage={(id) => void removeStampImage(id)}
+                      onClose={() => setStampPickerOpen(false)}
+                    />
+                  )}
+                </div>
               </RGroup>
               {styleAndEdit}
             </>

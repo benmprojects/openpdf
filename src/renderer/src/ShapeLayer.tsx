@@ -149,15 +149,30 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
           {shape({ stroke: 'transparent', fill: a.fill ? 'transparent' : 'none', strokeWidth: fat(lw), pointerEvents: interactive ? (a.fill ? 'all' : 'stroke') : 'none', style: cursor, onMouseDown: down } as never)}
         </>
       )
+    } else if (a.kind === 'stamp' && a.image) {
+      body = (
+        <>
+          {!ghost && <image href={a.image} x={r.x} y={r.y} width={r.w} height={r.h} preserveAspectRatio="none" />}
+          <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="transparent" pointerEvents={interactive ? 'all' : 'none'} style={cursor} onMouseDown={down} />
+        </>
+      )
     } else if (a.kind === 'stamp') {
       const label = a.text.toUpperCase()
-      const size = stampFontSize(r.w, r.h, label)
+      const info = a.stampInfo ?? ''
+      const labelH = info ? r.h * 0.62 : r.h
+      const size = Math.min(stampFontSize(r.w, labelH, label) * (info ? 0.6 / 0.52 : 1), stampFontSize(r.w, r.h * 4, label))
+      const isz = Math.max(3, Math.min(r.h * 0.2, (r.w - 10) / (info.length * 0.5 || 1)))
       body = (
         <>
           <rect x={r.x + lw / 2} y={r.y + lw / 2} width={Math.max(1, r.w - lw)} height={Math.max(1, r.h - lw)} fill="none" stroke={col} strokeWidth={lw} />
+          {info && (
+            <text x={r.x + r.w / 2} y={r.y + r.h * 0.86} textAnchor="middle" fontFamily="Helvetica, Arial, sans-serif" fontSize={isz} fill={col}>
+              {info}
+            </text>
+          )}
           <text
             x={r.x + r.w / 2}
-            y={r.y + r.h / 2 + size * 0.35}
+            y={r.y + labelH / 2 + size * 0.35 + (info ? r.h * 0.04 : 0)}
             textAnchor="middle"
             fontFamily="Helvetica, Arial, sans-serif"
             fontWeight="bold"

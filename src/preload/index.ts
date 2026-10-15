@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { RecoveryEntry, Settings } from '../main/settings'
 import type { PrintLayout } from '../shared/printLayout'
+import type { ImageStamp } from '../main/stamps'
+
+export type { ImageStamp }
 
 export type { RecoveryEntry, Settings }
 
@@ -23,6 +26,10 @@ const api = {
   /** Asks for a folder and writes the files into it, never overwriting. Resolves null if cancelled. */
   saveMany: (files: { name: string; data: Uint8Array }[]): Promise<{ dir: string; written: string[] } | null> =>
     ipcRenderer.invoke('file:save-many', files),
+  listStamps: (): Promise<ImageStamp[]> => ipcRenderer.invoke('stamps:list'),
+  /** Asks for PNG or JPEG files and copies them into the stamp library. */
+  addStamps: (): Promise<{ added: number; refused: string[] }> => ipcRenderer.invoke('stamps:add'),
+  removeStamp: (id: string): Promise<void> => ipcRenderer.invoke('stamps:remove', id),
   setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
   copyImage: (png: Uint8Array): Promise<void> => ipcRenderer.invoke('clipboard:write-image', png),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('file:pick-folder'),

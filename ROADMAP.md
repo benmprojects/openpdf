@@ -43,7 +43,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Line, arrow, rectangle, ellipse, pencil/ink (move, reshape, resize, colour, width)
 - [x] Polygon, polyline, cloud, eraser (pencil strokes), fill colour, dashed and dotted lines; measurements saved as measurement annotations (LineDimension, PolyLineDimension, PolygonDimension with /Measure)
 - [x] Stamps: built-in text stamps (colour, resize)
-- [ ] Custom image stamps, dynamic stamps with date, time and user
+- [x] Custom image stamps (PNG/JPEG library in userData), dated stamps with name, date and time; stamp picker
 - [ ] Comment list: sort, filter, reply threads, status, summarise, export
 - [x] Colour choice, move, resize, delete, undo/redo, Save and Save As
 - [ ] Properties panel (font, opacity, border), saved tool presets, custom tool sets

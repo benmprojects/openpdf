@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
+import { addStamps, listStamps, removeStamp } from './stamps'
 import {
   addRecent,
   clearAllRecovery,
@@ -168,6 +169,26 @@ ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array
   const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
   if (res.canceled || !res.filePath) return null
   return writeDocument(res.filePath, data)
+})
+
+/** Image stamp library. */
+ipcMain.handle('stamps:list', () => listStamps())
+ipcMain.handle('stamps:remove', (_e, id: string) => removeStamp(id))
+ipcMain.handle('stamps:add', async (e) => {
+  let paths: string[]
+  if (e2e && process.env.OPENPDF_E2E_IMAGES) paths = process.env.OPENPDF_E2E_IMAGES.split(';')
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = {
+      title: 'Add image stamps',
+      properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }]
+    }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled) return { added: 0, refused: [] }
+    paths = res.filePaths
+  }
+  return addStamps(paths)
 })
 
 /** Presentation mode. */
