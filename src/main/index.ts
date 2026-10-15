@@ -7,6 +7,7 @@ import { findFont } from './fonts'
 import { editMenuTemplate } from './spellMenu'
 import { copyEncryption, decryptPdf, encryptionInfo, encryptPdf, runQpdf } from './qpdf'
 import { chainStatus, listCertificates, pfxInfo, signCms, type SignSource } from './signing'
+import { findLibreOffice, htmlToPdf, officeToPdf, screenshot } from './convert'
 import { addStamps, listStamps, removeStamp } from './stamps'
 import {
   addRecent,
@@ -253,6 +254,67 @@ ipcMain.handle('file:pick-one', async (e, filter?: { name: string; ext: string[]
   return { name: basename(path), data: new Uint8Array(data) }
 })
 
+/** Picks several files (images to combine into a PDF, say). Tests give their paths separated by "|". */
+ipcMain.handle('file:pick-many', async (e, filter?: { name: string; ext: string[] }) => {
+  let paths: string[]
+  if (e2e && process.env.OPENPDF_E2E_PICK) paths = process.env.OPENPDF_E2E_PICK.split('|')
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[], filters: filter ? [{ name: filter.name, extensions: filter.ext }] : [] }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths.length) return []
+    paths = res.filePaths
+  }
+  const out: { name: string; data: Uint8Array }[] = []
+  let total = 0
+  for (const path of paths.slice(0, 500)) {
+    const data = await readFile(path)
+    total += data.length
+    if (total > 500 * 1024 * 1024) throw new Error('Those files are too large to combine (over 500 MB).')
+    out.push({ name: basename(path), data: new Uint8Array(data) })
+  }
+  return out
+})
+
+/** Asks for a file with one of these extensions and returns its path; tests supply it. */
+async function pickPath(e: Electron.IpcMainInvokeEvent, name: string, ext: string[]): Promise<string | null> {
+  if (e2e && process.env.OPENPDF_E2E_PICK) return process.env.OPENPDF_E2E_PICK
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { properties: ['openFile'] as 'openFile'[], filters: [{ name, extensions: ext }] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
+}
+
+/** Web page to PDF: pick an .html file and print it. Resolves null if cancelled. */
+ipcMain.handle('convert:html-pick', async (e) => {
+  const path = await pickPath(e, 'Web pages', ['html', 'htm'])
+  return path ? { name: basename(path).replace(/\.[^.]*$/, '') + '.pdf', data: await htmlToPdf({ path }) } : null
+})
+ipcMain.handle('convert:html-text', async (_e, html: unknown) => htmlToPdf({ html: typeof html === 'string' ? html : '' }))
+
+/** Word, Excel, PowerPoint and OpenDocument files to PDF through an installed LibreOffice. */
+ipcMain.handle('convert:office-available', () => findLibreOffice() !== null)
+ipcMain.handle('convert:office-pick', async (e) => {
+  const path = await pickPath(e, 'Office documents', ['doc', 'docx', 'odt', 'rtf', 'xls', 'xlsx', 'ods', 'ppt', 'pptx', 'odp', 'csv'])
+  return path ? { name: basename(path).replace(/\.[^.]*$/, '') + '.pdf', data: await officeToPdf(path) } : null
+})
+
+/** The image on the clipboard as a PNG, or null. Tests read a file instead: other programs can change the system clipboard. */
+ipcMain.handle('clipboard:read-image', async () => {
+  if (e2e && process.env.OPENPDF_E2E_CLIPIMG) return new Uint8Array(await readFile(process.env.OPENPDF_E2E_CLIPIMG))
+  for (const item of await clipboard.read()) {
+    const type = item.types.includes('image/png') ? 'image/png' : item.types.find((t) => t.startsWith('image/'))
+    if (type) return new Uint8Array(await ((await item.getType(type)) as Blob).arrayBuffer())
+  }
+  return null
+})
+
+/** A screenshot of the primary screen. Tests read a file instead. */
+ipcMain.handle('convert:screenshot', async (e) => {
+  if (e2e && process.env.OPENPDF_E2E_CLIPIMG) return new Uint8Array(await readFile(process.env.OPENPDF_E2E_CLIPIMG))
+  return screenshot(BrowserWindow.fromWebContents(e.sender))
+})
+
 /** Opens a link from a document in the browser, after asking. Only web and mail links. */
 ipcMain.handle('link:open', async (e, url: string) => {
   let parsed: URL
@@ -396,6 +458,32 @@ ipcMain.handle('file:save-many', async (e, files: { name: string; data: Uint8Arr
     let target = join(dir, `${stem}.pdf`)
     for (let n = 2; await readFile(target).then(() => true, () => false); n++) target = join(dir, `${stem} (${n}).pdf`)
     await writePdf(target, f.data)
+    written.push(target)
+  }
+  return { dir, written }
+})
+
+/** Asks for a folder and writes files of any type into it (page pictures), never overwriting: a clash gets " (2)". */
+ipcMain.handle('file:save-files', async (e, files: { name: string; data: Uint8Array }[]) => {
+  let dir = e2e ? process.env.OPENPDF_E2E_DIR : undefined
+  if (!dir) {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    dir = res.filePaths[0]
+  }
+  const written: string[] = []
+  for (const f of files) {
+    // eslint-disable-next-line no-control-regex
+    const safe = basename(f.name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') || 'file'
+    const dot = safe.lastIndexOf('.')
+    const stem = dot > 0 ? safe.slice(0, dot) : safe
+    const ext = dot > 0 ? safe.slice(dot) : ''
+    let target = join(dir, safe)
+    for (let n = 2; await readFile(target).then(() => true, () => false); n++) target = join(dir, `${stem} (${n})${ext}`)
+    await writeFile(`${target}.openpdf-tmp`, f.data)
+    await rename(`${target}.openpdf-tmp`, target)
     written.push(target)
   }
   return { dir, written }

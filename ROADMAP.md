@@ -86,10 +86,10 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 
 ## Phase 7: OCR and conversion (P1)
 - [ ] OCR scanned pages to searchable text (Tesseract WASM, multiple languages)
-- [ ] Import: images, Word, Excel (via optional LibreOffice integration), HTML, text
-- [ ] Export: images (PNG, JPEG, TIFF), text, Word (best effort), HTML
+- [x] Import: images, Word, Excel (via optional LibreOffice integration), HTML, text (Convert tab; Office files need LibreOffice, whose path is built but not checked here because it is not installed)
+- [x] Export: images (PNG, JPEG, TIFF), text, Word (best effort), HTML (Convert tab; text formats keep headings and paragraphs, not pictures or layout)
 - [ ] Scan from TWAIN/WIA scanners
-- [ ] Create PDF from clipboard and screenshots; PDF/A output
+- [ ] Create PDF from clipboard and screenshots (done); PDF/A output (not yet)
 
 ## Phase 8: Productivity and automation (P2)
 - [ ] Batch processing and action wizard (watermark, OCR, optimise on folders)

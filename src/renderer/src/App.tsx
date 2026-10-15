@@ -378,6 +378,7 @@ export function App() {
             onPaneSide={setPaneSide}
             onSidebarWidth={setSidebarWidth}
             onOpen={open}
+            onNewDoc={(name, data) => addFiles([{ name, data, recovered: true }])}
             onCloseDoc={() => close(t.id)}
             author={settings?.author ?? ''}
             toolDefaults={settings?.toolDefaults ?? NO_DEFAULTS}

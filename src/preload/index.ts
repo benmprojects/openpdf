@@ -28,6 +28,8 @@ const api = {
   /** Asks for a folder and writes the files into it, never overwriting. Resolves null if cancelled. */
   saveMany: (files: { name: string; data: Uint8Array }[]): Promise<{ dir: string; written: string[] } | null> =>
     ipcRenderer.invoke('file:save-many', files),
+  /** Asks for a folder and writes files of any type into it, never overwriting. Resolves null if cancelled. */
+  saveFiles: (files: { name: string; data: Uint8Array }[]): Promise<{ dir: string; written: string[] } | null> => ipcRenderer.invoke('file:save-files', files),
   /** Save dialog for a text file; resolves to the written path, or null if cancelled. */
   saveText: (suggested: string, text: string, filter: { name: string; ext: string }): Promise<string | null> =>
     ipcRenderer.invoke('file:save-text', suggested, text, filter),
@@ -54,6 +56,20 @@ const api = {
   decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
   /** The file encrypted with new passwords and permissions. */
   encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** Picks several files at once (empty when cancelled). */
+  pickFiles: (filter?: { name: string; ext: string[] }): Promise<{ name: string; data: Uint8Array }[]> => ipcRenderer.invoke('file:pick-many', filter),
+  /** Asks for an .html file and prints it to a PDF (scripts and network off); null when cancelled. */
+  htmlToPdf: (): Promise<{ name: string; data: Uint8Array } | null> => ipcRenderer.invoke('convert:html-pick'),
+  /** Prints markup to a PDF. */
+  htmlTextToPdf: (html: string): Promise<Uint8Array> => ipcRenderer.invoke('convert:html-text', html),
+  /** Whether LibreOffice is installed (for converting Word, Excel and PowerPoint files). */
+  officeAvailable: (): Promise<boolean> => ipcRenderer.invoke('convert:office-available'),
+  /** Asks for an Office file and converts it with LibreOffice; null when cancelled. */
+  officeToPdf: (): Promise<{ name: string; data: Uint8Array } | null> => ipcRenderer.invoke('convert:office-pick'),
+  /** The image on the clipboard as a PNG, or null. */
+  clipboardImage: (): Promise<Uint8Array | null> => ipcRenderer.invoke('clipboard:read-image'),
+  /** A PNG of the whole screen (the window hides for a moment). */
+  screenshot: (): Promise<Uint8Array | null> => ipcRenderer.invoke('convert:screenshot'),
   /** Certificates with a private key in the Windows personal store. */
   signCertificates: (): Promise<CertInfo[]> => ipcRenderer.invoke('sign:certs'),
   /** Describes the certificate in a .pfx file; rejects when the password is wrong. */

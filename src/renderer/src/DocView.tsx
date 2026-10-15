@@ -51,7 +51,12 @@ import { getPageClip, onPageClip, setPageClip } from './pageClipboard'
 import { PDFDocument } from 'pdf-lib'
 import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
-import { findInPage, hitTest, rangeRects, type Match } from './textLogic'
+import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
+import { CreateDialog, type CreateRequest } from './CreateDialog'
+import { imagesToPdf, textToPdf } from './createPdf'
+import { ExportImagesDialog, type ExportImagesRequest } from './ExportDialog'
+import { bodySize, encodePage, pageFileName, scaleFor, structurePage, toDocx, toHtml, type ExportBlock } from './exportDoc'
+import { groupBlocks } from './textBlocks'
 import { SanitiseDialog } from './SanitiseDialog'
 import { StandardsDialog } from './StandardsDialog'
 import { checkStandards, type StandardsReport } from './standards'
@@ -151,6 +156,7 @@ import {
   SquareDashed,
   Maximize2,
   ClipboardPaste,
+  Globe,
   CopyPlus,
   GitCompare,
   FileInput,
@@ -268,6 +274,8 @@ interface Props {
   /** Called when the user finishes dragging the side pane's edge. */
   onSidebarWidth: (w: number) => void
   onOpen: () => void
+  /** A new document made here (from pictures, text and so on) opens in a tab of its own, unsaved. */
+  onNewDoc: (name: string, data: Uint8Array) => void
   onCloseDoc: () => void
   /** Settings author name, for dated stamps. */
   author: string
@@ -284,7 +292,7 @@ function mightBeEncrypted(data: Uint8Array): boolean {
   return look(data.subarray(0, 65536)) || (data.length > 65536 && look(data.subarray(data.length - 65536)))
 }
 
-type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'redact' | 'sign' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
+type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'redact' | 'sign' | 'convert' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
   ['home', 'Home'],
@@ -292,6 +300,7 @@ const RIBBON_TABS: [RibbonTab, string][] = [
   ['forms', 'Forms'],
   ['redact', 'Redact'],
   ['sign', 'Sign'],
+  ['convert', 'Convert'],
   ['comment', 'Comment'],
   ['draw', 'Draw'],
   ['measure', 'Measure'],
@@ -323,7 +332,7 @@ function compactRanges(pages: number[]): string {
   return out.join(', ')
 }
 
-export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onCloseDoc, jump, author, toolDefaults, toolPresets, onSettings }: Props) {
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onNewDoc, onCloseDoc, jump, author, toolDefaults, toolPresets, onSettings }: Props) {
   const [ribbon, setRibbon] = useState<RibbonTab>('home')
   // Pages selected in the thumbnail pane; the Organise tab acts on them, or on the current page if none are.
   const [pageSel, setPageSel] = useState<number[]>([])
@@ -1837,6 +1846,120 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }
   const opPagesRef = useRef<number[]>([])
 
+  // ---- Converting ------------------------------------------------------------------------------------
+  const [createFrom, setCreateFrom] = useState<{ kind: 'images' | 'text'; files: { name: string; data: Uint8Array }[] } | null>(null)
+  const [officeReady, setOfficeReady] = useState(true)
+  const [exportImagesOpen, setExportImagesOpen] = useState(false)
+  useEffect(() => {
+    void window.openpdf.officeAvailable().then(setOfficeReady, () => setOfficeReady(false))
+  }, [])
+  const stem = (n: string) => n.replace(/\.[^.]*$/, '')
+  const today = () => new Date().toLocaleDateString('en-AU').replace(/\//g, '-')
+  /** Runs a conversion and opens its result as a new, unsaved document. */
+  const makeNew = async (label: string, fn: () => Promise<{ name: string; data: Uint8Array } | null>) => {
+    setBusy(true)
+    try {
+      const made = await fn()
+      if (made) onNewDoc(made.name, made.data)
+    } catch (e) {
+      setNotice({ kind: 'error', text: `${label}: ${e instanceof Error ? e.message : String(e)}` })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const pickToCreate = async (kind: 'images' | 'text') => {
+    const files =
+      kind === 'images'
+        ? await window.openpdf.pickFiles({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tif', 'tiff'] })
+        : await window.openpdf.pickFiles({ name: 'Text files', ext: ['txt', 'md', 'csv', 'log'] })
+    if (files.length) setCreateFrom({ kind, files: kind === 'text' ? files.slice(0, 1) : files })
+  }
+  const runCreate = (r: CreateRequest) => {
+    const from = createFrom
+    setCreateFrom(null)
+    if (!from) return
+    void makeNew('Could not create the PDF', async () => {
+      if (r.kind === 'images') return { name: `${stem(from.files[0].name)}.pdf`, data: await imagesToPdf(from.files, r.size) }
+      const text = new TextDecoder('utf-8').decode(from.files[0].data)
+      const wide = [...text].some((ch) => ch.charCodeAt(0) > 0xff)
+      const unicode = wide ? await window.openpdf.findFont('Arial', false, false).catch(() => null) : null
+      return { name: `${stem(from.files[0].name)}.pdf`, data: await textToPdf(text, { font: r.font, size: r.fontSize, unicode: unicode?.data }) }
+    })
+  }
+  const fromPicture = (label: string, get: () => Promise<Uint8Array | null>, name: string, empty: string) =>
+    makeNew(label, async () => {
+      const png = await get()
+      if (!png) {
+        setNotice({ kind: 'info', text: empty })
+        return null
+      }
+      return { name, data: await imagesToPdf([{ name, data: png }], 'image') }
+    })
+
+  const exportStem = () => stem(name) || 'document'
+  const runExportImages = async (r: ExportImagesRequest) => {
+    setExportImagesOpen(false)
+    if (!client) return
+    setBusy(true)
+    try {
+      const list = r.scope === 'current' ? [currentPage] : pages.map((_, i) => i)
+      const files: { name: string; data: Uint8Array }[] = []
+      for (const p of list) {
+        setNotice({ kind: 'info', text: `Rendering page ${p + 1} of ${pages.length}…` })
+        const out = await client.render(p, scaleFor(r.dpi, pages[p].width, pages[p].height))
+        files.push({ name: pageFileName(exportStem(), p, pages.length, r.format), data: await encodePage(out.data, out.width, out.height, r.format) })
+      }
+      const saved = await window.openpdf.saveFiles(files)
+      setNotice(saved ? { kind: 'info', text: `Saved ${files.length} picture${files.length === 1 ? '' : 's'} in ${saved.dir}` } : null)
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not export the pictures: ${e instanceof Error ? e.message : String(e)}` })
+    } finally {
+      setBusy(false)
+    }
+  }
+  /** Every page's text as blocks in reading order (from the page's text objects, or its plain text where it has none). */
+  const exportStructure = async (): Promise<ExportBlock[][]> => {
+    if (!client) return []
+    const raw: Awaited<ReturnType<typeof groupBlocks>>[] = []
+    for (let p = 0; p < pages.length; p++) {
+      const t = await client.textObjects(p)
+      raw.push(groupBlocks(t.objects, t.rotation))
+    }
+    const body = bodySize(raw)
+    const out: ExportBlock[][] = []
+    for (let p = 0; p < pages.length; p++) {
+      const blocks = structurePage(raw[p], body)
+      if (blocks.length) out.push(blocks)
+      else {
+        const plain = normaliseNewlines((await client.pageText(p)).text)
+        out.push(plain.split(/\n+/).filter((l) => l.trim()).map((l) => ({ text: l.trim(), heading: 0 as const, size: body, bold: false, italic: false })))
+      }
+    }
+    return out
+  }
+  const exportAs = async (kind: 'txt' | 'html' | 'docx') => {
+    if (!client) return
+    setBusy(true)
+    try {
+      let data: Uint8Array
+      if (kind === 'txt') {
+        const all: string[] = []
+        for (let p = 0; p < pages.length; p++) all.push(normaliseNewlines((await client.pageText(p)).text))
+        data = new TextEncoder().encode(all.join('\n\f\n'))
+      } else {
+        const structure = await exportStructure()
+        data = kind === 'html' ? new TextEncoder().encode(toHtml(exportStem(), structure)) : await toDocx(exportStem(), structure)
+      }
+      const label = { txt: 'Text', html: 'HTML', docx: 'Word' }[kind]
+      const saved = await window.openpdf.saveData(`${exportStem()}.${kind}`, data, { name: `${label} files`, ext: kind })
+      if (saved) setNotice({ kind: 'info', text: `Exported ${saved}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not export: ${e instanceof Error ? e.message : String(e)}` })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // ---- Signatures ------------------------------------------------------------------------------------
   useEffect(() => {
     let live = true
@@ -2798,6 +2921,24 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
             </>
           )}
+          {ribbon === 'convert' && (
+            <>
+            <RGroup label="Export">
+              <RB big icon={ImageIcon} label="Pictures" onClick={() => setExportImagesOpen(true)} disabled={!pages.length || busy} title="Save the pages as PNG, JPEG or TIFF pictures" />
+              <RB big icon={FileText} label="Text" onClick={() => void exportAs('txt')} disabled={!pages.length || busy} title="Save the text of the document as a plain text file" />
+              <RB big icon={Globe} label="HTML" onClick={() => void exportAs('html')} disabled={!pages.length || busy} title="Save the text as a web page, with headings and paragraphs (pictures and layout are not kept)" />
+              <RB big icon={FileOutput} label="Word" onClick={() => void exportAs('docx')} disabled={!pages.length || busy} title="Save the text as a Word document, with headings and paragraphs (best effort: pictures and layout are not kept)" />
+            </RGroup>
+            <RGroup label="Create PDF">
+              <RB big icon={ImageIcon} label="From pictures" onClick={() => void pickToCreate('images')} disabled={busy} title="Make a PDF from PNG, JPEG, GIF, BMP, WebP or TIFF pictures, one per page" />
+              <RB big icon={FileText} label="From text" onClick={() => void pickToCreate('text')} disabled={busy} title="Make a PDF from a plain text file" />
+              <RB big icon={Globe} label="From web page" onClick={() => void makeNew('Could not convert the web page', () => window.openpdf.htmlToPdf())} disabled={busy} title="Make a PDF from a saved .html file (scripts and network access are off)" />
+              <RB big icon={FileInput} label="From Office file" onClick={() => void makeNew('Could not convert the file', () => window.openpdf.officeToPdf())} disabled={busy} title={officeReady ? 'Make a PDF from a Word, Excel or PowerPoint file (uses LibreOffice)' : 'Needs LibreOffice, which is not installed'} />
+              <RB big icon={ClipboardPaste} label="From clipboard" onClick={() => void fromPicture('Could not create the PDF', () => window.openpdf.clipboardImage(), 'Clipboard.pdf', 'There is no picture on the clipboard.')} disabled={busy} title="Make a PDF from the picture on the clipboard" />
+              <RB big icon={Camera} label="Screenshot" onClick={() => void fromPicture('Could not take the screenshot', () => window.openpdf.screenshot(), `Screenshot ${today()}.pdf`, 'The screen could not be captured.')} disabled={busy} title="Make a PDF from a picture of the whole screen" />
+            </RGroup>
+            </>
+          )}
           {ribbon === 'sign' && (
             <RGroup label="Signatures">
               <RB big icon={FileSignature} label="Sign document" onClick={() => setSignOpen(true)} disabled={!pages.length || busy || locked} title="Sign with a certificate from Windows or a certificate file" />
@@ -3056,6 +3197,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }}
         />
       )}
+      {exportImagesOpen && <ExportImagesDialog pageCount={pages.length} currentPage={currentPage} onExport={(r) => void runExportImages(r)} onClose={() => setExportImagesOpen(false)} />}
+      {createFrom && <CreateDialog kind={createFrom.kind} files={createFrom.files.map((f) => f.name)} onCreate={runCreate} onClose={() => setCreateFrom(null)} />}
       {signOpen && <SignDialog canCertify={sigRows.length === 0} onSign={startSign} onClose={() => setSignOpen(false)} />}
       {sigPanel && <SignaturesDialog rows={sigRows} onClose={() => setSigPanel(false)} />}
       {breakPrompt && (
