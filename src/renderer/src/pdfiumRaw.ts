@@ -814,16 +814,31 @@ export interface ImageObject {
   rect: Rect
   /** The transform that maps the image's unit square to the page. */
   matrix: [number, number, number, number, number, number]
+  /** Box in page space: left, bottom, right, top (stroke width included for paths). */
+  pageBounds: [number, number, number, number]
 }
 
 /**
  * Image objects the page draws directly (not inside form XObjects), in content-stream order, and the matrix that
  * maps display space (the page as shown, y down) to page space, so display-space edits can become page-space ones.
  */
-export function readImageObjects(
-  lib: PDFiumLibrary,
-  page: PDFiumPage
-): { objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] } {
+export function readImageObjects(lib: PDFiumLibrary, page: PDFiumPage): PageObjects {
+  return readObjects(lib, page, 3)
+}
+
+/** Painted path objects (lines, rectangles, curves, fills) the page draws directly, like `readImageObjects`. */
+export function readPathObjects(lib: PDFiumLibrary, page: PDFiumPage): PageObjects {
+  return readObjects(lib, page, 2)
+}
+
+export interface PageObjects {
+  objects: ImageObject[]
+  total: number
+  toPage: [number, number, number, number, number, number]
+}
+
+/** Objects of one PDFium type (2 path, 3 image) in content-stream order. */
+function readObjects(lib: PDFiumLibrary, page: PDFiumPage, type: number): PageObjects {
   const m = raw(lib)
   const p = pageHandle(page)
   const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
@@ -848,7 +863,7 @@ export function readImageObjects(
     let ordinal = 0
     for (let i = 0; i < n; i++) {
       const obj = m._FPDFPage_GetObject(p, i)
-      if (m._FPDFPageObj_GetType(obj) !== 3) continue
+      if (m._FPDFPageObj_GetType(obj) !== type) continue
       const k = ordinal++
       if (!m._FPDFPageObj_GetBounds(obj, scratch, scratch + 4, scratch + 8, scratch + 12)) continue
       const f = new DataView(m.HEAPU8.buffer)
@@ -868,7 +883,7 @@ export function readImageObjects(
         const mm = new DataView(m.HEAPU8.buffer)
         for (let q = 0; q < 6; q++) matrix[q] = mm.getFloat32(scratch + 16 + q * 4, true)
       }
-      objects.push({ ordinal: k, rect: { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }, matrix })
+      objects.push({ ordinal: k, rect: { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }, matrix, pageBounds: [l, b, r, t] })
     }
     return { objects, total: ordinal, toPage }
   } finally {

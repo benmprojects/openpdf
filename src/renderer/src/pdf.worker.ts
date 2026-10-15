@@ -11,6 +11,7 @@ import {
   readPageText,
   readTextObjects,
   readImageObjects,
+  readPathObjects,
   removePageAnnot,
   setPageAnnotRect,
   renderRegion,
@@ -39,6 +40,7 @@ export type WorkerRequest =
   | { id: number; type: 'links'; page: number }
   | { id: number; type: 'textObjects'; page: number }
   | { id: number; type: 'imageObjects'; page: number }
+  | { id: number; type: 'pathObjects'; page: number }
   | { id: number; type: 'close' }
 
 export type WorkerResponse =
@@ -55,6 +57,7 @@ export type WorkerResponse =
   | { id: number; ok: true; type: 'links'; links: PageLink[] }
   | { id: number; ok: true; type: 'textObjects'; objects: TextObject[]; total: number }
   | { id: number; ok: true; type: 'imageObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
+  | { id: number; ok: true; type: 'pathObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
   | { id: number; ok: true; type: 'close' }
   | { id: number; ok: false; error: string }
 
@@ -136,6 +139,12 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const r = readImageObjects(library, page)
       page.close()
       reply({ id: msg.id, ok: true, type: 'imageObjects', ...r })
+    } else if (msg.type === 'pathObjects') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const page = doc.getPage(msg.page)
+      const r = readPathObjects(library, page)
+      page.close()
+      reply({ id: msg.id, ok: true, type: 'pathObjects', ...r })
     } else if (msg.type === 'labels') {
       if (!doc || !library) throw new Error('No document loaded')
       reply({ id: msg.id, ok: true, type: 'labels', labels: readPageLabels(library, doc) })

@@ -1638,6 +1638,16 @@ button.compare-item:hover {
 .imageedit-box.selected {
   border: 1.5px solid var(--accent);
 }
+.imageedit-layer.paths {
+  cursor: crosshair;
+}
+.imageedit-layer.paths .imageedit-box {
+  pointer-events: none;
+}
+.imageedit-box.hover {
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 .imageedit-bar {
   position: absolute;
   display: flex;

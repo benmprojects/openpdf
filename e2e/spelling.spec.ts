@@ -19,6 +19,7 @@ test('spell check can be turned off in Settings and the choice is remembered', a
     const box = win.getByRole('checkbox', { name: /Check spelling/ })
     await expect(box).toBeChecked()
     await box.uncheck()
+    await expect(box).not.toBeChecked()
     await expect.poll(() => (existsSync(join(userData, 'settings.json')) ? JSON.parse(readFileSync(join(userData, 'settings.json'), 'utf8')).spellcheck : null)).toBe(false)
     // The text boxes are checked by the browser engine only while it is on.
     expect(await app.evaluate(({ session }) => session.defaultSession.isSpellCheckerEnabled())).toBe(false)

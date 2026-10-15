@@ -174,6 +174,13 @@ export class PdfClient {
     throw new Error('Unexpected response')
   }
 
+  /** The painted path objects a page draws itself, like `imageObjects`. */
+  async pathObjects(page: number): Promise<{ objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }> {
+    const res = await this.call({ type: 'pathObjects', page })
+    if (res.ok && res.type === 'pathObjects') return { objects: res.objects, total: res.total, toPage: res.toPage }
+    throw new Error('Unexpected response')
+  }
+
   /** Links on a page (cached for the life of the client). */
   links(page: number): Promise<PageLink[]> {
     let p = this.linkCache.get(page)

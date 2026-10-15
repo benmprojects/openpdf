@@ -68,6 +68,7 @@ import { optimise, type OptimiseOptions } from './optimise'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
 import { replaceText, weightAndSlant } from './textEdit'
 import { addImage, replaceImage, transformImage } from './imageEdit'
+import { transformPath } from './pathEdit'
 import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
@@ -103,6 +104,7 @@ import {
   Tags,
   Gauge,
   ImageIcon,
+  Shapes,
   AlignHorizontalJustifyStart,
   AlignHorizontalJustifyCenter,
   AlignHorizontalJustifyEnd,
@@ -1002,7 +1004,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool === 'editimage' || tool === 'addimage' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool === 'link' || tool === 'crop' || tool === 'edittext' || tool === 'editimage' || tool === 'editpath' || tool === 'addimage' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -2220,6 +2222,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={ArrowDown} label="Backward" onClick={() => arrangeSelected((l, i) => restack(l, i, 'backward'), true)} disabled={!selectedIds.size} title="Move the selected annotations one step back" />
                 </RStack>
               </RGroup>
+              <RGroup label="Shapes">
+                <RB big icon={Shapes} label="Edit shape" onClick={() => setTool(tool === 'editpath' ? 'select' : 'editpath')} pressed={tool === 'editpath'} disabled={!pages.length || busy || !!password} title="Click a line, box or filled shape that is part of the page to move, resize or delete it" />
+              </RGroup>
               <RGroup label="Images">
                 <RB big icon={ImageIcon} label="Add image" onClick={() => void startAddImage()} pressed={tool === 'addimage'} disabled={!pages.length || busy || !!password} title="Choose a PNG or JPEG, then click the page to place it as page content" />
                 <RB big icon={ImageIcon} label="Edit image" onClick={() => setTool(tool === 'editimage' ? 'select' : 'editimage')} pressed={tool === 'editimage'} disabled={!pages.length || busy || !!password} title="Click a picture to move it, resize it, replace it or delete it" />
@@ -2785,6 +2790,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onLinkRect={(page, rect) => setLinkDraft({ page, rect, to: 'uri', uri: 'https://', page1: String(Math.min(pages.length, page + 2)) })}
               onChangeImage={(page, obj, total, change) =>
                 void applyPageEdit((b) => transformImage(b, { page, ordinal: obj.ordinal, total, matrix: obj.matrix }, change), change ? 'Image updated' : 'Image deleted')
+              }
+              onChangePath={(page, obj, total, change) =>
+                void applyPageEdit((b) => transformPath(b, { page, ordinal: obj.ordinal, total, pageBounds: obj.pageBounds }, change), change ? 'Shape updated' : 'Shape deleted')
               }
               onReplaceImage={async (page, obj, total) => {
                 const file = await window.openpdf.pickFile({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg'] })

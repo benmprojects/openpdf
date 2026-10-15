@@ -66,7 +66,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 ## Phase 4: Content editing (P0/P1)
 - [ ] Edit existing text (font match, reflow within a text box). Done so far: edit one text run in place (Edit tab > Edit text), redrawn in the installed font of the same family (Windows registry lookup, licence and glyph checks) or else a matching standard font. Still to do: reflow a paragraph
 - [x] Edit, move, resize and replace images (Edit tab > Edit image: drag to move, corner to resize, Replace, Delete; page-level images only, not those inside form XObjects)
-- [ ] Add and edit shapes and paths; object selection, align, distribute, z-order. Done: annotation shapes (Draw tab), Shift-click multi-select, align, distribute and stacking order of annotations (Edit tab). Still to do: select, move and delete vector paths in the page content
+- [x] Add and edit shapes and paths; object selection, align, distribute, z-order (annotation shapes: Draw tab; Shift-click multi-select, align, distribute and stacking order of annotations: Edit tab; vector paths that are part of the page: Edit > Edit shape moves, resizes or deletes them)
 - [x] Add and edit links; add text and images (links: Phase 3; text: Typewriter, Text box and callout tools, and Edit text for existing text; images: Edit > Add image places a PNG or JPEG as page content)
 - [x] Spell check (the browser engine underlines misspelled words in text boxes; right-click gives suggestions and Add to dictionary; Settings can turn it off; Australian English when the system has it)
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hexString, imageDraws, isShow, matInverse, matMul, num, parseContent, removeOps, showBytes } from './content'
+import { hexString, imageDraws, isShow, pathDraws, matInverse, matMul, num, parseContent, removeOps, showBytes } from './content'
 
 describe('content stream parser', () => {
   it('splits operations with their operands and source ranges', () => {
@@ -65,5 +65,24 @@ describe('images in content', () => {
     const id = matMul(m, inv)
     expect(id.map((v) => Math.round(v * 1e6) / 1e6)).toEqual([1, 0, 0, 1, 0, 0])
     expect(matInverse([0, 0, 0, 0, 1, 1])).toBeNull()
+  })
+})
+
+describe('paths in content', () => {
+  it('finds painted paths with their points through the transform, and skips clips', () => {
+    const src = 'q 2 0 0 2 10 10 cm 0 0 50 20 re W n 1 0 0 rg 5 5 40 10 re f 0 0 m 30 40 l S 3 3 m 9 3 9 9 3 9 c h B Q'
+    const d = pathDraws(parseContent(src))
+    expect(d).toHaveLength(3)
+    // 5 5 40 10 re at scale 2 plus (10, 10): x 20 to 100, y 20 to 40.
+    expect(d[0].bbox).toEqual({ x0: 20, y0: 20, x1: 100, y1: 40 })
+    expect(d[0].clips).toBe(false)
+    expect(d[1].bbox).toEqual({ x0: 10, y0: 10, x1: 70, y1: 90 })
+    expect(d[2].bbox.x1).toBe(28)
+  })
+
+  it('notes a path that also clips, and ignores an empty painting operator', () => {
+    const d = pathDraws(parseContent('0 0 10 10 re W f f'))
+    expect(d).toHaveLength(1)
+    expect(d[0].clips).toBe(true)
   })
 })

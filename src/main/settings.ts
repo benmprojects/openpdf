@@ -134,13 +134,21 @@ function applySpelling(s: Settings): void {
   }
 }
 
+/** Writes happen one at a time, each saving the latest settings, so a slow older write cannot overwrite a newer one. */
+let writing: Promise<void> = Promise.resolve()
+
 export async function updateSettings(patch: Partial<Settings>): Promise<Settings> {
   const next = sanitise({ ...(await loadSettings()), ...patch })
   current = next
   nativeTheme.themeSource = next.theme
   applySpelling(next)
-  await mkdir(app.getPath('userData'), { recursive: true })
-  await writeJson(file(), next)
+  writing = writing
+    .catch(() => {})
+    .then(async () => {
+      await mkdir(app.getPath('userData'), { recursive: true })
+      await writeJson(file(), current ?? next)
+    })
+  await writing
   return next
 }
 

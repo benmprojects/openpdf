@@ -381,3 +381,70 @@ export function imageDraws(ops: Op[], isImage: (name: string) => boolean): Image
 export function cmOp(m: Matrix): string {
   return `${m.map(num).join(' ')} cm`
 }
+
+const PATH_BUILD = new Set(['m', 'l', 'c', 'v', 'y', 're', 'h', 'W', 'W*'])
+const PATH_PAINT = new Set(['S', 's', 'f', 'F', 'f*', 'B', 'B*', 'b', 'b*'])
+
+export interface PathDraw {
+  /** Index of the painting operation (S, f, B and friends). */
+  paint: number
+  /** Index of the first operation of the path (m, re, ...). */
+  first: number
+  /** The transform in force when the path is painted. */
+  ctm: Matrix
+  /** Box of all the path's points (curve control points included) in page space, without any stroke width. */
+  bbox: { x0: number; y0: number; x1: number; y1: number }
+  /** The path also sets a clip (W or W*), so cutting it out would change what is clipped. */
+  clips: boolean
+}
+
+/**
+ * Every painted path of the content, in order: the run of construction operators that ends in a painting operator.
+ * Paths that are only used as clips (ending in `n`) paint nothing and are skipped.
+ */
+export function pathDraws(ops: Op[]): PathDraw[] {
+  let ctm: Matrix = IDENTITY
+  const stack: Matrix[] = []
+  const out: PathDraw[] = []
+  let first = -1
+  let pts: [number, number][] = []
+  let clips = false
+  const reset = () => {
+    first = -1
+    pts = []
+    clips = false
+  }
+  ops.forEach((o, i) => {
+    const n = nums(o)
+    if (o.op === 'q') stack.push(ctm)
+    else if (o.op === 'Q') ctm = stack.pop() ?? ctm
+    else if (o.op === 'cm') {
+      if (n.length === 6) ctm = mul(n as Matrix, ctm)
+    } else if (PATH_BUILD.has(o.op)) {
+      if (first < 0) first = i
+      if (o.op === 'W' || o.op === 'W*') clips = true
+      if (o.op === 're' && n.length === 4) {
+        const [x, y, w, h] = n
+        pts.push([x, y], [x + w, y], [x, y + h], [x + w, y + h])
+      } else if (o.op === 'm' || o.op === 'l') {
+        if (n.length === 2) pts.push([n[0], n[1]])
+      } else if (o.op === 'c') {
+        for (let k = 0; k + 1 < n.length; k += 2) pts.push([n[k], n[k + 1]])
+      } else if (o.op === 'v' || o.op === 'y') {
+        for (let k = 0; k + 1 < n.length; k += 2) pts.push([n[k], n[k + 1]])
+      }
+    } else if (PATH_PAINT.has(o.op)) {
+      if (first >= 0 && pts.length) {
+        const xs: number[] = []
+        const ys: number[] = []
+        for (const [x, y] of pts) {
+          xs.push(x * ctm[0] + y * ctm[2] + ctm[4])
+          ys.push(x * ctm[1] + y * ctm[3] + ctm[5])
+        }
+        out.push({ paint: i, first, ctm, bbox: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) }, clips })
+      }
+      reset()
+    } else if (o.op === 'n') reset()
+  })
+  return out
+}
