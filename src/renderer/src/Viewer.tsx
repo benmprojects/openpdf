@@ -198,6 +198,8 @@ export function Viewer({
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null)
   const pageEls = useRef<(HTMLDivElement | null)[]>([])
+  const drawStyleRef = useRef(drawStyle)
+  drawStyleRef.current = drawStyle
   const [sel, setSel] = useState<Selection | null>(null)
   const [draft, setDraft] = useState<Annot | null>(null)
   /** The measurement being drawn. */
@@ -233,8 +235,6 @@ export function Viewer({
   useEffect(() => setMeasureDraft(null), [measureKind])
   /** The marquee zoom rectangle, in screen pixels. */
   const [band, setBand] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
-  const drawStyleRef = useRef(drawStyle)
-  drawStyleRef.current = drawStyle
   const selRef = useRef<Selection | null>(null)
   selRef.current = sel
 
