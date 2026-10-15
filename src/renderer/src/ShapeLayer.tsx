@@ -183,9 +183,23 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
       )
     }
 
+    let label: React.ReactNode = null
+    if (a.measure && a.points?.[0]?.length && !ghost) {
+      const pts = a.points[0]
+      const at =
+        a.measure.kind === 'area'
+          ? { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length }
+          : { x: (pts[Math.floor((pts.length - 1) / 2)].x + pts[Math.ceil((pts.length - 1) / 2) || 1].x) / 2, y: (pts[Math.floor((pts.length - 1) / 2)].y + pts[Math.ceil((pts.length - 1) / 2) || 1].y) / 2 }
+      label = (
+        <text className="measure-annot-label" x={at.x} y={at.y - 4} textAnchor="middle" fontSize={9} fill={a.color} paintOrder="stroke" stroke="#fff" strokeWidth={3}>
+          {a.measure.label}
+        </text>
+      )
+    }
     return (
       <g key={orig.id}>
         {body}
+        {label}
         {selected && (
           <rect
             x={r.x - 2}

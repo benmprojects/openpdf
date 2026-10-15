@@ -55,6 +55,11 @@ export interface Annot {
   fill?: string
   /** Line style of shapes; solid when unset. */
   dash?: 'dashed' | 'dotted'
+  /**
+   * Set on measurements: a line (distance), polyline (perimeter) or polygon (area) with the scale used.
+   * `factor` is real units per point; `label` is the result as shown, for example "12.5 m".
+   */
+  measure?: { kind: 'distance' | 'perimeter' | 'area'; factor: number; unit: string; ratio?: string; label: string }
   /** Set when the annotation was already in the file: where to find it again when saving. */
   origin?: {
     /** Position in the page's /Annots array. */
@@ -68,7 +73,7 @@ export interface Annot {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null])
 }
 
 export const NOTE_SIZE = 22
@@ -317,6 +322,37 @@ export function squigglePoints(r: Rect): Pt[] {
   const pts: Pt[] = []
   for (let x = r.x, i = 0; x <= r.x + r.w + 0.01; x += period / 2, i++) pts.push({ x: Math.min(x, r.x + r.w), y: y + (i % 2 ? amp : -amp) })
   return pts
+}
+
+function distToSegment(p: Pt, a: Pt, b: Pt): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+}
+
+/**
+ * Rubs out the parts of ink paths within `radius` of the eraser's trail. A path is split where points are
+ * removed; pieces of fewer than two points are dropped. Returns null when nothing was touched.
+ */
+export function eraseFromPaths(paths: Pt[][], trail: Pt[], radius: number): Pt[][] | null {
+  const hit = (p: Pt) => trail.some((t, i) => (i ? distToSegment(p, trail[i - 1], t) : Math.hypot(p.x - t.x, p.y - t.y)) <= radius)
+  let changed = false
+  const out: Pt[][] = []
+  for (const path of paths) {
+    let cur: Pt[] = []
+    for (const p of path) {
+      if (hit(p)) {
+        changed = true
+        if (cur.length >= 2) out.push(cur)
+        cur = []
+      } else cur.push(p)
+    }
+    if (cur.length >= 2) out.push(cur)
+    else if (cur.length) changed = changed || cur.length !== path.length
+  }
+  return changed ? out : null
 }
 
 /** The point on a callout box's edge nearest the arrow tip, where the leader line meets the box. */

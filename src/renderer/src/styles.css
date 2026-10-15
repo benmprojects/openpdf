@@ -1210,6 +1210,19 @@ kbd {
   min-width: 60px;
   white-space: pre;
 }
+.erase-trail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.erase-trail polyline {
+  stroke: rgba(47, 111, 223, 0.25);
+}
+.scroller.erase .page {
+  cursor: cell;
+}
 .page-row {
   display: flex;
   align-items: center;

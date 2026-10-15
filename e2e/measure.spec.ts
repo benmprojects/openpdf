@@ -15,7 +15,7 @@ test('measure distance and area at paper scale, after calibrating, and with a do
   const dir = mkdtempSync(join(tmpdir(), 'openpdf-e2e-'))
   const plain = join(dir, 'plain.pdf')
   execFileSync('python', [join(root, 'scripts', 'make-test-pdf.py'), plain])
-  const app = await electron.launch({ args: ['.', plain], cwd: root, env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_USERDATA: join(dir, 'ud') } })
+  const app = await electron.launch({ args: ['.', plain], cwd: root, env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_USERDATA: join(dir, 'ud'), OPENPDF_E2E_DISCARD: '1' } })
   try {
     const win = await app.firstWindow()
     const problems: string[] = []
@@ -33,7 +33,7 @@ test('measure distance and area at paper scale, after calibrating, and with a do
     await win.mouse.move(ox + 100, oy)
     await expect(win.locator('.measure.live')).toHaveCount(1)
     await win.mouse.click(ox + 144, oy)
-    const label = win.locator('.measure:not(.live) .measure-label')
+    const label = win.locator('.measure-annot-label')
     await expect(label).toHaveCount(1)
     expect(await label.textContent()).toMatch(/ mm$/)
     expect(Math.abs(num((await label.textContent())!) - ((144 / z) * 25.4) / 72)).toBeLessThan(0.2)
@@ -60,9 +60,22 @@ test('measure distance and area at paper scale, after calibrating, and with a do
     await win.mouse.click(ox + 100, oy + 230)
     await expect(label).toHaveCount(3)
     expect(await label.nth(2).textContent()).toBe('5 m')
-    // Existing labels follow the new scale too.
-    expect(await label.nth(0).textContent()).toMatch(/ m$/)
+    // Earlier measurements keep the scale they were made with.
+    expect(await label.nth(0).textContent()).toMatch(/ mm$/)
     await win.screenshot({ path: test.info().outputPath('measure.png') })
+
+    // Saved as measurement annotations with their intent, scale and result.
+    await win.keyboard.press('Control+s')
+    await expect(win.locator('.tab-dirty')).toHaveCount(0)
+    const py = `
+import sys, json, pymupdf
+d = pymupdf.open(sys.argv[1])
+print(json.dumps([[a.type[1], d.xref_get_key(a.xref, "IT")[1], d.xref_get_key(a.xref, "Measure")[0], a.info.get("content", "")] for a in d[0].annots()]))
+`
+    const saved: string[][] = JSON.parse(execFileSync('python', ['-c', py, plain]).toString())
+    expect(saved.map((s) => s[0] + ' ' + s[1])).toEqual(['Line /LineDimension', 'Polygon /PolygonDimension', 'Line /LineDimension'])
+    expect(saved.every((s) => s[2] === 'dict')).toBe(true)
+    expect(saved[2][3]).toBe('5 m')
 
     expect(problems).toEqual([])
   } finally {
@@ -75,7 +88,7 @@ test('a document scale (viewport measure dictionary) is used automatically', asy
   const dir = mkdtempSync(join(tmpdir(), 'openpdf-e2e-'))
   const scaled = join(dir, 'scaled.pdf')
   execFileSync('npx', ['tsx', join(root, 'scripts', 'make-feature-pdf.mts'), scaled], { cwd: root, shell: true })
-  const app = await electron.launch({ args: ['.', scaled], cwd: root, env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_USERDATA: join(dir, 'ud') } })
+  const app = await electron.launch({ args: ['.', scaled], cwd: root, env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_USERDATA: join(dir, 'ud'), OPENPDF_E2E_DISCARD: '1' } })
   try {
     const win = await app.firstWindow()
     await expect(win.locator('.page')).toHaveCount(4)
@@ -86,7 +99,7 @@ test('a document scale (viewport measure dictionary) is used automatically', asy
     await win.getByRole('button', { name: 'Distance' }).click()
     await win.mouse.click(p0.x + 50, p0.y + 200)
     await win.mouse.click(p0.x + 50 + 72 * z, p0.y + 200)
-    const label = win.locator('.measure:not(.live) .measure-label')
+    const label = win.locator('.measure-annot-label')
     await expect(label).toHaveCount(1)
     expect(Math.abs(num((await label.textContent())!) - 2.54)).toBeLessThan(0.02)
     expect(await label.textContent()).toMatch(/ m$/)

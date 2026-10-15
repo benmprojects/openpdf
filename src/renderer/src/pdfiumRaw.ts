@@ -202,6 +202,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
   const keyLabel = cString(m, 'OPLabel')
   const keyIT = cString(m, 'IT')
   const keyBE = cString(m, 'BE')
+  const keyMeasure = cString(m, 'Measure')
   const out: ImportedAnnot[] = []
 
   const toDisplay = (x: number, y: number): [number, number] => {
@@ -228,6 +229,8 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
         let kind = ANNOT_KINDS[subtype]
         if (!kind) continue
         if (m._FPDFAnnot_GetFlags(annot) & (FLAG_HIDDEN | FLAG_NO_VIEW)) continue
+        // Measurements carry a /Measure dictionary we cannot read back; editing would lose the scale.
+        if (m._FPDFAnnot_HasKey(annot, keyMeasure)) continue
         if (!m._FPDFAnnot_GetRect(annot, scratch)) continue
         const f = new DataView(m.HEAPU8.buffer)
         const left = f.getFloat32(scratch, true)
@@ -372,6 +375,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): ImportedAn
     m.wasmExports.free(keyLabel)
     m.wasmExports.free(keyIT)
     m.wasmExports.free(keyBE)
+    m.wasmExports.free(keyMeasure)
   }
   return out
 }

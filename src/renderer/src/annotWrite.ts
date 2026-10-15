@@ -145,6 +145,9 @@ function makeForm(ctx: PDFContext, bbox: number[], content: string, resources: L
 
 type Origin = NonNullable<Annot['origin']>
 
+/** Size of the result text written into a measurement's appearance, in points. */
+export const MEASURE_LABEL_SIZE = 9
+
 export interface DeletedAnnot {
   page: number
   origin: Origin
@@ -512,6 +515,44 @@ export async function writeAnnotations(bytes: Uint8Array, annots: Annot[], delet
     if (groupWith) {
       dict.IRT = groupWith
       dict.RT = 'Group'
+    }
+    // Measurements (ISO 32000 12.9): the intent, a rectilinear /Measure dictionary, and the result drawn in.
+    if (a.measure && (a.kind === 'line' || a.kind === 'polyline' || a.kind === 'polygon')) {
+      const m = a.measure
+      const fmt = (u: string, c: number) => ({ Type: 'NumberFormat', U: PDFHexString.fromText(u), C: c, D: 100, RT: PDFString.of(''), SS: PDFString.of('') })
+      dict.IT = m.kind === 'distance' ? 'LineDimension' : m.kind === 'perimeter' ? 'PolyLineDimension' : 'PolygonDimension'
+      dict.Measure = {
+        Type: 'Measure',
+        Subtype: 'RL',
+        R: PDFHexString.fromText(m.ratio ?? `1 pt = ${m.factor} ${m.unit}`),
+        X: [fmt(m.unit, m.factor)],
+        D: [fmt(m.unit, 1)],
+        A: [fmt(`${m.unit}²`, 1)]
+      }
+      dict.Contents = PDFHexString.fromText(m.label)
+      if (a.kind === 'line') {
+        dict.Cap = true
+        dict.CP = 'Top'
+      }
+      // Redraw the appearance with the label added.
+      const fnt = await getFont()
+      const pts = a.points![0]
+      const at =
+        m.kind === 'area'
+          ? { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length }
+          : { x: (pts[Math.floor((pts.length - 1) / 2)].x + pts[Math.ceil((pts.length - 1) / 2) || 1]?.x) / 2, y: (pts[Math.floor((pts.length - 1) / 2)].y + pts[Math.ceil((pts.length - 1) / 2) || 1]?.y) / 2 }
+      const label = winAnsiSafe(fnt, m.label.replace('²', '2'))
+      const size = MEASURE_LABEL_SIZE
+      const w = fnt.widthOfTextAtSize(label, size)
+      const box = { x: at.x - w / 2 - 2, y: at.y - size - 4, w: w + 4, h: size + 3 }
+      const old = (dict.AP as { N: PDFRef }).N
+      const oldStream = ctx.lookup(old) as unknown as { getContents(): Uint8Array }
+      const prev = new TextDecoder('latin1').decode(oldStream.getContents())
+      const text = `q ${cm(f)} 1 g ${n(box.x)} ${n(box.y)} ${n(box.w)} ${n(box.h)} re f BT /Helv ${n(size)} Tf ${rgb(a.color)} rg 1 0 0 -1 ${n(box.x + 2)} ${n(box.y + size)} Tm ${fnt.encodeText(label).toString()} Tj ET Q`
+      const all = userBounds(f, [...a.rects, box])
+      dict.Rect = all
+      ctx.delete(old)
+      dict.AP = { N: makeForm(ctx, all, `${prev} ${text}`, { Font: { Helv: fnt.ref } }) }
     }
     const ref = ctx.register(ctx.obj(dict as never))
     let list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)

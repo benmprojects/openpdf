@@ -10,6 +10,7 @@ import {
   STAMP_LABELS,
   defaultColor,
   isShapeKind,
+  eraseFromPaths,
   canDash,
   canFill,
   signature,
@@ -62,6 +63,7 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Eraser as EraserIcon,
   Hexagon,
   Cloud,
   Keyboard,
@@ -173,6 +175,9 @@ const RIBBON_TABS: [RibbonTab, string][] = [
 
 /** Fill colours: light tints that keep the page readable underneath. */
 const FILL_COLORS = ['#fde2e1', '#fff4c2', '#dff5e1', '#dcecff', '#efe3ff', '#ffffff']
+
+/** Measurements are drawn in a dark red, distinct from the red of markup. */
+const MEASURE_COLOR = '#b3261e'
 
 const LENGTH_UNITS = ['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi']
 
@@ -577,6 +582,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     [pages, colors, stampLabel, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
+  /** Eraser: rub out ink on one page. One undo step for the whole stroke. */
+  const eraseInk = useCallback(
+    (page: number, trail: Pt[], radius: number) => {
+      const hits = annotsRef.current.filter((a) => a.page === page && a.kind === 'ink' && a.points && eraseFromPaths(a.points, trail, radius))
+      if (!hits.length) return
+      hits.forEach((a) => touch(a.id))
+      history.commit((list) =>
+        list.flatMap((a) => {
+          if (!hits.some((h) => h.id === a.id)) return [a]
+          const paths = eraseFromPaths(a.points!, trail, radius)!
+          return paths.length ? [withBounds({ ...a, points: paths })] : []
+        })
+      )
+    },
+    [history.commit, touch]
+  )
+
   const createShape = useCallback(
     (shape: Omit<Annot, 'id'>) => {
       const a: Annot = {
@@ -694,7 +716,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool.startsWith('measure') || tool === 'calibrate'
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool === 'eraser' || tool.startsWith('measure') || tool === 'calibrate'
       ? null
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
@@ -940,16 +962,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const GRID_MM = [5, 10, 20, 50]
 
   // ---- Measurement ----------------------------------------------------------------------------------
-  // Measurements are an overlay for now (not saved). The scale comes from calibration, the page's own
+  // Measurements are saved as measurement annotations. The scale comes from calibration, the page's own
   // viewport measure dictionaries, or paper millimetres.
-  const [measurements, setMeasurements] = useState<Measurement[]>([])
-  const nextMeasureId = useRef(1)
+  const measurements = useMemo(() => annots.filter((a) => a.measure), [annots])
   const [calibrated, setCalibrated] = useState<Scale | null>(null)
   const [viewports, setViewports] = useState<Viewport[][]>([])
   const [calibrating, setCalibrating] = useState<{ lengthPt: number; real: string; unit: string } | null>(null)
   useEffect(() => {
     let cancelled = false
-    setMeasurements([]) // page edits move pages around, so old measurements would point at the wrong place
     readViewports(bytes).then((v) => !cancelled && setViewports(v))
     return () => {
       cancelled = true
@@ -969,15 +989,29 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setCalibrating({ lengthPt: pathLength(points), real: '', unit: 'm' })
       return
     }
-    setMeasurements((list) => [...list, { id: nextMeasureId.current++, page, kind, points }])
-  }, [])
+    const s = scaleAt(points[0], viewportsRef.current[page], calibratedRef.current)
+    const label = kind === 'area' ? formatArea(polygonArea(points), s) : formatLength(pathLength(points), s)
+    const a = newAnnot(kind === 'distance' ? 'line' : kind === 'perimeter' ? 'polyline' : 'polygon', page, [], '')
+    const made = withBounds({
+      ...a,
+      color: MEASURE_COLOR,
+      lineWidth: 1,
+      points: [points],
+      measure: { kind, factor: s.factor, unit: s.unit, ratio: s.label, label }
+    })
+    history.commit((list) => [...list, made])
+  }, [history.commit]) // eslint-disable-line react-hooks/exhaustive-deps
+  const viewportsRef = useRef(viewports)
+  viewportsRef.current = viewports
+  const calibratedRef = useRef(calibrated)
+  calibratedRef.current = calibrated
   const scaleText = calibrated
     ? `Calibrated: ${calibrated.label}`
     : viewports[currentPage]?.length
       ? `From the document${viewports[currentPage][0].scale.label ? `: ${viewports[currentPage][0].scale.label}` : ''} (${viewports[currentPage][0].scale.unit})`
       : 'Paper size (mm)'
   const copyMeasurements = async () => {
-    const lines = measurements.map((m) => `Page ${m.page + 1}\t${m.kind}\t${measureLabel(m.kind, m.points, m.page)}`)
+    const lines = measurements.map((m) => `Page ${m.page + 1}\t${m.measure!.kind}\t${m.measure!.label}`)
     await navigator.clipboard.writeText(lines.join('\n'))
     setNotice({ kind: 'info', text: `Copied ${lines.length} measurement${lines.length === 1 ? '' : 's'}` })
   }
@@ -1414,6 +1448,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={Spline} label="Polyline" onClick={() => setTool(tool === 'polyline' ? 'select' : 'polyline')} disabled={!pages.length} pressed={tool === 'polyline'} title="Polyline: click the points, double-click or Enter to finish" />
                 </RStack>
                 <RB big icon={Cloud} label="Cloud" onClick={() => setTool(tool === 'cloud' ? 'select' : 'cloud')} disabled={!pages.length} pressed={tool === 'cloud'} title="Revision cloud: click the corners, double-click or Enter to finish" />
+                <RB big icon={EraserIcon} label="Eraser" onClick={() => setTool(tool === 'eraser' ? 'select' : 'eraser')} disabled={!pages.length} pressed={tool === 'eraser'} title="Eraser: drag over pencil strokes to rub them out" />
                 <RB big icon={Pencil} label="Pencil" onClick={() => setTool(tool === 'ink' ? 'select' : 'ink')} disabled={!pages.length} pressed={tool === 'ink'} title="Draw freehand: drag" />
               </RGroup>
               {styleAndEdit}
@@ -1438,7 +1473,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Results">
                 <RStack>
                   <RB icon={Copy} label="Copy all" onClick={() => void copyMeasurements()} disabled={!measurements.length} title="Copy every measurement as text" />
-                  <RB icon={Trash2} label="Clear all" onClick={() => setMeasurements([])} disabled={!measurements.length} title="Remove every measurement from the view" />
+                  <RB icon={Trash2} label="Clear all" onClick={() => history.commit((list) => list.filter((a) => !a.measure))} disabled={!measurements.length} title="Delete every measurement made in this session" />
                 </RStack>
               </RGroup>
             </>
@@ -1864,12 +1899,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onZoomTo={zoomTo}
               onSnapshot={(page, rect) => void takeSnapshot(page, rect)}
               pageColours={pageColours}
-              measurements={measurements}
+              measurements={[]}
               onMeasure={onMeasure}
               measureLabel={measureLabel}
               aids={aids}
               guides={guides}
               onGuides={setGuides}
+              onErase={eraseInk}
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}

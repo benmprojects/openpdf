@@ -73,6 +73,7 @@ export type Tool =
   | 'polygon'
   | 'polyline'
   | 'cloud'
+  | 'eraser'
 
 export interface DrawStyle {
   color: string
@@ -121,6 +122,8 @@ interface Props {
   /** How page colours are shown: as they are, inverted for night reading, or high contrast. */
   pageColours: 'normal' | 'night' | 'contrast'
   measurements: Measurement[]
+  /** The eraser was dragged over a page: rub out ink within `radius` of the trail (page points). */
+  onErase: (page: number, trail: Pt[], radius: number) => void
   /** Rulers, grid and snapping. */
   aids: ViewAids
   guides: Guide[]
@@ -173,6 +176,7 @@ export function Viewer({
   aids,
   guides,
   onGuides,
+  onErase,
   tool,
   annots,
   selectedAnnot,
@@ -233,6 +237,8 @@ export function Viewer({
     [onCreateShape, onMeasure]
   )
   useEffect(() => setMeasureDraft(null), [measureKind])
+  /** The eraser's path while dragging. */
+  const [eraseTrail, setEraseTrail] = useState<{ page: number; points: Pt[]; radius: number } | null>(null)
   /** The marquee zoom rectangle, in screen pixels. */
   const [band, setBand] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const selRef = useRef<Selection | null>(null)
@@ -735,6 +741,28 @@ export function Viewer({
         window.addEventListener('mouseup', up)
         return
       }
+      if (tool === 'eraser') {
+        const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
+        if (!pageEl) return
+        e.preventDefault()
+        const page = Number(pageEl.dataset.page)
+        const radius = Math.max(4, 10 / zoom)
+        const trail: Pt[] = [pointOnPage(pageEl, page, e.clientX, e.clientY)]
+        setEraseTrail({ page, points: [...trail], radius })
+        const move = (ev: MouseEvent) => {
+          trail.push(pointOnPage(pageEl, page, ev.clientX, ev.clientY))
+          setEraseTrail({ page, points: [...trail], radius })
+        }
+        const up = () => {
+          window.removeEventListener('mousemove', move)
+          window.removeEventListener('mouseup', up)
+          setEraseTrail(null)
+          onErase(page, trail, radius)
+        }
+        window.addEventListener('mousemove', move)
+        window.addEventListener('mouseup', up)
+        return
+      }
       if (tool === 'callout') {
         const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
         if (!pageEl) return
@@ -827,7 +855,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase]
   )
 
   const ordered = useMemo(() => {
@@ -930,7 +958,7 @@ export function Viewer({
   const scrollerEl = (
     <div
       ref={scroller}
-      className={`${tool === 'hand' ? 'scroller hand' : tool === 'zoom' ? 'scroller zoom' : tool === 'select' ? 'scroller' : 'scroller place'} colours-${pageColours}`}
+      className={`${tool === 'hand' ? 'scroller hand' : tool === 'zoom' ? 'scroller zoom' : tool === 'eraser' ? 'scroller erase' : tool === 'select' ? 'scroller' : 'scroller place'} colours-${pageColours}`}
       onMouseDown={onMouseDown}
       onWheel={onWheel}
     >
@@ -964,6 +992,7 @@ export function Viewer({
                 measureLabel={measureLabel}
                 grid={aids.grid}
                 guides={shownGuides}
+                eraseTrail={eraseTrail && eraseTrail.page === i ? eraseTrail : undefined}
                 guidesInteractive={tool === 'select'}
                 onGuideDown={onGuideDown}
                 epoch={epoch}
@@ -1027,6 +1056,7 @@ interface PageViewProps {
   measureLabel: (kind: MeasureKind, points: Pt[], page: number) => string
   grid: number | null
   guides: Guide[]
+  eraseTrail?: { points: Pt[]; radius: number }
   guidesInteractive: boolean
   onGuideDown: (e: React.MouseEvent, g: Guide) => void
   /** The scrolling container, so very large pages can render only the part in view. */
@@ -1053,7 +1083,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -1230,6 +1260,11 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
           onEdit={annotProps.onEditAnnot}
           onText={annotProps.onAnnotText}
         />
+      )}
+      {eraseTrail && (
+        <svg className="erase-trail" width={size.width * zoom} height={size.height * zoom} viewBox={`0 0 ${size.width} ${size.height}`}>
+          <polyline points={eraseTrail.points.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" strokeWidth={eraseTrail.radius * 2} strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       )}
       {(grid || guides.length > 0) && (
         <GuideLayer size={size} zoom={zoom} grid={grid} guides={guides} interactive={guidesInteractive} onGuideDown={onGuideDown} />
