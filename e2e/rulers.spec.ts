@@ -10,7 +10,7 @@ test('rulers, guides, grid and snapping', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'openpdf-e2e-'))
   const pdfPath = join(dir, 'rulers.pdf')
   execFileSync('python', [join(root, 'scripts', 'make-test-pdf.py'), pdfPath])
-  const app = await electron.launch({ args: ['.', pdfPath], cwd: root, env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_USERDATA: join(dir, 'ud') } })
+  const app = await electron.launch({ args: ['.', pdfPath], cwd: root, env: { ...process.env, OPENPDF_E2E: '1', OPENPDF_E2E_USERDATA: join(dir, 'ud'), OPENPDF_E2E_DISCARD: '1' } })
   try {
     const win = await app.firstWindow()
     const problems: string[] = []
@@ -57,7 +57,7 @@ test('rulers, guides, grid and snapping', async () => {
     await win.getByRole('button', { name: 'Distance' }).click()
     await win.mouse.click(p0.x + 213, p0.y + 401)
     await win.mouse.click(p0.x + 437, p0.y + 398)
-    const label = (await win.locator('.measure:not(.live) .measure-label').textContent())!
+    const label = (await win.locator('.measure-annot-label').textContent())!
     const mm = Number(label.replace(/[^\d.]/g, ''))
     expect(label).toMatch(/ mm$/)
     expect(mm % 10).toBeCloseTo(0, 5)

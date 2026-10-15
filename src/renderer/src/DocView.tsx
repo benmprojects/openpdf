@@ -36,7 +36,7 @@ import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
 import { Reader, type ReaderState } from './readAloud'
-import type { MeasureKind, Measurement } from './MeasureLayer'
+import type { MeasureKind } from './MeasureLayer'
 import { calibrate, formatArea, formatLength, pathLength, PAPER_MM, polygonArea, readViewports, scaleAt, type Scale, type Viewport } from './measure'
 import { readLayers, withHiddenLayers, type Layer } from './layers'
 import {
@@ -968,6 +968,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [calibrated, setCalibrated] = useState<Scale | null>(null)
   const [viewports, setViewports] = useState<Viewport[][]>([])
   const [calibrating, setCalibrating] = useState<{ lengthPt: number; real: string; unit: string } | null>(null)
+  const viewportsRef = useRef(viewports)
+  viewportsRef.current = viewports
+  const calibratedRef = useRef(calibrated)
+  calibratedRef.current = calibrated
   useEffect(() => {
     let cancelled = false
     readViewports(bytes).then((v) => !cancelled && setViewports(v))
@@ -1001,10 +1005,6 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     })
     history.commit((list) => [...list, made])
   }, [history.commit]) // eslint-disable-line react-hooks/exhaustive-deps
-  const viewportsRef = useRef(viewports)
-  viewportsRef.current = viewports
-  const calibratedRef = useRef(calibrated)
-  calibratedRef.current = calibrated
   const scaleText = calibrated
     ? `Calibrated: ${calibrated.label}`
     : viewports[currentPage]?.length
