@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Modal } from './AppDialogs'
 import { appEnv, checkSteps, runBatch, STEP_LABELS, type BatchAction, type BatchResult, type BatchStep } from './batch'
 import { ALL_ALLOWED } from '../../shared/pdfSecurity'
+import type { InstalledPlugin } from '../../main/plugins'
 
 const KINDS = Object.keys(STEP_LABELS) as BatchStep['kind'][]
 
@@ -25,6 +26,8 @@ export function newStep(kind: BatchStep['kind']): BatchStep {
       return { kind, degrees: 90 }
     case 'security':
       return { kind, userPassword: '', ownerPassword: '', keyLength: 256, permissions: { ...ALL_ALLOWED } }
+    case 'plugin':
+      return { kind, plugin: '', action: '', params: {} }
     default:
       return { kind } as BatchStep
   }
@@ -32,7 +35,7 @@ export function newStep(kind: BatchStep['kind']): BatchStep {
 
 const num = (v: string, fallback: number) => (Number.isFinite(Number(v)) && v.trim() !== '' ? Number(v) : fallback)
 
-function StepEditor({ step, languages, onChange }: { step: BatchStep; languages: [string, string][]; onChange: (s: BatchStep) => void }) {
+function StepEditor({ step, languages, plugins, onChange }: { step: BatchStep; languages: [string, string][]; plugins: InstalledPlugin[]; onChange: (s: BatchStep) => void }) {
   const field = (label: string, el: React.ReactNode) => (
     <label className="batch-field">
       <span>{label}</span>
@@ -144,6 +147,39 @@ function StepEditor({ step, languages, onChange }: { step: BatchStep; languages:
           <span className="muted">The passwords are saved in the action in plain text.</span>
         </>
       )
+    case 'plugin': {
+      const chosen = plugins.find((p) => p.manifest.id === step.plugin)?.manifest.actions.find((a) => a.id === step.action)
+      return (
+        <>
+          {field(
+            'Action',
+            <select
+              aria-label="Plugin action"
+              value={step.plugin ? `${step.plugin}::${step.action}` : ''}
+              onChange={(e) => {
+                const [plugin = '', action = ''] = e.target.value.split('::')
+                const a = plugins.find((p) => p.manifest.id === plugin)?.manifest.actions.find((x) => x.id === action)
+                onChange({ kind: 'plugin', plugin, action, params: Object.fromEntries((a?.params ?? []).map((q) => [q.id, q.default ?? ''])) })
+              }}
+            >
+              <option value="">Choose…</option>
+              {plugins.flatMap((p) => p.manifest.actions.map((a) => (
+                <option key={`${p.manifest.id}::${a.id}`} value={`${p.manifest.id}::${a.id}`}>
+                  {p.manifest.name}: {a.label}
+                </option>
+              )))}
+            </select>
+          )}
+          {(chosen?.params ?? []).map((q) => (
+            <label key={q.id} className="batch-field">
+              <span>{q.label}</span>
+              <input aria-label={`Plugin parameter ${q.label}`} value={step.params[q.id] ?? ''} onChange={(e) => onChange({ ...step, params: { ...step.params, [q.id]: e.target.value } })} />
+            </label>
+          ))}
+          {plugins.length === 0 && <span className="muted">No plugins are installed (File, then Plugins).</span>}
+        </>
+      )
+    }
     default:
       return null
   }
@@ -157,6 +193,7 @@ export function BatchDialog({ onClose }: { onClose: () => void }) {
   const [actions, setActions] = useState<BatchAction[]>([])
   const [actionName, setActionName] = useState('')
   const [languages, setLanguages] = useState<[string, string][]>([['eng', 'English']])
+  const [plugins, setPlugins] = useState<InstalledPlugin[]>([])
   const [inputs, setInputs] = useState('')
   const [recursive, setRecursive] = useState(true)
   const [outMode, setOutMode] = useState<'folder' | 'beside'>('folder')
@@ -171,6 +208,7 @@ export function BatchDialog({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     void window.openpdf.batchActions().then(setActions)
     void window.openpdf.ocrLanguages().then((l) => setLanguages(l.all))
+    void window.openpdf.pluginsList().then(setPlugins)
   }, [])
 
   const setStep = (i: number, s: BatchStep) => setSteps((list) => list.map((x, k) => (k === i ? s : x)))
@@ -303,7 +341,7 @@ export function BatchDialog({ onClose }: { onClose: () => void }) {
                     ✕
                   </button>
                 </div>
-                <StepEditor step={s} languages={languages} onChange={(n) => setStep(i, n)} />
+                <StepEditor step={s} languages={languages} plugins={plugins} onChange={(n) => setStep(i, n)} />
               </li>
             ))}
           </ol>

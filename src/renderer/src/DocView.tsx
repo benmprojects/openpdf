@@ -53,6 +53,10 @@ import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from 
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
 import { BatchDialog } from './BatchDialog'
+import { appEnv, describeDocument, runSteps } from './batch'
+import { PluginsDialog } from './PluginsDialog'
+import { normaliseResult } from '../../shared/plugins'
+import { runPluginScript } from './pluginSandbox'
 import { PortfolioDialog } from './PortfolioDialog'
 import { createPortfolio, embedFiles, isPortfolio, removeEmbedded } from './portfolio'
 import { CompareDocsDialog } from './CompareDocsDialog'
@@ -229,6 +233,7 @@ import {
   Type,
   Archive,
   ListChecks,
+  Puzzle,
   BadgeCheck,
   EyeOff,
   ScanLine,
@@ -1907,6 +1912,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [officeReady, setOfficeReady] = useState(true)
   const [exportImagesOpen, setExportImagesOpen] = useState(false)
   const [batchOpen, setBatchOpen] = useState(false)
+  const [pluginsOpen, setPluginsOpen] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
   const [ocrOpen, setOcrOpen] = useState(false)
   const [scanOpen, setScanOpen] = useState(false)
@@ -2753,6 +2759,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
               </RGroup>
               <RGroup label="Automate">
+                <RB big icon={Puzzle} label="Plugins" onClick={() => setPluginsOpen(true)} title="Install and run plugins: small sandboxed scripts that make changes you choose" />
                 <RB big icon={ListChecks} label="Batch" onClick={() => setBatchOpen(true)} title="Run a list of steps (watermark, page numbers, optimise, OCR, clean-up) over many PDFs" />
               </RGroup>
               <RGroup label="Security">
@@ -3333,6 +3340,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             const files = portfolioFiles
             setPortfolioFiles(null)
             void makeNew('Could not create the portfolio', async () => ({ name: `${title}.pdf`, data: await createPortfolio(files.map((f) => ({ name: f.name, data: f.data })), { title, cover }) }))
+          }}
+        />
+      )}
+      {pluginsOpen && client && (
+        <PluginsDialog
+          onClose={() => setPluginsOpen(false)}
+          onRun={async (plugin, action, params) => {
+            const doc = await describeDocument(client, pages, name, await readProps(bytes))
+            const outcome = normaliseResult(await runPluginScript(plugin.scripts[action.id], doc, params), plugin.manifest.permits)
+            if (outcome.error) throw new Error(outcome.error)
+            if (outcome.steps.length) {
+              const env = await appEnv()
+              await applyPageEdit(async (b) => (await runSteps(b, name, outcome.steps, env)).bytes)
+            }
+            return `${outcome.message || `${plugin.manifest.name}: ${action.label} done.`}${outcome.steps.length ? '' : ' (It asked for no changes.)'}${outcome.dropped ? ` ${outcome.dropped} request${outcome.dropped === 1 ? ' was' : 's were'} not allowed by its permissions and ignored.` : ''}`
           }}
         />
       )}

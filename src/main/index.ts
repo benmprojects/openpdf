@@ -11,6 +11,7 @@ import { findLibreOffice, htmlToPdf, officeToPdf, screenshot } from './convert'
 import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
 import { deleteAction, expandPdfs, listActions, readPdf as readBatchPdf, saveAction, writeResult } from './batchIo'
 import { HELP, loadAction, parseCli } from './cli'
+import { fetchCatalogue, installFromCatalogue, installFromFolder, installFromZip, listPlugins, uninstallPlugin, type CatalogueEntry } from './plugins'
 import type { BatchAction } from '../renderer/src/batch'
 import { listScanners, scan, type ScanOptions } from './scan'
 import { addStamps, listStamps, removeStamp } from './stamps'
@@ -267,6 +268,36 @@ ipcMain.handle('scan:acquire', async (_e, o: ScanOptions) => {
   if (e2e && process.env.OPENPDF_E2E_SCAN) return Promise.all(process.env.OPENPDF_E2E_SCAN.split('|').map(async (f) => new Uint8Array(await readFile(f))))
   return scan(o)
 })
+
+/** Plugins: installed under the user's data folder, from a folder, a zip or a catalogue. */
+const pluginsRoot = () => join(app.getPath('userData'), 'plugins')
+const asFetch = net.fetch.bind(net) as unknown as typeof fetch
+ipcMain.handle('plugins:list', () => listPlugins(pluginsRoot()))
+ipcMain.handle('plugins:install-folder', async (e) => {
+  let folder: string | undefined
+  if (e2e && process.env.OPENPDF_E2E_PLUGIN_PICK) folder = process.env.OPENPDF_E2E_PLUGIN_PICK
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { properties: ['openDirectory'] as 'openDirectory'[] }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    folder = res.canceled ? undefined : res.filePaths[0]
+  }
+  return folder ? installFromFolder(pluginsRoot(), folder) : null
+})
+ipcMain.handle('plugins:install-zip', async (e) => {
+  let file: string | undefined
+  if (e2e && process.env.OPENPDF_E2E_PLUGIN_PICK) file = process.env.OPENPDF_E2E_PLUGIN_PICK
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { properties: ['openFile'] as 'openFile'[], filters: [{ name: 'Plugins', extensions: ['zip'] }] }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    file = res.canceled ? undefined : res.filePaths[0]
+  }
+  return file ? installFromZip(pluginsRoot(), new Uint8Array(await readFile(file))) : null
+})
+ipcMain.handle('plugins:uninstall', (_e, id: unknown) => uninstallPlugin(pluginsRoot(), String(id)))
+ipcMain.handle('plugins:catalogue', (_e, url: unknown) => fetchCatalogue(String(url), asFetch))
+ipcMain.handle('plugins:install-catalogue', (_e, entry: CatalogueEntry) => installFromCatalogue(pluginsRoot(), entry, asFetch))
 
 /** Batch processing: files in, results out (never overwriting), and the saved actions. */
 ipcMain.handle('batch:expand', (_e, paths: unknown, recursive: unknown) => expandPdfs(Array.isArray(paths) ? paths.filter((x): x is string => typeof x === 'string') : [], recursive === true))

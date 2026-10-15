@@ -7,6 +7,8 @@ import type { CertInfo, ChainResult, SignSource } from '../main/signing'
 import type { OcrResult } from '../main/ocr'
 import type { ScanOptions, ScannerInfo } from '../main/scan'
 import type { BatchAction } from '../renderer/src/batch'
+import type { CatalogueEntry, InstalledPlugin } from '../main/plugins'
+import type { PluginManifest } from '../shared/plugins'
 
 export type { ImageStamp }
 
@@ -59,6 +61,13 @@ const api = {
   decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
   /** The file encrypted with new passwords and permissions. */
   encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** Plugins. Installing from a folder or zip asks for it; each resolves null when cancelled. */
+  pluginsList: (): Promise<InstalledPlugin[]> => ipcRenderer.invoke('plugins:list'),
+  pluginInstallFolder: (): Promise<PluginManifest | null> => ipcRenderer.invoke('plugins:install-folder'),
+  pluginInstallZip: (): Promise<PluginManifest | null> => ipcRenderer.invoke('plugins:install-zip'),
+  pluginUninstall: (id: string): Promise<void> => ipcRenderer.invoke('plugins:uninstall', id),
+  pluginCatalogue: (url: string): Promise<CatalogueEntry[]> => ipcRenderer.invoke('plugins:catalogue', url),
+  pluginInstallCatalogue: (entry: CatalogueEntry): Promise<PluginManifest> => ipcRenderer.invoke('plugins:install-catalogue', entry),
   /** Command-line run: the job to do, and handing back the results (the program then exits). */
   cliJob: (): Promise<{ steps: BatchAction['steps']; inputs: string[]; recursive: boolean; outDir: string | null; suffix: string } | null> => ipcRenderer.invoke('cli:job'),
   cliDone: (results: unknown[]): Promise<void> => ipcRenderer.invoke('cli:done', results),

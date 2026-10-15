@@ -2654,3 +2654,17 @@ button.compare-item:hover {
   gap: 6px;
   padding: 8px 10px 0;
 }
+
+.plugin-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+.plugin-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}

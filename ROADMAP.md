@@ -97,7 +97,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Compare two documents (text and visual) (Organise > Compare: word-level changes with context and pages; page overlays with red for only-in-first and blue for only-in-second, and a check of every page)
 - [x] Portfolios/packages, embedded files (Attachments pane: add, save all, remove; Convert > Portfolio makes a package with a cover page and a /Collection entry; portfolios open on their file list)
 - [ ] 3D, multimedia and rich media playback (low priority)
-- [ ] Plugin API and extension store
+- [x] Plugin API and extension store (File > Plugins: sandboxed script plugins that return batch steps within the permissions in their manifest; install from a folder, a zip or a catalogue with SHA-256 checking, no catalogue is hosted by this project, the address is the user's)
 - [ ] Optional cloud connectors (OneDrive, SharePoint, Google Drive)
 
 ## Phase 9: Polish and release

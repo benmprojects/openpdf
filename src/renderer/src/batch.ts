@@ -4,6 +4,8 @@
  * and run from the command line. Each step is the same code the interactive tools use.
  */
 import type { EncryptOptions, Permissions } from '../../shared/pdfSecurity'
+import { normaliseResult, type PluginOutcome } from '../../shared/plugins'
+import { runPluginScript, type PluginDoc } from './pluginSandbox'
 import { ocrDocument } from './ocrLayer'
 import { optimise, type OptimiseOptions } from './optimise'
 import { addHeaderFooter, addWatermark, type Slot } from './pageMarks'
@@ -25,6 +27,8 @@ export type BatchStep =
   | { kind: 'pdfa' }
   | { kind: 'rotate'; degrees: 90 | 180 | 270 }
   | { kind: 'security'; userPassword: string; ownerPassword: string; keyLength: 128 | 256; permissions: Permissions }
+  /** An action of an installed plugin; it returns steps from this list (those its manifest permits), which are then run. */
+  | { kind: 'plugin'; plugin: string; action: string; params: Record<string, string> }
 
 export interface BatchAction {
   name: string
@@ -41,7 +45,8 @@ export const STEP_LABELS: Record<BatchStep['kind'], string> = {
   flatten: 'Flatten form fields',
   pdfa: 'Convert to PDF/A-2b (best effort)',
   rotate: 'Rotate every page',
-  security: 'Add a password and permissions (last step)'
+  security: 'Add a password and permissions (last step)',
+  plugin: 'Run a plugin action'
 }
 
 const OPTIMISE: Record<'light' | 'standard' | 'small', OptimiseOptions> = {
@@ -56,6 +61,8 @@ export interface BatchEnv {
   ocr(bytes: Uint8Array, step: Extract<BatchStep, { kind: 'ocr' }>): Promise<{ bytes: Uint8Array; words: number; pagesDone: number }>
   encrypt(bytes: Uint8Array, o: EncryptOptions): Promise<Uint8Array>
   findFont(family: string, bold: boolean, italic: boolean): Promise<Uint8Array | null>
+  /** Runs a plugin action on a document and returns the steps it asks for. */
+  plugin?(bytes: Uint8Array, name: string, step: Extract<BatchStep, { kind: 'plugin' }>): Promise<PluginOutcome>
 }
 
 const allPages = async (bytes: Uint8Array): Promise<number[]> => Array.from({ length: (await PDFDocument.load(bytes, { updateMetadata: false })).getPageCount() }, (_, i) => i)
@@ -71,6 +78,7 @@ export function checkSteps(steps: BatchStep[]): string[] {
     if (s.kind === 'headerFooter' && !Object.values(s.slots).some((t) => t?.trim())) out.push(`Step ${i + 1}: the header or footer has no text.`)
     if (s.kind === 'ocr' && !s.languages.length) out.push(`Step ${i + 1}: choose a language.`)
     if (s.kind === 'security' && !s.userPassword && !s.ownerPassword) out.push(`Step ${i + 1}: enter a password.`)
+    if (s.kind === 'plugin' && (!s.plugin || !s.action)) out.push(`Step ${i + 1}: choose a plugin action.`)
   })
   return out
 }
@@ -123,6 +131,15 @@ export async function runSteps(bytes: Uint8Array, name: string, steps: BatchStep
       case 'rotate':
         cur = await rotatePages(cur, await allPages(cur), s.degrees === 270 ? -90 : s.degrees)
         break
+      case 'plugin': {
+        if (!env.plugin) throw new Error('Plugins are not available here.')
+        const r = await env.plugin(cur, name, s)
+        if (r.error) throw new Error(`Plugin ${s.plugin}: ${r.error}`)
+        if (r.steps.length) cur = (await runSteps(cur, name, r.steps, env)).bytes
+        notes.push(r.message || `plugin ${s.plugin}: ${r.steps.length} step${r.steps.length === 1 ? '' : 's'}`)
+        if (r.dropped) notes.push(`${r.dropped} step${r.dropped === 1 ? '' : 's'} not permitted by the plugin were ignored`)
+        break
+      }
       case 'security':
         cur = await env.encrypt(cur, { userPassword: s.userPassword, ownerPassword: s.ownerPassword || s.userPassword, keyLength: s.keyLength, permissions: s.permissions })
         break
@@ -206,7 +223,27 @@ export async function appEnv(): Promise<BatchEnv> {
         client.dispose()
       }
     },
+    async plugin(bytes, name, step) {
+      const installed = (await window.openpdf.pluginsList()).find((p) => p.manifest.id === step.plugin)
+      const action = installed?.manifest.actions.find((a) => a.id === step.action)
+      if (!installed || !action) return { steps: [], message: '', dropped: 0, error: `The plugin ${step.plugin} (${step.action}) is not installed.` }
+      const client = new PdfClient()
+      try {
+        const sizes = await client.load(bytes)
+        const doc = await describeDocument(client, sizes, name, await readProps(bytes))
+        return normaliseResult(await runPluginScript(installed.scripts[action.id], doc, step.params), installed.manifest.permits)
+      } finally {
+        client.dispose()
+      }
+    },
     encrypt: (bytes, o) => window.openpdf.encryptPdf(bytes, o),
     findFont: async (family, bold, italic) => (await window.openpdf.findFont(family, bold, italic).catch(() => null))?.data ?? null
   }
+}
+
+/** The document as a plugin script sees it. */
+export async function describeDocument(client: { pageText(page: number): Promise<{ text: string }> }, sizes: { width: number; height: number }[], fileName: string, props: { title: string; author: string; subject: string; keywords: string }): Promise<PluginDoc> {
+  const pages: PluginDoc['pages'] = []
+  for (let i = 0; i < sizes.length; i++) pages.push({ index: i, width: sizes[i].width, height: sizes[i].height, text: (await client.pageText(i)).text.replace(/\r\n?/g, '\n') })
+  return { fileName, pageCount: sizes.length, info: { title: props.title, author: props.author, subject: props.subject, keywords: props.keywords }, pages }
 }
