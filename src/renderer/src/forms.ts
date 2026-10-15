@@ -16,6 +16,7 @@ import {
   PDFSignature,
   PDFTextField,
   PDFArray,
+  PDFRef,
 
   TextAlignment,
   StandardFonts
@@ -259,3 +260,25 @@ export async function applyFormValues(
   return doc.save({ updateFieldAppearances: false })
 }
 
+/** Turns the fields into ordinary page content and removes the form (the values are kept as they look). */
+export async function flattenForm(bytes: Uint8Array): Promise<{ bytes: Uint8Array; count: number }> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  const form = doc.getForm()
+  const count = form.getFields().length
+  if (!count) return { bytes, count: 0 }
+  try {
+    form.flatten()
+  } catch {
+    // A value the standard font cannot draw: flatten with the appearances the fields already have.
+    form.flatten({ updateFieldAppearances: false })
+  }
+  // pdf-lib deletes the widgets but leaves references to them in each page's /Annots: drop the dangling ones.
+  for (const page of doc.getPages()) {
+    const annots = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+    for (let i = (annots?.size() ?? 0) - 1; annots && i >= 0; i--) {
+      const entry = annots.get(i)
+      if (entry instanceof PDFRef && doc.context.lookup(entry) === undefined) annots.remove(i)
+    }
+  }
+  return { bytes: await doc.save({ updateFieldAppearances: false }), count }
+}

@@ -70,7 +70,8 @@ import { replaceBlock, weightAndSlant } from './textEdit'
 import { addImage, replaceImage, transformImage } from './imageEdit'
 import { transformPath } from './pathEdit'
 import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
-import { applyFormValues, readForm, type FormField, type FormValue } from './forms'
+import { applyFormValues, flattenForm, readForm, type FormField, type FormValue } from './forms'
+import { entriesFor, readDataFile, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataFormat } from './formData'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
@@ -169,6 +170,7 @@ import {
   Printer,
   Redo2,
   RotateCcw,
+  Layers2,
   RotateCcwSquare,
   RotateCw,
   RotateCwSquare,
@@ -501,6 +503,42 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       return next
     })
   }, [])
+  /** Form data out: the fields' current values as FDF, XFDF, CSV or XML. */
+  const exportFormData = async (format: DataFormat) => {
+    try {
+      const entries = entriesFor(formFields, formValues)
+      const suggested = `${name.replace(/\.pdf$/i, '')} (form data).${format}`
+      let saved: string | null
+      if (format === 'csv') saved = await window.openpdf.saveText(suggested, toCsv(entries), { name: 'CSV (comma separated)', ext: 'csv' })
+      else {
+        const data = format === 'fdf' ? toFdfData(entries, name) : new TextEncoder().encode(format === 'xfdf' ? toXfdfData(entries, name) : toXml(entries))
+        saved = await window.openpdf.saveData(suggested, data, { name: format.toUpperCase(), ext: format })
+      }
+      if (saved) setNotice({ kind: 'info', text: `Exported ${entries.length} field${entries.length === 1 ? '' : 's'} to ${saved}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not export the form data: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  /** Form data in: fills matching fields (not yet saved). */
+  const importFormData = async () => {
+    const file = await window.openpdf.pickFile({ name: 'Form data (FDF, XFDF, CSV, XML)', ext: ['fdf', 'xfdf', 'csv', 'xml'] })
+    if (!file) return
+    try {
+      const incoming = valuesFromImport(formFields, await readDataFile(file.name, file.data))
+      setFormValues((prev) => {
+        const next = new Map(prev)
+        for (const [k, v] of incoming) {
+          const f = formFields.find((x) => x.name === k)
+          if (f && JSON.stringify(f.initial) === JSON.stringify(v)) next.delete(k)
+          else next.set(k, v)
+        }
+        return next
+      })
+      setNotice({ kind: 'info', text: `Filled ${incoming.size} of ${formFields.filter((f) => f.type !== 'button' && f.type !== 'signature').length} fields from ${file.name}. Save to keep them.` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not read the form data: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   const resetForm = () => {
     const empty = (f: FormField): FormValue => (f.type === 'checkbox' ? false : f.type === 'list' ? [] : '')
     const next = new Map<string, FormValue>()
@@ -2299,7 +2337,22 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             <>
               <RGroup label={formFields.length ? `Fill (${formFields.length} field${formFields.length === 1 ? '' : 's'})` : 'Fill'}>
                 <RB big icon={Highlighter} label="Highlight fields" onClick={() => setHighlightFields(!highlightFields)} pressed={highlightFields} disabled={!formFields.length} title="Tint form fields so they are easy to find" />
-                <RB big icon={Eraser} label="Clear form" onClick={resetForm} disabled={!formFields.length || busy} title="Empty every field (you can undo by closing without saving)" />
+                <RB big icon={Eraser} label="Clear form" onClick={resetForm} disabled={!formFields.length || busy} title="Empty every field" />
+                <RB big icon={RotateCcw} label="Revert" onClick={() => setFormValues(new Map())} disabled={!formValues.size} title="Go back to the values saved in the file" />
+              </RGroup>
+              <RGroup label="Form data">
+                <RB big icon={FileInput} label="Import…" onClick={() => void importFormData()} disabled={!formFields.length || busy} title="Fill the fields from an FDF, XFDF, CSV or XML file" />
+                <RStack>
+                  <RB icon={FileOutput} label="XFDF" onClick={() => void exportFormData('xfdf')} disabled={!formFields.length} title="Export the values as XFDF (XML)" />
+                  <RB icon={FileOutput} label="FDF" onClick={() => void exportFormData('fdf')} disabled={!formFields.length} title="Export the values as FDF" />
+                </RStack>
+                <RStack>
+                  <RB icon={FileOutput} label="CSV" onClick={() => void exportFormData('csv')} disabled={!formFields.length} title="Export the values as CSV (a row of names and a row of values)" />
+                  <RB icon={FileOutput} label="XML" onClick={() => void exportFormData('xml')} disabled={!formFields.length} title="Export the values as XML" />
+                </RStack>
+              </RGroup>
+              <RGroup label="Finish">
+                <RB big icon={Layers2} label="Flatten" onClick={() => void applyPageEdit(async (b) => (await flattenForm(b)).bytes, 'Form flattened: the fields are now part of the pages')} disabled={!formFields.length || busy || !!password} title="Make the fields part of the page so they can no longer be edited" />
               </RGroup>
               {!formFields.length && <p className="muted ribbon-note">This document has no form fields.</p>}
             </>

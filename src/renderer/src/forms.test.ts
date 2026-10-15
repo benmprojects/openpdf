@@ -1,6 +1,6 @@
 import { PDFDocument, degrees } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
-import { applyFormValues, readForm, type FormValue } from './forms'
+import { applyFormValues, flattenForm, readForm, type FormValue } from './forms'
 
 async function makeForm(rotation = 0): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
@@ -122,5 +122,24 @@ describe('applyFormValues', () => {
     expect((await byName(auto)).get('memo')?.fontSize).toBe(0)
     const f = await byName(await applyFormValues(auto, new Map([['memo', 'A note']])))
     expect(f.get('memo')?.fontSize).toBe(12)
+  })
+})
+
+describe('flattenForm', () => {
+  it('removes the fields and keeps what they showed as page content', async () => {
+    const filled = await applyFormValues(await makeForm(), new Map([['fullname', 'Flat Name']]))
+    const { bytes, count } = await flattenForm(filled)
+    expect(count).toBe(8)
+    expect(await readForm(bytes)).toEqual([])
+    // The page has no widget annotations left.
+    const doc = await PDFDocument.load(bytes)
+    expect(doc.getPage(0).node.Annots()?.size() ?? 0).toBe(0)
+  })
+
+  it('returns the same bytes when there is no form', async () => {
+    const doc = await PDFDocument.create()
+    doc.addPage()
+    const plain = await doc.save()
+    expect((await flattenForm(plain)).bytes).toBe(plain)
   })
 })
