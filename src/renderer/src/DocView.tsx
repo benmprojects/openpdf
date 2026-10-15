@@ -75,6 +75,9 @@ import { detectInDocument, type Detected } from './formDetect'
 import { DetectDialog } from './DetectDialog'
 import { addField, addFields, deleteField, moveInTabOrder, placeWidget, setTabOrder, updateField, type FieldPatch, type FieldSpec, type TabOrder } from './formDesign'
 import { FieldDialog } from './FieldDialog'
+import { describeRestrictions, restrictsEditing, type EncryptOptions, type Permissions } from '../../shared/pdfSecurity'
+import { SecurityDialog } from './SecurityDialog'
+import { Modal } from './AppDialogs'
 import { commitValue, displayValue, fieldStates, recalculate, runScript } from './formScripts'
 import { entriesFor, readDataFile, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataFormat } from './formData'
 import { DocPropsDialog } from './DocPropsDialog'
@@ -176,6 +179,7 @@ import {
   Redo2,
   RotateCcw,
   Layers2,
+  ShieldCheck,
   SquareCheck,
   CircleDot,
   SquareChevronDown,
@@ -261,6 +265,12 @@ interface Props {
   jump?: SearchJump
 }
 
+/** Whether a file has an /Encrypt entry near its start or end (where the trailer is), so only those are asked about. */
+function mightBeEncrypted(data: Uint8Array): boolean {
+  const look = (part: Uint8Array) => new TextDecoder('latin1').decode(part).includes('/Encrypt')
+  return look(data.subarray(0, 65536)) || (data.length > 65536 && look(data.subarray(data.length - 65536)))
+}
+
 type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
@@ -327,9 +337,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [pages, setPages] = useState<PageSize[]>([])
   const [error, setError] = useState<string | null>(null)
   const [outline, setOutline] = useState<OutlineNode[] | null>(null)
-  const [password, setPassword] = useState<string | undefined>()
   const [passwordIssue, setPasswordIssue] = useState<'required' | 'wrong' | null>(null)
   const [passwordDraft, setPasswordDraft] = useState('')
+  // ---- Security -------------------------------------------------------------------------------------
+  // An encrypted file is decrypted in memory when its password is entered, so everything can be edited; it is encrypted
+  // again when saved. A file whose owner restricted editing stays read-only until the owner password is entered.
+  /** Why the document cannot be changed (the owner's restrictions), or null. */
+  const [lockReason, setLockReason] = useState<string | null>(null)
+  const locked = lockReason !== null
+  const [permissions, setPermissions] = useState<Permissions | null>(null)
+  type Protection = { kind: 'none' } | { kind: 'copy'; original: Uint8Array; password: string } | { kind: 'new'; options: EncryptOptions }
+  const [protection, setProtection] = useState<Protection>({ kind: 'none' })
+  /** The protection was changed here and must be written on save. */
+  const [protectionDirty, setProtectionDirty] = useState(false)
+  const [securityOpen, setSecurityOpen] = useState(false)
+  const [ownerPrompt, setOwnerPrompt] = useState<{ draft: string; wrong: boolean } | null>(null)
   const [tool, setTool] = useState<Tool>('select')
 
   const [mode, setMode] = useState<ZoomMode>('fit-width')
@@ -439,7 +461,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   useEffect(() => {
     const c = new PdfClient()
     let cancelled = false
-    c.load(viewBytes, password)
+    c.load(viewBytes)
       .then((p) => {
         if (cancelled) return
         setPasswordIssue(null)
@@ -458,14 +480,58 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       })
       .catch((e: Error) => {
         if (cancelled) return
-        if (/password/i.test(e.message)) setPasswordIssue(password ? 'wrong' : 'required')
+        if (/password/i.test(e.message)) setPasswordIssue('required')
         else setError(`Could not open this PDF: ${e.message}`)
       })
     return () => {
       cancelled = true
       c.dispose()
     }
-  }, [viewBytes, password])
+  }, [viewBytes])
+
+  /** Opens an encrypted file with `pw`: decrypts it in memory and remembers how to protect it again on save. Returns false for a wrong password. */
+  const unlock = async (pw: string): Promise<boolean> => {
+    const info = await window.openpdf.encryptionInfo(data, pw)
+    if (info.state !== 'open') return false
+    const plain = await window.openpdf.decryptPdf(data, pw)
+    setBytes(plain)
+    setSavedBytes(plain)
+    setProtection({ kind: 'copy', original: data, password: pw })
+    setPermissions(info.permissions ?? null)
+    setLockReason(info.permissions && restrictsEditing(info.permissions) && !info.ownerPassword ? `The owner of this document does not allow: ${describeRestrictions(info.permissions)}.` : null)
+    setPasswordIssue(null)
+    return true
+  }
+  // A file protected only by restrictions opens without a password; find that out, and decrypt it so it can be shown and edited.
+  useEffect(() => {
+    if (!mightBeEncrypted(data)) return
+    let cancelled = false
+    window.openpdf
+      .encryptionInfo(data)
+      .then((info) => {
+        if (!cancelled && info.state === 'open') void unlock('')
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  /** Lifts the owner's restrictions with the owner (permissions) password. */
+  const unlockOwner = async (pw: string) => {
+    const original = protection.kind === 'copy' ? protection.original : data
+    const info = await window.openpdf.encryptionInfo(original, pw)
+    if (info.state !== 'open' || !info.ownerPassword) return setOwnerPrompt({ draft: pw, wrong: true })
+    setProtection({ kind: 'copy', original, password: pw })
+    setLockReason(null)
+    setOwnerPrompt(null)
+    setNotice({ kind: 'info', text: 'Unlocked. The restrictions stay in the file when you save.' })
+  }
+  /** Writes the file as the protection says: unchanged (none), as it was opened (copy), or with new settings. */
+  const protect = async (plain: Uint8Array): Promise<Uint8Array> => {
+    if (protection.kind === 'copy') return window.openpdf.copyEncryption(plain, protection.original, protection.password)
+    if (protection.kind === 'new') return window.openpdf.encryptPdf(plain, protection.options)
+    return plain
+  }
 
   const onSize = useCallback((w: number, h: number) => setSize((s) => (s.w === w && s.h === h ? s : { w, h })), [])
 
@@ -821,9 +887,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }, [annots])
   const changed = (a: Annot) => !a.origin || baseline.current.get(a.id)?.sig !== signature(a)
   const hasNewReplies = (a: Annot) => !!a.replies?.some((r) => !r.origin)
-  // Read the form fields whenever the file contents change (not for password-protected files: pdf-lib cannot parse them).
+  // Read the form fields whenever the file contents change (not for a document locked by its owner).
   useEffect(() => {
-    if (password) {
+    if (locked) {
       setFormFields([])
       return
     }
@@ -838,13 +904,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     return () => {
       cancelled = true
     }
-  }, [bytes, password])
+  }, [bytes, locked])
   // The pages are drawn without their fields while the controls stand in for them, so draw them again when that changes.
   const hasFormFields = formFields.length > 0
   useEffect(() => setEpoch((e) => e + 1), [hasFormFields])
 
   const annotWork = deleted.length > 0 || annots.some(changed) || annots.some(hasNewReplies) || zDirty
-  const annotsDirty = annotWork || formValues.size > 0
+  const annotsDirty = annotWork || formValues.size > 0 || protectionDirty
   /** Writes the pending annotation edits (and new replies) and filled-in form values into `src`. */
   const applyEdits = async (src: Uint8Array) => {
     let out = src
@@ -869,7 +935,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // close removes it; after a crash the app offers it back on the next start.
   const recoveryKey = `${SESSION}-${docId}`
   const snapshot = useRef<() => Promise<Uint8Array>>(async () => bytes)
-  snapshot.current = async () => (annotsDirty && !password ? applyEdits(bytes) : bytes)
+  snapshot.current = async () => (annotsDirty && !locked ? applyEdits(bytes) : bytes)
   const metaRef = useRef({ name, path })
   metaRef.current = { name, path }
   useEffect(() => {
@@ -877,7 +943,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       void window.openpdf.recoveryClear(recoveryKey).catch(() => {})
       return
     }
-    if (!autosaveMinutes) return
+    // A recovery snapshot is a plain copy: none for a protected document.
+    if (!autosaveMinutes || protection.kind !== 'none') return
     const t = setInterval(() => {
       snapshot
         .current()
@@ -885,7 +952,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         .catch(() => {})
     }, autosaveMinutes * 60_000)
     return () => clearInterval(t)
-  }, [dirty, autosaveMinutes, recoveryKey])
+  }, [dirty, autosaveMinutes, recoveryKey, protection.kind])
   useEffect(() => () => void window.openpdf.recoveryClear(recoveryKey).catch(() => {}), [recoveryKey])
 
   useEffect(() => {
@@ -1327,22 +1394,24 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const save = useCallback(
     async (asNew: boolean) => {
       if (saving) return
-      if (password) {
-        setNotice({ kind: 'error', text: 'Saving password-protected PDFs is not supported yet, so nothing was written.' })
+      if (locked) {
+        setNotice({ kind: 'error', text: 'The owner of this document does not allow changes, so nothing was written. Enter the owner password to unlock it.' })
         return
       }
       setSaving(true)
       try {
         const out = annotsDirty ? await applyEdits(bytes) : bytes
+        const toWrite = await protect(out)
         const saved =
           !asNew && path
-            ? await window.openpdf.saveFile(path, out)
-            : await window.openpdf.saveFileAs(name.replace(/(\.pdf)?$/i, '.pdf'), out)
+            ? await window.openpdf.saveFile(path, toWrite)
+            : await window.openpdf.saveFileAs(name.replace(/(\.pdf)?$/i, '.pdf'), toWrite)
         if (!saved) return // the Save As dialog was cancelled
         onMeta({ name: saved.name, path: saved.path })
         baseline.current = new Map() // the reloaded document is re-imported with fresh positions
         history.reset([])
         setZDirty(false)
+        setProtectionDirty(false)
         setFormValues(new Map())
         setExtraSel(new Set())
         setSelectedAnnot(null)
@@ -1356,7 +1425,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setSaving(false)
       }
     },
-    [saving, password, annots, deleted, annotsDirty, formValues, zDirty, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
+    [saving, locked, protection, annots, deleted, annotsDirty, formValues, zDirty, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   // ---- Page organisation ----------------------------------------------------------------------------
@@ -1375,8 +1444,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const applyPageEdit = useCallback(
     async (fn: (base: Uint8Array) => Promise<Uint8Array | null>, done?: string) => {
       if (busy || saving) return
-      if (password) {
-        setNotice({ kind: 'error', text: 'Editing pages of password-protected PDFs is not supported yet.' })
+      if (locked) {
+        setNotice({ kind: 'error', text: 'The owner of this document does not allow changes.' })
         return
       }
       setBusy(true)
@@ -1394,7 +1463,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setBusy(false)
       }
     },
-    [busy, saving, password, annotsDirty, formValues, zDirty, bytes, annots, deleted, swapBytes] // eslint-disable-line react-hooks/exhaustive-deps
+    [busy, saving, locked, annotsDirty, formValues, zDirty, bytes, annots, deleted, swapBytes] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   const runOptimise = async (o: OptimiseOptions) => {
@@ -1920,13 +1989,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (!pages.length) return
     let src = bytes
     try {
-      if (annotsDirty && !password) src = await applyEdits(bytes)
-      if (hiddenLayers && !password) src = await withHiddenLayers(src, hiddenLayers)
+      if (annotsDirty && !locked) src = await applyEdits(bytes)
+      if (hiddenLayers) src = await withHiddenLayers(src, hiddenLayers)
     } catch {
       src = bytes
     }
     setPresenting({ bytes: src, start: currentPage })
-  }, [pages.length, bytes, annotsDirty, formValues, zDirty, password, annots, deleted, hiddenLayers, currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pages.length, bytes, annotsDirty, formValues, zDirty, locked, annots, deleted, hiddenLayers, currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Print ----------------------------------------------------------------------------------------
   const [printDialog, setPrintDialog] = useState<PrintChoice | null>(null)
@@ -1952,13 +2021,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       // Pending annotation edits are written into a copy first, so the printout matches what Save would write.
       // PDFium then draws everything, including annotations, at print resolution.
       let src = bytes
-      if (annotsDirty && password) setNotice({ kind: 'info', text: 'Unsaved annotation changes are not printed for password-protected PDFs.' })
-      else if (annotsDirty) src = await applyEdits(bytes)
+      if (annotsDirty && !locked) src = await applyEdits(bytes)
       // Print what is on screen: layers hidden in the view are hidden on paper too.
-      if (hiddenLayers && !password) src = await withHiddenLayers(src, hiddenLayers)
+      if (hiddenLayers) src = await withHiddenLayers(src, hiddenLayers)
       const res = await printDocument(
         src,
-        password,
+        undefined,
         {
           pages: list,
           copies: c.copies,
@@ -2273,7 +2341,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             </button>
           ))}
         </div>
-        <div className="ribbon-body" role="tabpanel" aria-label={RIBBON_TABS.find(([k]) => k === ribbon)?.[1]}>
+        <fieldset className="ribbon-body" role="tabpanel" disabled={locked && ribbon !== 'file' && ribbon !== 'home' && ribbon !== 'view'} aria-label={RIBBON_TABS.find(([k]) => k === ribbon)?.[1]}>
           {ribbon === 'file' && (
             <>
               <RGroup label="Document">
@@ -2290,11 +2358,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={FileOutput} label="Export FDF" onClick={() => void exportComments('fdf')} disabled={!commentAnnots.length} title="Export the comments as FDF" />
                 </RStack>
               </RGroup>
+              <RGroup label="Security">
+                <RB big icon={ShieldCheck} label="Security" onClick={() => setSecurityOpen(true)} disabled={!pages.length || busy || locked} title="Set or remove passwords and permissions (applied when you save)" />
+              </RGroup>
               <RGroup label="Info">
-                <RB big icon={FileText} label="Properties" onClick={() => void openDocProps()} disabled={!pages.length || busy || !!password} title="Title, author, keywords and other document properties" />
+                <RB big icon={FileText} label="Properties" onClick={() => void openDocProps()} disabled={!pages.length || busy || locked} title="Title, author, keywords and other document properties" />
               </RGroup>
               <RGroup label="Output">
-                <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing} title="Print (Ctrl+P)" />
+                <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
               </RGroup>
             </>
           )}
@@ -2308,20 +2379,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
               <RGroup label="Edit">
                 <RStack>
-                  <RB icon={Copy} label="Copy" onClick={() => void viewer.current?.copySelection()} disabled={!hasTextSelection} title="Copy the selected text (Ctrl+C)" />
+                  <RB icon={Copy} label="Copy" onClick={() => void viewer.current?.copySelection()} disabled={!hasTextSelection || permissions?.extract === false} title="Copy the selected text (Ctrl+C)" />
                   {undoButtons}
                 </RStack>
               </RGroup>
               <RGroup label="Comment">
-                <RB big icon={Highlighter} label="Highlight" onClick={() => void markSelection('highlight')} disabled={!hasTextSelection} title="Highlight the selected text" />
-                <RB big icon={StickyNote} label="Note" onClick={() => setTool(tool === 'note' ? 'select' : 'note')} disabled={!pages.length} pressed={tool === 'note'} title="Add a sticky note: click on the page" />
+                <RB big icon={Highlighter} label="Highlight" onClick={() => void markSelection('highlight')} disabled={!hasTextSelection || locked} title="Highlight the selected text" />
+                <RB big icon={StickyNote} label="Note" onClick={() => setTool(tool === 'note' ? 'select' : 'note')} disabled={!pages.length || locked} pressed={tool === 'note'} title="Add a sticky note: click on the page" />
               </RGroup>
               <RGroup label="Find">
                 <RB big icon={Search} label="Find" onClick={openSearch} disabled={!pages.length} pressed={searchOpen} title="Find (Ctrl+F)" />
               </RGroup>
               <RGroup label="Document">
                 <RB big icon={Save} label="Save" badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
-                <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing} title="Print (Ctrl+P)" />
+                <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
               </RGroup>
             </>
           )}
@@ -2446,10 +2517,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Scissors} label="Split" onClick={() => void runPageOp({ kind: 'split' }, opPages)} disabled={!pages.length || busy} title="Split into files of a set number of pages" />
               </RGroup>
               <RGroup label="Optimise">
-                <RB big icon={Gauge} label="Optimise" onClick={() => setOptimising(true)} disabled={!pages.length || busy || !!password} title="Make the file smaller: reduce pictures, compress, remove unused objects, linearise" />
+                <RB big icon={Gauge} label="Optimise" onClick={() => setOptimising(true)} disabled={!pages.length || busy || locked} title="Make the file smaller: reduce pictures, compress, remove unused objects, linearise" />
               </RGroup>
               <RGroup label="Numbering">
-                <RB big icon={Tags} label="Page labels" onClick={() => void openPageLabels()} disabled={!pages.length || busy || !!password} title="Set the page numbers readers show (i, ii, 1, 2 …)" />
+                <RB big icon={Tags} label="Page labels" onClick={() => void openPageLabels()} disabled={!pages.length || busy || locked} title="Set the page numbers readers show (i, ii, 1, 2 …)" />
               </RGroup>
               <RGroup label="Edit">
                 <RStack>{undoButtons}</RStack>
@@ -2459,7 +2530,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           {ribbon === 'edit' && (
             <>
               <RGroup label="Text">
-                <RB big icon={TextCursorInput} label="Edit text" onClick={() => setTool(tool === 'edittext' ? 'select' : 'edittext')} pressed={tool === 'edittext'} disabled={!pages.length || busy || !!password} title="Click a line of text to change it (the text is redrawn in a matching standard font)" />
+                <RB big icon={TextCursorInput} label="Edit text" onClick={() => setTool(tool === 'edittext' ? 'select' : 'edittext')} pressed={tool === 'edittext'} disabled={!pages.length || busy || locked} title="Click a line of text to change it (the text is redrawn in a matching standard font)" />
               </RGroup>
               <RGroup label="Align">
                 <RStack>
@@ -2490,11 +2561,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
               </RGroup>
               <RGroup label="Shapes">
-                <RB big icon={Shapes} label="Edit shape" onClick={() => setTool(tool === 'editpath' ? 'select' : 'editpath')} pressed={tool === 'editpath'} disabled={!pages.length || busy || !!password} title="Click a line, box or filled shape that is part of the page to move, resize or delete it" />
+                <RB big icon={Shapes} label="Edit shape" onClick={() => setTool(tool === 'editpath' ? 'select' : 'editpath')} pressed={tool === 'editpath'} disabled={!pages.length || busy || locked} title="Click a line, box or filled shape that is part of the page to move, resize or delete it" />
               </RGroup>
               <RGroup label="Images">
-                <RB big icon={ImageIcon} label="Add image" onClick={() => void startAddImage()} pressed={tool === 'addimage'} disabled={!pages.length || busy || !!password} title="Choose a PNG or JPEG, then click the page to place it as page content" />
-                <RB big icon={ImageIcon} label="Edit image" onClick={() => setTool(tool === 'editimage' ? 'select' : 'editimage')} pressed={tool === 'editimage'} disabled={!pages.length || busy || !!password} title="Click a picture to move it, resize it, replace it or delete it" />
+                <RB big icon={ImageIcon} label="Add image" onClick={() => void startAddImage()} pressed={tool === 'addimage'} disabled={!pages.length || busy || locked} title="Choose a PNG or JPEG, then click the page to place it as page content" />
+                <RB big icon={ImageIcon} label="Edit image" onClick={() => setTool(tool === 'editimage' ? 'select' : 'editimage')} pressed={tool === 'editimage'} disabled={!pages.length || busy || locked} title="Click a picture to move it, resize it, replace it or delete it" />
               </RGroup>
               <RGroup label="Edit">
                 <RStack>{undoButtons}</RStack>
@@ -2510,26 +2581,26 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
               <RGroup label="Add a field">
                 <RStack>
-                  <RB icon={TextCursorInput} label="Text" onClick={() => startField('text')} pressed={tool === 'formfield' && fieldKind === 'text'} disabled={!pages.length || busy || !!password} title="Draw a text field on the page" />
-                  <RB icon={SquareCheck} label="Check box" onClick={() => startField('checkbox')} pressed={tool === 'formfield' && fieldKind === 'checkbox'} disabled={!pages.length || busy || !!password} title="Draw a check box" />
-                  <RB icon={CircleDot} label="Radio" onClick={() => startField('radio')} pressed={tool === 'formfield' && fieldKind === 'radio'} disabled={!pages.length || busy || !!password} title="Draw a radio button (buttons with the same group name are exclusive)" />
+                  <RB icon={TextCursorInput} label="Text" onClick={() => startField('text')} pressed={tool === 'formfield' && fieldKind === 'text'} disabled={!pages.length || busy || locked} title="Draw a text field on the page" />
+                  <RB icon={SquareCheck} label="Check box" onClick={() => startField('checkbox')} pressed={tool === 'formfield' && fieldKind === 'checkbox'} disabled={!pages.length || busy || locked} title="Draw a check box" />
+                  <RB icon={CircleDot} label="Radio" onClick={() => startField('radio')} pressed={tool === 'formfield' && fieldKind === 'radio'} disabled={!pages.length || busy || locked} title="Draw a radio button (buttons with the same group name are exclusive)" />
                 </RStack>
                 <RStack>
-                  <RB icon={SquareChevronDown} label="Drop-down" onClick={() => startField('dropdown')} pressed={tool === 'formfield' && fieldKind === 'dropdown'} disabled={!pages.length || busy || !!password} title="Draw a drop-down list" />
-                  <RB icon={List} label="List box" onClick={() => startField('list')} pressed={tool === 'formfield' && fieldKind === 'list'} disabled={!pages.length || busy || !!password} title="Draw a list box" />
-                  <RB icon={RectangleHorizontal} label="Button" onClick={() => startField('button')} pressed={tool === 'formfield' && fieldKind === 'button'} disabled={!pages.length || busy || !!password} title="Draw a push button" />
+                  <RB icon={SquareChevronDown} label="Drop-down" onClick={() => startField('dropdown')} pressed={tool === 'formfield' && fieldKind === 'dropdown'} disabled={!pages.length || busy || locked} title="Draw a drop-down list" />
+                  <RB icon={List} label="List box" onClick={() => startField('list')} pressed={tool === 'formfield' && fieldKind === 'list'} disabled={!pages.length || busy || locked} title="Draw a list box" />
+                  <RB icon={RectangleHorizontal} label="Button" onClick={() => startField('button')} pressed={tool === 'formfield' && fieldKind === 'button'} disabled={!pages.length || busy || locked} title="Draw a push button" />
                 </RStack>
-                <RB big icon={PenLine} label="Signature" onClick={() => startField('signature')} pressed={tool === 'formfield' && fieldKind === 'signature'} disabled={!pages.length || busy || !!password} title="Draw a signature field" />
+                <RB big icon={PenLine} label="Signature" onClick={() => startField('signature')} pressed={tool === 'formfield' && fieldKind === 'signature'} disabled={!pages.length || busy || locked} title="Draw a signature field" />
               </RGroup>
               <RGroup label="Find fields">
-                <RB big icon={ScanSearch} label="Detect fields" onClick={() => void detectFormFields()} disabled={!pages.length || busy || !!password || !client} title="Find blanks, lines, boxes and squares on the pages and make them into fields" />
+                <RB big icon={ScanSearch} label="Detect fields" onClick={() => void detectFormFields()} disabled={!pages.length || busy || locked || !client} title="Find blanks, lines, boxes and squares on the pages and make them into fields" />
               </RGroup>
               <RGroup label="Arrange fields">
-                <RB big icon={SquareDashedMousePointer} label="Edit fields" onClick={() => setTool(tool === 'formedit' ? 'select' : 'formedit')} pressed={tool === 'formedit'} disabled={!formFields.length || busy || !!password} title="Select, move, resize, rename or delete fields" />
+                <RB big icon={SquareDashedMousePointer} label="Edit fields" onClick={() => setTool(tool === 'formedit' ? 'select' : 'formedit')} pressed={tool === 'formedit'} disabled={!formFields.length || busy || locked} title="Select, move, resize, rename or delete fields" />
                 <RStack>
-                  <RB icon={Rows3} label="Tab by rows" onClick={() => chooseTabOrder('rows')} pressed={formFields[0]?.widgets[0]?.tabs === 'R'} disabled={!formFields.length || busy || !!password} title="Tab moves along each row, then down" />
-                  <RB icon={Columns3} label="Tab by columns" onClick={() => chooseTabOrder('columns')} pressed={formFields[0]?.widgets[0]?.tabs === 'C'} disabled={!formFields.length || busy || !!password} title="Tab moves down each column, then across" />
-                  <RB icon={ListOrdered} label="Tab in field order" onClick={() => chooseTabOrder('structure')} pressed={formFields[0]?.widgets[0]?.tabs === 'S'} disabled={!formFields.length || busy || !!password} title="Tab follows the order of the fields on the page (use Earlier and Later to change it)" />
+                  <RB icon={Rows3} label="Tab by rows" onClick={() => chooseTabOrder('rows')} pressed={formFields[0]?.widgets[0]?.tabs === 'R'} disabled={!formFields.length || busy || locked} title="Tab moves along each row, then down" />
+                  <RB icon={Columns3} label="Tab by columns" onClick={() => chooseTabOrder('columns')} pressed={formFields[0]?.widgets[0]?.tabs === 'C'} disabled={!formFields.length || busy || locked} title="Tab moves down each column, then across" />
+                  <RB icon={ListOrdered} label="Tab in field order" onClick={() => chooseTabOrder('structure')} pressed={formFields[0]?.widgets[0]?.tabs === 'S'} disabled={!formFields.length || busy || locked} title="Tab follows the order of the fields on the page (use Earlier and Later to change it)" />
                 </RStack>
                 <RStack>
                   <RB icon={ArrowUp} label="Earlier" onClick={() => stepTabOrder(-1)} disabled={!designSel || tool !== 'formedit' || busy} title="Move the selected field earlier in the tab order" />
@@ -2548,7 +2619,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
               </RGroup>
               <RGroup label="Finish">
-                <RB big icon={Layers2} label="Flatten" onClick={() => void applyPageEdit(async (b) => (await flattenForm(b)).bytes, 'Form flattened: the fields are now part of the pages')} disabled={!formFields.length || busy || !!password} title="Make the fields part of the page so they can no longer be edited" />
+                <RB big icon={Layers2} label="Flatten" onClick={() => void applyPageEdit(async (b) => (await flattenForm(b)).bytes, 'Form flattened: the fields are now part of the pages')} disabled={!formFields.length || busy || locked} title="Make the fields part of the page so they can no longer be edited" />
               </RGroup>
               {!formFields.length && <p className="muted ribbon-note">This document has no form fields.</p>}
             </>
@@ -2686,9 +2757,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
             </>
           )}
-        </div>
+        </fieldset>
       </div>
 
+      {lockReason && (
+        <div className="info banner lock-banner" role="status">
+          {lockReason}
+          <button type="button" onClick={() => setOwnerPrompt({ draft: '', wrong: false })}>
+            Enter the permissions password…
+          </button>
+        </div>
+      )}
       {notice && (
         <div className={notice.kind === 'error' ? 'error banner' : 'info banner'} role={notice.kind === 'error' ? 'alert' : 'status'}>
           {notice.text}
@@ -2735,7 +2814,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       {presenting && (
         <Presentation
           bytes={presenting.bytes}
-          password={password}
+          password={undefined}
           start={presenting.start}
           onExit={(p) => {
             setPresenting(null)
@@ -2764,6 +2843,53 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           const f = formFields.find((x) => x.name === fieldEdit)
           return f ? <FieldDialog key={f.name} type={f.type} field={f} names={formFields.map((x) => x.name)} sourceNames={formFields.filter((x) => x.type === 'text' || x.type === 'dropdown').map((x) => x.name)} proposedName={f.name} onCreate={() => {}} onUpdate={(n, p) => void changeField(n, p)} onClose={() => setFieldEdit(null)} /> : null
         })()}
+
+      {securityOpen && (
+        <SecurityDialog
+          protectedNow={protection.kind !== 'none'}
+          describe={protection.kind === 'new' ? `${protection.options.keyLength}-bit AES${protection.options.userPassword ? ', password to open' : ''}` : permissions && restrictsEditing(permissions) ? `not allowed: ${describeRestrictions(permissions)}` : ''}
+          onClose={() => setSecurityOpen(false)}
+          onApply={(options) => {
+            setProtection({ kind: 'new', options })
+            setProtectionDirty(true)
+            setSecurityOpen(false)
+            setNotice({ kind: 'info', text: 'Security set. Save to write the protected file.' })
+          }}
+          onRemove={() => {
+            setProtection({ kind: 'none' })
+            setProtectionDirty(true)
+            setSecurityOpen(false)
+            setNotice({ kind: 'info', text: 'Security removed. Save to write the unprotected file.' })
+          }}
+        />
+      )}
+      {ownerPrompt && (
+        <Modal title="Permissions password" onClose={() => setOwnerPrompt(null)}>
+          <form
+            className="marks-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void unlockOwner(ownerPrompt.draft)
+            }}
+          >
+            <p>Enter the permissions (owner) password to allow editing.</p>
+            <input type="password" aria-label="Permissions password" autoFocus value={ownerPrompt.draft} onChange={(e) => setOwnerPrompt({ draft: e.target.value, wrong: false })} />
+            {ownerPrompt.wrong && (
+              <p className="error-text" role="alert">
+                That is not the permissions password.
+              </p>
+            )}
+            <div className="marks-actions">
+              <button type="button" onClick={() => setOwnerPrompt(null)}>
+                Cancel
+              </button>
+              <button className="primary" type="submit" disabled={!ownerPrompt.draft}>
+                Unlock
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {docProps && (
         <DocPropsDialog
@@ -3016,7 +3142,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             className="password-form"
             onSubmit={(e) => {
               e.preventDefault()
-              setPassword(passwordDraft)
+              unlock(passwordDraft)
+                .then((ok) => !ok && setPasswordIssue('wrong'))
+                .catch(() => setPasswordIssue('wrong'))
             }}
           >
             <p>{passwordIssue === 'wrong' ? 'That password is incorrect.' : 'This document is password protected.'}</p>
@@ -3054,7 +3182,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 layers={layers}
                 isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
                 onToggleLayer={toggleLayer}
-                onEditOutline={password ? undefined : editOutline}
+                onEditOutline={locked ? undefined : editOutline}
                 comments={
                   <CommentsPane
                     annots={commentAnnots}

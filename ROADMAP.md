@@ -78,7 +78,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] JavaScript field actions (sandboxed): QuickJS (WebAssembly) with a 250 ms limit, 32 MB memory cap and no host access; the Acrobat Forms subset (event, getField, AFNumber/AFPercent/AFDate/AFTime/AFSpecial, AFSimple_Calculate, AFRange_Validate, util.printd/scand, app.alert). Not done: document-level and page-open scripts, Submit actions, field actions on mouse enter/exit/focus
 
 ## Phase 6: Security and signatures (P1)
-- [ ] Password and permission encryption (AES-256), remove security
+- [x] Password and permission encryption (AES-256), remove security (File > Security; opening encrypted files with the password, restricted files read-only until the owner password; re-encrypted on save)
 - [ ] Redaction (text, region, search and redact, true content removal) and metadata sanitise
 - [ ] Digital signatures: create, validate, timestamp, certificate store (Windows cert store)
 - [ ] Visible signature appearances; certify documents

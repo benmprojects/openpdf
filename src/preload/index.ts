@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { RecoveryEntry, Settings } from '../main/settings'
+import type { EncryptionInfo, EncryptOptions } from '../shared/pdfSecurity'
 import type { PrintLayout } from '../shared/printLayout'
 import type { ImageStamp } from '../main/stamps'
 
@@ -46,6 +47,14 @@ const api = {
   listPdfs: (dir: string, recursive: boolean): Promise<string[]> => ipcRenderer.invoke('file:list-pdfs', dir, recursive),
   /** Save As dialog for an embedded file; resolves to the written path, or null if cancelled. */
   saveAttachment: (name: string, data: Uint8Array): Promise<string | null> => ipcRenderer.invoke('file:save-attachment', name, data),
+  /** Whether a file is encrypted, whether it needs a password, and its permissions. */
+  encryptionInfo: (data: Uint8Array, password?: string): Promise<EncryptionInfo> => ipcRenderer.invoke('pdf:encryption-info', data, password),
+  /** The file without its encryption; rejects with "invalid password" when the password is wrong. */
+  decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
+  /** The file encrypted with new passwords and permissions. */
+  encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** `plain` encrypted like `original` (same passwords and permissions). */
+  copyEncryption: (plain: Uint8Array, original: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:copy-encryption', plain, original, password),
   /** An installed font file matching a PDF font name (Windows), or null. */
   findFont: (name: string, bold: boolean, italic: boolean): Promise<{ data: Uint8Array; family: string } | null> => ipcRenderer.invoke('font:find', name, bold, italic),
   /** Rewrites a PDF through qpdf in the main process. */

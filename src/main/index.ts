@@ -5,7 +5,7 @@ import { basename, join, resolve } from 'node:path'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
 import { findFont } from './fonts'
 import { editMenuTemplate } from './spellMenu'
-import { runQpdf } from './qpdf'
+import { copyEncryption, decryptPdf, encryptionInfo, encryptPdf, runQpdf } from './qpdf'
 import { addStamps, listStamps, removeStamp } from './stamps'
 import {
   addRecent,
@@ -316,6 +316,17 @@ ipcMain.handle('file:list-pdfs', async (_e, dir: string, recursive: boolean) => 
   await walk(dir, 0)
   return out.sort((a, b) => a.localeCompare(b))
 })
+
+/** Encryption: what a file's protection is, removing it with a password, adding it, copying it onto an edited copy. */
+ipcMain.handle('pdf:encryption-info', (_e, data: Uint8Array, password: unknown) => encryptionInfo(new Uint8Array(data), typeof password === 'string' ? password : ''))
+ipcMain.handle('pdf:decrypt', (_e, data: Uint8Array, password: unknown) => decryptPdf(new Uint8Array(data), typeof password === 'string' ? password : ''))
+ipcMain.handle('pdf:encrypt', (_e, data: Uint8Array, o: Parameters<typeof encryptPdf>[1]) => {
+  if (!o || typeof o.userPassword !== 'string' || typeof o.ownerPassword !== 'string' || (o.keyLength !== 128 && o.keyLength !== 256)) throw new Error('Invalid security settings')
+  return encryptPdf(new Uint8Array(data), o)
+})
+ipcMain.handle('pdf:copy-encryption', (_e, plain: Uint8Array, original: Uint8Array, password: unknown) =>
+  copyEncryption(new Uint8Array(plain), new Uint8Array(original), typeof password === 'string' ? password : '')
+)
 
 /** An installed font matching a PDF font name, for redrawing edited text in the same typeface. */
 ipcMain.handle('font:find', async (_e, name: unknown, bold: unknown, italic: unknown) => {

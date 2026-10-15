@@ -38,13 +38,12 @@ test('arrange: select several annotations, align them and change their stacking 
     const problems: string[] = []
     win.on('pageerror', (e) => problems.push(e.message))
     await expect(win.locator('.page')).toHaveCount(1)
-    const z = Number((await win.locator('.zoom-now').textContent())!.replace('%', '')) / 100
-    const pb = (await win.locator('.page').first().boundingBox())!
-    const at = (x: number, y: number) => [pb.x + x * z, pb.y + y * z] as const
+    // Zoom and page position are read fresh for every click: they can still be settling under load.
     const click = async (x: number, y: number, shift = false) => {
-      const [sx, sy] = at(x, y)
+      const z = Number((await win.locator('.zoom-now').textContent())!.replace('%', '')) / 100
+      const pb = (await win.locator('.page').first().boundingBox())!
       if (shift) await win.keyboard.down('Shift')
-      await win.mouse.click(sx, sy)
+      await win.mouse.click(pb.x + x * z, pb.y + y * z)
       if (shift) await win.keyboard.up('Shift')
     }
     await win.getByRole('tab', { name: 'Edit', exact: true }).click()

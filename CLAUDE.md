@@ -31,7 +31,7 @@ Electron + Vite + React + TypeScript. `npm run dev | build | typecheck`.
 ## Gotchas
 - Long heredocs in the Bash tool can fail to parse. Write patch scripts to a file with the Write tool and run them.
 - Electron downloads its binary on first run (slow once).
-- Saving password-protected PDFs is blocked on purpose (pdf-lib cannot write them).
+- pdf-lib cannot read or write encrypted PDFs: they are decrypted in memory with qpdf when the password is entered and encrypted again on save (`DocView` `unlock`, `protect`). Anything that reads `bytes` can assume they are not encrypted.
 
 ## Delegation (keeps this context small)
 Act as orchestrator. Do design and tricky logic yourself. Hand mechanical, well-specified work to subagents with the `model` parameter: Haiku for searches, reading logs, running a script and summarising output; Sonnet for scoped implementation and writing/running UI test scripts. Give each a brief with the goal, the files, and what "done" looks like, and ask for a short report. Check their results before relying on them. Start a fresh session with a handoff when context passes about 40%.
