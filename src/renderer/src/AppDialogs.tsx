@@ -87,6 +87,7 @@ export const SHORTCUTS: [string, string][] = [
   ['Ctrl+1', 'Actual size'],
   ['Ctrl+Shift++ / Ctrl+Shift+−', 'Rotate view clockwise / anticlockwise'],
   ['F5', 'Present (full screen); arrows, space or click to move, Esc to leave'],
+  ['Ctrl+H', 'Reading mode (hide the ribbon and side pane)'],
   ['Esc', 'Close find, back to the Select tool, clear selection'],
   ['F1', 'This list']
 ]

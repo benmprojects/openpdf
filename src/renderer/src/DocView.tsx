@@ -28,6 +28,7 @@ import { GAP, PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
 import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
+import { Reader, type ReaderState } from './readAloud'
 import { readLayers, withHiddenLayers, type Layer } from './layers'
 import {
   ArrowLeftRight,
@@ -53,6 +54,14 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Pause,
+  Play,
+  Volume2,
+  BookOpenText,
+  Sun,
+  Moon,
+  Contrast,
+  CircleStop,
   Presentation as PresentationIcon,
   PanelRight,
   Pencil,
@@ -771,6 +780,46 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   /** Merge: append whole files to the end of this document. */
   const mergeFiles = () => void runPageOp({ kind: 'insert', at: pages.length }, [])
 
+  // ---- Reading: read aloud, reading mode, page colours ----------------------------------------------
+  const [readingMode, setReadingMode] = useState(false)
+  const [pageColours, setPageColours] = useState<'normal' | 'night' | 'contrast'>('normal')
+  const [readerState, setReaderState] = useState<ReaderState>('idle')
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [voiceURI, setVoiceURI] = useState<string | undefined>()
+  const [speechRate, setSpeechRate] = useState(1)
+  const speechOpts = useRef({ voiceURI, rate: speechRate })
+  speechOpts.current = { voiceURI, rate: speechRate }
+  const reader = useRef<Reader | null>(null)
+  useEffect(() => {
+    const load = () => setVoices(speechSynthesis.getVoices())
+    load()
+    speechSynthesis.addEventListener('voiceschanged', load)
+    return () => {
+      speechSynthesis.removeEventListener('voiceschanged', load)
+      reader.current?.stop()
+    }
+  }, [])
+  // Leaving the tab stops reading.
+  useEffect(() => {
+    if (!active) reader.current?.stop()
+  }, [active])
+  const readAloud = async () => {
+    const c = clientRef.current
+    if (!c) return
+    const count = pages.length
+    reader.current?.stop()
+    const r = new Reader({
+      ...speechOpts.current,
+      pageText: async (p) => (p < count ? (await c.pageText(p)).text : null),
+      onPage: (p) => viewer.current?.scrollToPage(p),
+      onState: setReaderState
+    })
+    reader.current = r
+    // With text selected, read just the selection; otherwise from the current page to the end.
+    const selected = viewer.current?.hasSelection() ? await viewer.current.selectedText() : null
+    void r.start(currentPage, selected ?? undefined)
+  }
+
   // ---- Presentation ---------------------------------------------------------------------------------
   // Shows the document as Save would write it (pending annotations included) and with the view's layers.
   const [presenting, setPresenting] = useState<{ bytes: Uint8Array; start: number } | null>(null)
@@ -962,7 +1011,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         e.preventDefault()
         stepMatch(e.shiftKey ? -1 : 1)
       } else if (e.key === 'Escape') {
-        if (printDialog) setPrintDialog(null)
+        if (readingMode) setReadingMode(false)
+        else if (printDialog) setPrintDialog(null)
         else if (searchOpen) setSearchOpen(false)
         else if (tool !== 'select') setTool('select')
         else if (selectedAnnot !== null) setSelectedAnnot(null)
@@ -976,6 +1026,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       } else if (ctrl && e.shiftKey && (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract')) {
         e.preventDefault()
         rotateView(-1)
+      } else if (ctrl && k === 'h') {
+        e.preventDefault()
+        setReadingMode((m) => !m)
       } else if (e.key === 'F5' && !ctrl) {
         e.preventDefault()
         void present()
@@ -998,7 +1051,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, searchOpen, tool, selectedAnnot, openSearch, rotateView, openPrint, printDialog, present, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
+  }, [active, searchOpen, tool, selectedAnnot, openSearch, rotateView, openPrint, printDialog, present, readingMode, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
 
   // ---- Page box -------------------------------------------------------------------------------------
   const [pageText, setPageText] = useState('1')
@@ -1042,7 +1095,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   return (
     <div className="docview" style={{ display: active ? 'flex' : 'none' }}>
-      <div className="ribbon">
+      {readingMode && (
+        <button className="reading-exit" onClick={() => setReadingMode(false)} title="Leave reading mode (Esc or Ctrl+H)">
+          <X size={14} strokeWidth={2} aria-hidden />
+          Leave reading mode
+        </button>
+      )}
+      <div className="ribbon" hidden={readingMode}>
         <div className="ribbon-tabs" role="tablist" aria-label="Ribbon">
           {RIBBON_TABS.map(([k, label]) => (
             <button key={k} role="tab" aria-selected={ribbon === k} className={ribbon === k ? 'rtab on' : 'rtab'} onClick={() => setRibbon(k)}>
@@ -1205,6 +1264,47 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RStack>
                   <RB icon={Scan} label="Actual size" onClick={() => setMode(1)} disabled={!pages.length} pressed={mode === 1} title="Actual size (Ctrl+1)" />
                   <RB icon={ZoomIn} label="Zoom in" onClick={() => stepZoom(1)} disabled={!pages.length} title="Zoom in (Ctrl++)" />
+                </RStack>
+              </RGroup>
+              <RGroup label="Read aloud">
+                {readerState === 'idle' ? (
+                  <RB big icon={Volume2} label="Read" onClick={() => void readAloud()} disabled={!pages.length || !voices.length} title={voices.length ? 'Read aloud from this page, or the selected text' : 'No speech voices are installed'} />
+                ) : (
+                  <RB
+                    big
+                    icon={readerState === 'paused' ? Play : Pause}
+                    label={readerState === 'paused' ? 'Resume' : 'Pause'}
+                    onClick={() => (readerState === 'paused' ? reader.current?.resume() : reader.current?.pause())}
+                    title={readerState === 'paused' ? 'Resume reading' : 'Pause reading'}
+                  />
+                )}
+                <RStack>
+                  <RB icon={CircleStop} label="Stop" onClick={() => reader.current?.stop()} disabled={readerState === 'idle'} title="Stop reading" />
+                  <select className="rselect" aria-label="Reading speed" value={speechRate} onChange={(e) => setSpeechRate(Number(e.target.value))} title="Reading speed (applies next time)">
+                    {[0.75, 1, 1.25, 1.5, 2].map((r) => (
+                      <option key={r} value={r}>
+                        {r}×
+                      </option>
+                    ))}
+                  </select>
+                </RStack>
+                {voices.length > 1 && (
+                  <select className="rselect" aria-label="Voice" value={voiceURI ?? ''} onChange={(e) => setVoiceURI(e.target.value || undefined)} title="Voice (applies next time)">
+                    <option value="">Default voice</option>
+                    {voices.map((v) => (
+                      <option key={v.voiceURI} value={v.voiceURI}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </RGroup>
+              <RGroup label="Reading">
+                <RB big icon={BookOpenText} label="Reading mode" onClick={() => setReadingMode(true)} disabled={!pages.length} title="Hide the ribbon and side pane (Ctrl+H). Esc to leave" />
+                <RStack>
+                  <RB icon={Sun} label="Normal colours" onClick={() => setPageColours('normal')} pressed={pageColours === 'normal'} title="Show pages in their own colours" />
+                  <RB icon={Moon} label="Night" onClick={() => setPageColours('night')} pressed={pageColours === 'night'} title="Light text on dark pages (view only)" />
+                  <RB icon={Contrast} label="High contrast" onClick={() => setPageColours('contrast')} pressed={pageColours === 'contrast'} title="High-contrast pages (view only)" />
                 </RStack>
               </RGroup>
               <RGroup label="Show">
@@ -1410,7 +1510,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           <div className="empty">Loading…</div>
         ) : (
           <>
-            {sidebar && (
+            {sidebar && !readingMode && (
               <Sidebar
                 client={client}
                 pages={pages}
@@ -1431,7 +1531,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onToggleLayer={toggleLayer}
               />
             )}
-            {sidebar && (
+            {sidebar && !readingMode && (
               <div
                 className="splitter"
                 role="separator"
@@ -1466,6 +1566,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               mode={pageMode}
               onZoomTo={zoomTo}
               onSnapshot={(page, rect) => void takeSnapshot(page, rect)}
+              pageColours={pageColours}
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}

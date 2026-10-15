@@ -32,7 +32,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Snapshot tool (drag a box; copies a 200 dpi PNG, turned with the view)
 - [x] Print: page ranges, copies, fit or actual size, auto-rotate (output checked through the test hook; the system print dialog itself is not yet tested)
 - [x] Booklet and N-up printing (2, 4, 6, 9, 16 per sheet), presentation mode (F5, full screen)
-- [ ] Read-aloud (system TTS), reading mode, accessibility (screen-reader, high contrast)
+- [x] Read aloud (Windows voices; page by page or the selection; speed and voice), reading mode (Ctrl+H), night and high-contrast page colours, screen-reader text layer, Windows high-contrast support
 - [ ] Rulers, grid, guides, measurement tools (distance, perimeter, area)
 
 ## Phase 2: Annotation and markup (P0)

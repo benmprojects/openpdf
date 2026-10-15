@@ -983,6 +983,67 @@ kbd {
 .presentation.idle .presentation-counter {
   opacity: 0;
 }
+/* Page colours (view only). */
+.colours-night .page canvas {
+  filter: invert(1) hue-rotate(180deg);
+}
+.colours-contrast .page canvas {
+  filter: grayscale(1) invert(1) contrast(1.6);
+}
+.colours-night .page,
+.colours-contrast .page {
+  background: #000;
+}
+/* Visible to screen readers only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: pre-wrap;
+}
+.reading-exit {
+  position: fixed;
+  top: 46px;
+  right: 22px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.reading-exit:hover {
+  opacity: 1;
+}
+/* Windows high-contrast themes: let the system colours through and keep edges visible. */
+@media (forced-colors: active) {
+  .rb,
+  .icon-btn,
+  .tab,
+  .rtab,
+  .thumb,
+  .swatch {
+    border: 1px solid ButtonText;
+  }
+  .rb[aria-pressed='true'],
+  .icon-btn[aria-pressed='true'],
+  .rtab.on,
+  .tab.active {
+    outline: 2px solid Highlight;
+  }
+  .page {
+    border: 1px solid CanvasText;
+    forced-color-adjust: none;
+  }
+}
 .page-row {
   display: flex;
   align-items: center;

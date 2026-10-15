@@ -39,6 +39,8 @@ export interface ViewerHandle {
   scrollToPage(index: number): void
   scrollToMatch(match: Match): void
   copySelection(): Promise<boolean>
+  /** The selected text, or null when nothing is selected. */
+  selectedText(): Promise<string | null>
   hasSelection(): boolean
   clearSelection(): void
   /** One entry per page touched by the current text selection, with a rectangle per line. */
@@ -94,6 +96,8 @@ interface Props {
   onZoomTo: (zoom: number) => void
   /** The snapshot tool: a box dragged on one page, in page points (unrotated frame). */
   onSnapshot: (page: number, rect: Rect) => void
+  /** How page colours are shown: as they are, inverted for night reading, or high contrast. */
+  pageColours: 'normal' | 'night' | 'contrast'
   tool: Tool
   annots: Annot[]
   selectedAnnot: number | null
@@ -132,6 +136,7 @@ export function Viewer({
   mode,
   onZoomTo,
   onSnapshot,
+  pageColours,
   tool,
   annots,
   selectedAnnot,
@@ -602,6 +607,16 @@ export function Viewer({
         }
         return out
       },
+      async selectedText() {
+        const o = ordered
+        if (!o) return null
+        const parts: string[] = []
+        for (let p = o.s.page; p <= o.e.page; p++) {
+          const pt = await client.pageText(p)
+          parts.push(sliceText(pt, p === o.s.page ? o.s.char : 0, p === o.e.page ? o.e.char : Infinity))
+        }
+        return normaliseNewlines(parts.join('\n'))
+      },
       hasSelection: () => selRef.current !== null,
       clearSelection: () => setSel(null)
     }),
@@ -611,7 +626,7 @@ export function Viewer({
   return (
     <div
       ref={scroller}
-      className={tool === 'hand' ? 'scroller hand' : tool === 'zoom' ? 'scroller zoom' : tool === 'select' ? 'scroller' : 'scroller place'}
+      className={`${tool === 'hand' ? 'scroller hand' : tool === 'zoom' ? 'scroller zoom' : tool === 'select' ? 'scroller' : 'scroller place'} colours-${pageColours}`}
       onMouseDown={onMouseDown}
       onWheel={onWheel}
     >
@@ -785,7 +800,8 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, annots
     }
   }, [client, index, visible, tiled, fullScale, zoom, rotation, size, scroller, epoch])
 
-  const needsText = selection !== null || (matches?.length ?? 0) > 0
+  // Text is also loaded for every page near the view, for the screen-reader text layer.
+  const needsText = visible || selection !== null || (matches?.length ?? 0) > 0
   useEffect(() => {
     if (!needsText) return
     let cancelled = false
@@ -853,6 +869,11 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, annots
           onEdit={annotProps.onEditAnnot}
           onText={annotProps.onAnnotText}
         />
+      )}
+      {visible && text && (
+        <div className="sr-only" role="article" aria-label={`Page ${index + 1}`}>
+          {text.text}
+        </div>
       )}
       <div className="hl-layer">
         {matchRects.flatMap(({ idx, rects }) =>
