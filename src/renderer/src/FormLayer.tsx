@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Lock, Settings2, Trash2 } from 'lucide-react'
 import type { FormField, FormValue, Widget } from './forms'
 import { deltaToPage, type Rotation } from './viewRotation'
@@ -15,6 +15,10 @@ export interface FormsView {
   design?: DesignProps
   /** A push button was pressed. */
   onButton?: (field: FormField) => void
+  /** A value was committed: a text field lost focus, or another kind of control changed. */
+  onCommit?: (field: FormField, value: FormValue) => void
+  /** What fields with a format script show when they are not being edited. */
+  display?: ReadonlyMap<string, string>
 }
 
 export interface DesignProps {
@@ -41,7 +45,17 @@ export function FormLayer({ page, zoom, rotation, forms, interactive }: { page: 
   return (
     <div className={`form-layer${forms.highlight ? ' highlight' : ''}${interactive ? '' : ' inert'}`}>
       {items.map(({ field, widget, key }) => (
-        <Control key={key} field={field} widget={widget} zoom={zoom} value={forms.values.get(field.name) ?? field.value} onChange={(v) => forms.onChange(field.name, v)} onButton={() => forms.onButton?.(field)} />
+        <Control
+          key={key}
+          field={field}
+          widget={widget}
+          zoom={zoom}
+          value={forms.values.get(field.name) ?? field.value}
+          shown={forms.display?.get(field.name)}
+          onChange={(v) => forms.onChange(field.name, v)}
+          onCommit={(v) => forms.onCommit?.(field, v)}
+          onButton={() => forms.onButton?.(field)}
+        />
       ))}
     </div>
   )
@@ -150,7 +164,35 @@ function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: n
   )
 }
 
-function Control({ field, widget, zoom, value, onChange, onButton }: { field: FormField; widget: Widget; zoom: number; value: FormValue; onChange: (v: FormValue) => void; onButton: () => void }) {
+function Control({
+  field,
+  widget,
+  zoom,
+  value,
+  shown,
+  onChange,
+  onCommit,
+  onButton
+}: {
+  field: FormField
+  widget: Widget
+  zoom: number
+  value: FormValue
+  shown?: string
+  onChange: (v: FormValue) => void
+  onCommit: (v: FormValue) => void
+  onButton: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const box = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
+  // A field that shows a formatted value switches to what was entered when it gains focus: select that, as Acrobat does.
+  const swaps = shown !== undefined && typeof value === 'string' && shown !== value
+  useEffect(() => {
+    if (editing && swaps) box.current?.select()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing])
+  // A calculated field is worked out, not typed into.
+  const locked = field.readOnly || !!field.scripts?.calculate
   const r = widget.rect
   const size = field.fontSize > 0 ? field.fontSize : Math.max(6, Math.min(12, r.h * 0.7))
   const style: React.CSSProperties = {
@@ -164,29 +206,73 @@ function Control({ field, widget, zoom, value, onChange, onButton }: { field: Fo
     ...(widget.background ? { background: widget.background } : {}),
     ...(widget.border ? { borderColor: widget.border } : {})
   }
-  const cls = `form-widget ${field.type}${field.readOnly ? ' readonly' : ''}${field.required ? ' required' : ''}`
+  const cls = `form-widget ${field.type}${locked ? ' readonly' : ''}${field.required ? ' required' : ''}`
   const label = field.name
 
   if (field.type === 'text') {
     const text = typeof value === 'string' ? value : ''
+    // While not being edited a field with a format script shows its formatted value; editing shows what was entered.
+    // (A field that cannot be typed into is never being edited, even when it has focus.)
+    const display = (!editing || locked) && shown !== undefined ? shown : text
+    const focus = { onFocus: () => setEditing(true), onBlur: () => {
+      setEditing(false)
+      onCommit(text)
+    } }
     return field.multiline ? (
-      <textarea className={cls} style={style} aria-label={label} value={text} readOnly={field.readOnly} maxLength={field.maxLength} spellCheck onChange={(e) => onChange(e.target.value)} />
+      <textarea ref={box} className={cls} style={style} aria-label={label} value={display} readOnly={locked} maxLength={field.maxLength} spellCheck {...focus} onChange={(e) => onChange(e.target.value)} />
     ) : (
-      <input className={cls} style={style} aria-label={label} type={field.password ? 'password' : 'text'} value={text} readOnly={field.readOnly} maxLength={field.maxLength} spellCheck onChange={(e) => onChange(e.target.value)} />
+      <input ref={box} className={cls} style={style} aria-label={label} type={field.password ? 'password' : 'text'} value={display} readOnly={locked} maxLength={field.maxLength} spellCheck {...focus} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onCommit(text)} />
     )
   }
   if (field.type === 'checkbox') {
-    return <input className={cls} style={style} aria-label={label} type="checkbox" checked={value === true} disabled={field.readOnly} onChange={(e) => onChange(e.target.checked)} />
+    return (
+      <input
+        className={cls}
+        style={style}
+        aria-label={label}
+        type="checkbox"
+        checked={value === true}
+        disabled={locked}
+        onChange={(e) => {
+          onChange(e.target.checked)
+          onCommit(e.target.checked)
+        }}
+      />
+    )
   }
   if (field.type === 'radio') {
     const on = widget.onValue ?? ''
-    return <input className={cls} style={style} aria-label={`${label}: ${on}`} type="radio" name={`${field.name}-${widget.page}`} checked={value === on} disabled={field.readOnly} onChange={() => onChange(on)} />
+    return (
+      <input
+        className={cls}
+        style={style}
+        aria-label={`${label}: ${on}`}
+        type="radio"
+        name={`${field.name}-${widget.page}`}
+        checked={value === on}
+        disabled={locked}
+        onChange={() => {
+          onChange(on)
+          onCommit(on)
+        }}
+      />
+    )
   }
   if (field.type === 'dropdown') {
     const current = typeof value === 'string' ? value : ''
     const opts = field.options ?? []
     return (
-      <select className={cls} style={style} aria-label={label} value={current} disabled={field.readOnly} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className={cls}
+        style={style}
+        aria-label={label}
+        value={current}
+        disabled={locked}
+        onChange={(e) => {
+          onChange(e.target.value)
+          onCommit(e.target.value)
+        }}
+      >
         {!opts.includes(current) && <option value={current}>{current}</option>}
         {opts.map((o) => (
           <option key={o} value={o}>
@@ -206,8 +292,12 @@ function Control({ field, widget, zoom, value, onChange, onButton }: { field: Fo
         multiple={field.multiSelect}
         size={Math.max(2, Math.floor(r.h / (size * 1.25)))}
         value={field.multiSelect ? current : (current[0] ?? '')}
-        disabled={field.readOnly}
-        onChange={(e) => onChange(field.multiSelect ? Array.from(e.target.selectedOptions, (o) => o.value) : [e.target.value])}
+        disabled={locked}
+        onChange={(e) => {
+          const v = field.multiSelect ? Array.from(e.target.selectedOptions, (o) => o.value) : [e.target.value]
+          onChange(v)
+          onCommit(v)
+        }}
       >
         {(field.options ?? []).map((o) => (
           <option key={o} value={o}>

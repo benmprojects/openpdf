@@ -2477,6 +2477,23 @@ button.compare-item:hover {
   text-overflow: ellipsis;
   pointer-events: none;
 }
+.script-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.script-box legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+.script-box textarea {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
 .detect-form {
   min-width: 520px;
 }

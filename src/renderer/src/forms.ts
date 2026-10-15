@@ -61,6 +61,14 @@ export interface Widget {
   tabs: 'R' | 'C' | 'S' | ''
 }
 
+/** JavaScript run by a field (additional actions, /AA): how its value is shown, keys checked, value validated, value calculated. */
+export interface FieldScripts {
+  format?: string
+  keystroke?: string
+  validate?: string
+  calculate?: string
+}
+
 export interface FormField {
   /** Fully qualified field name. */
   name: string
@@ -80,6 +88,9 @@ export interface FormField {
   /** 0 left, 1 centre, 2 right. */
   align: 0 | 1 | 2
   tooltip: string
+  scripts?: FieldScripts
+  /** Position in the form's calculation order (/CO), for fields with a calculate script. */
+  calcOrder?: number
   /** What a push button does. */
   action?: ButtonAction
   /** Font size from the default appearance; 0 means auto. */
@@ -101,6 +112,14 @@ const hex = (c: number[] | undefined): string | undefined => {
 
 const textOf = (o: unknown): string => (o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : '')
 
+/** The JavaScript of an action dictionary (a string or a stream), or undefined. */
+function jsOf(a: PDFDict | undefined): string | undefined {
+  if (!a || a.lookupMaybe(PDFName.of('S'), PDFName)?.decodeText() !== 'JavaScript') return undefined
+  const js = a.lookup(PDFName.of('JS'))
+  const code = js instanceof PDFRawStream ? new TextDecoder().decode(decodePDFRawStream(js).decode()) : textOf(js)
+  return code || undefined
+}
+
 /** A push button's action, from the widget's /A dictionary. */
 function readAction(w: PDFDict): ButtonAction {
   const a = w.lookupMaybe(PDFName.of('A'), PDFDict)
@@ -119,6 +138,18 @@ function readAction(w: PDFDict): ButtonAction {
     return { kind: 'submit', url, format: flags & 256 ? 'pdf' : flags & 32 ? 'xfdf' : flags & 4 ? 'html' : 'fdf' }
   }
   return { kind: 'none' }
+}
+
+function readScripts(field: PDFDict): FieldScripts | undefined {
+  const aa = field.lookupMaybe(PDFName.of('AA'), PDFDict)
+  if (!aa) return undefined
+  const s: FieldScripts = {
+    format: jsOf(aa.lookupMaybe(PDFName.of('F'), PDFDict)),
+    keystroke: jsOf(aa.lookupMaybe(PDFName.of('K'), PDFDict)),
+    validate: jsOf(aa.lookupMaybe(PDFName.of('V'), PDFDict)),
+    calculate: jsOf(aa.lookupMaybe(PDFName.of('C'), PDFDict))
+  }
+  return s.format || s.keystroke || s.validate || s.calculate ? s : undefined
 }
 
 /** The font size in a field's default appearance (0 for automatic). */
@@ -153,6 +184,13 @@ export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
     }
   })
   const fields: FormField[] = []
+  // The calculation order: the field objects listed in the form's /CO array.
+  const co = form.acroForm.dict.lookupMaybe(PDFName.of('CO'), PDFArray)
+  const calcOrderOf = new Map<string, number>()
+  for (let i = 0; co && i < co.size(); i++) {
+    const r = co.get(i)
+    if (r instanceof PDFRef) calcOrderOf.set(r.toString(), i)
+  }
   for (const f of form.getFields()) {
     const type = fieldType(f)
     if (!type) continue
@@ -227,6 +265,8 @@ export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
       initial: Array.isArray(value) ? [...value] : value,
       options,
       tooltip: textOf(f.acroField.dict.lookup(PDFName.of('TU'))),
+      scripts: readScripts(f.acroField.dict),
+      calcOrder: calcOrderOf.get(f.ref.toString()),
       action: type === 'button' ? readAction(f.acroField.getWidgets()[0].dict) : undefined,
       readOnly: f.isReadOnly(),
       required: f.isRequired(),
@@ -245,7 +285,9 @@ export async function applyFormValues(
   bytes: Uint8Array,
   values: ReadonlyMap<string, FormValue>,
   /** An installed font to draw values the standard font cannot show (accented and non-Latin text). */
-  unicodeFont?: Uint8Array | null
+  unicodeFont?: Uint8Array | null,
+  /** What a field shows (its value through its format script): drawn in the appearance, while the value stays as typed. */
+  display?: ReadonlyMap<string, string>
 ): Promise<Uint8Array> {
   if (!values.size) return bytes
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
@@ -281,9 +323,18 @@ export async function applyFormValues(
       const max = f.getMaxLength()
       // Automatic size on a multiline field is 12 pt, as in Acrobat (pdf-lib would size it to the box).
       if (f.isMultiline() && defaultSize(f) === 0) refresh(() => f.setFontSize(12))
+      const shown = display?.get(name)
       f.setText(value ? (max !== undefined ? value.slice(0, max) : value) : undefined)
-      const font = await fontFor(value)
-      refresh(() => f.updateAppearances(font))
+      if (shown !== undefined && shown !== value) {
+        // The appearance shows the formatted text; the field's value stays what was entered (its format script shows it again).
+        f.setText(shown || undefined)
+        const font = await fontFor(shown)
+        refresh(() => f.updateAppearances(font))
+        f.acroField.dict.set(PDFName.of('V'), PDFHexString.fromText(value))
+      } else {
+        const font = await fontFor(value)
+        refresh(() => f.updateAppearances(font))
+      }
     } else if (f instanceof PDFCheckBox && typeof value === 'boolean') {
       if (value) f.check()
       else f.uncheck()

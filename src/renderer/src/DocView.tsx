@@ -75,6 +75,7 @@ import { detectInDocument, type Detected } from './formDetect'
 import { DetectDialog } from './DetectDialog'
 import { addField, addFields, deleteField, moveInTabOrder, placeWidget, setTabOrder, updateField, type FieldPatch, type FieldSpec, type TabOrder } from './formDesign'
 import { FieldDialog } from './FieldDialog'
+import { commitValue, displayValue, fieldStates, recalculate, runScript } from './formScripts'
 import { entriesFor, readDataFile, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataFormat } from './formData'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
@@ -524,6 +525,74 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       return next
     })
   }, [])
+  // ---- Form scripts ---------------------------------------------------------------------------------
+  const formValuesRef = useRef<ReadonlyMap<string, FormValue>>(formValues)
+  formValuesRef.current = formValues
+  /** The value each field last had accepted, to go back to when a check rejects a new one. */
+  const committedRef = useRef(new Map<string, FormValue>())
+  /** What fields with a format script show when they are not being edited. */
+  const [displayed, setDisplayed] = useState<ReadonlyMap<string, string>>(new Map())
+  const computeDisplays = async (fields: FormField[], values: ReadonlyMap<string, FormValue>) => {
+    const withFormat = fields.filter((f) => f.scripts?.format && (f.type === 'text' || f.type === 'dropdown'))
+    if (!withFormat.length) return new Map<string, string>()
+    const states = fieldStates(fields, values)
+    const entries = await Promise.all(
+      withFormat.map(async (f): Promise<[string, string]> => {
+        const v = values.get(f.name) ?? f.value
+        return [f.name, await displayValue(f, typeof v === 'string' ? v : '', states)]
+      })
+    )
+    return new Map(entries)
+  }
+  useEffect(() => {
+    if (!formFields.some((f) => f.scripts?.format)) {
+      setDisplayed((d) => (d.size ? new Map() : d))
+      return
+    }
+    let cancelled = false
+    const t = setTimeout(() => {
+      computeDisplays(formFields, formValues)
+        .then((m) => !cancelled && setDisplayed(m))
+        .catch(() => {})
+    }, 120)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [formFields, formValues]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** Runs the calculate scripts for `values`, applies what changed, and reports messages from the scripts. */
+  const applyCalculations = async (values: ReadonlyMap<string, FormValue>) => {
+    const fields = formFieldsRef.current
+    if (!fields.some((f) => f.scripts?.calculate)) return
+    const res = await recalculate(fields, values)
+    for (const [n, v] of res.changed) {
+      committedRef.current.set(n, v)
+      setFormValue(n, v)
+    }
+    if (res.error) setNotice({ kind: 'error', text: `A calculation could not run: ${res.error}` })
+    else if (res.alerts.length) setNotice({ kind: 'info', text: res.alerts.join(' ') })
+  }
+  /** A value was committed to a field (a text field lost focus, or another control changed): check it, then recalculate. */
+  const commitField = async (f: FormField, v: FormValue) => {
+    let value = v
+    const raw = typeof v === 'string' ? v : ''
+    if ((f.type === 'text' || f.type === 'dropdown') && (f.scripts?.keystroke || f.scripts?.validate)) {
+      const r = await commitValue(f, raw, fieldStates(formFieldsRef.current, new Map(formValuesRef.current).set(f.name, v)))
+      if (r.error) setNotice({ kind: 'error', text: `The script for "${f.name}" could not run: ${r.error}` })
+      else if (r.alerts.length) setNotice({ kind: r.ok ? 'info' : 'error', text: r.alerts.join(' ') })
+      if (!r.ok) {
+        setFormValue(f.name, committedRef.current.get(f.name) ?? f.initial)
+        return
+      }
+      if (r.value !== raw) {
+        value = r.value
+        setFormValue(f.name, r.value)
+      }
+    }
+    if (JSON.stringify(committedRef.current.get(f.name) ?? f.initial) === JSON.stringify(value)) return
+    committedRef.current.set(f.name, value)
+    await applyCalculations(new Map(formValuesRef.current).set(f.name, value))
+  }
   /** Form data out: the fields' current values as FDF, XFDF, CSV or XML. */
   const exportFormData = async (format: DataFormat) => {
     try {
@@ -570,6 +639,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     setFormValues(next)
     setNotice({ kind: 'info', text: 'Form cleared. Save to keep the changes.' })
+    void applyCalculations(new Map([...formValuesRef.current, ...next]))
   }
   const selectedIds = useMemo(() => new Set<number>([...(selectedAnnot !== null ? [selectedAnnot] : []), ...extraSel]), [selectedAnnot, extraSel])
   const selIdsRef = useRef<ReadonlySet<number>>(selectedIds)
@@ -759,7 +829,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     let cancelled = false
     readForm(bytes)
-      .then((f) => !cancelled && setFormFields(f))
+      .then((f) => {
+        if (cancelled) return
+        committedRef.current = new Map()
+        setFormFields(f)
+      })
       .catch(() => !cancelled && setFormFields([]))
     return () => {
       cancelled = true
@@ -783,7 +857,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       // Text the standard font cannot show (accents, non-Latin scripts) is drawn with an installed font.
       const wide = [...formValues.values()].some((v) => [v].flat().some((s) => typeof s === 'string' && [...s].some((ch) => ch.charCodeAt(0) > 0xff)))
       const unicode = wide ? await window.openpdf.findFont('Arial', false, false).catch(() => null) : null
-      out = await applyFormValues(out, formValues, unicode?.data)
+      out = await applyFormValues(out, formValues, unicode?.data, await computeDisplays(formFields, formValues))
     }
     return out
   }
@@ -1408,7 +1482,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (!a || a.kind === 'none') return
     if (a.kind === 'reset') resetForm()
     else if (a.kind === 'uri' && a.url) void window.openpdf.openLink(a.url)
-    else setNotice({ kind: 'info', text: a.kind === 'submit' ? 'Sending a form to a web address is not supported yet. Use Export to save the data.' : 'Scripts are not run yet.' })
+    else if (a.kind === 'javascript') {
+      void runScript('MouseUp', a.code, f.name, fieldStates(formFields, formValues), {}, name).then(async (r) => {
+        const merged = new Map(formValuesRef.current)
+        for (const [n, v] of r.changed) {
+          committedRef.current.set(n, v)
+          setFormValue(n, v)
+          merged.set(n, v)
+        }
+        if (r.error) setNotice({ kind: 'error', text: `The script for "${f.name}" failed: ${r.error}` })
+        else if (r.alerts.length) setNotice({ kind: 'info', text: r.alerts.join(' ') })
+        await applyCalculations(merged)
+      })
+    } else setNotice({ kind: 'info', text: 'Sending a form to a web address is not supported yet. Use Export to save the data.' })
   }
 
   // Bookmark edits come quicker than the document reloads: keep the latest tree and write it when free.
@@ -2672,11 +2758,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       )}
 
       {detected && <DetectDialog found={detected} onApply={(c) => void createDetected(c)} onClose={() => setDetected(null)} />}
-      {fieldDraft && <FieldDialog type={fieldDraft.type} names={formFields.map((f) => f.name)} proposedName={proposeName(fieldDraft.type)} onCreate={(s) => void createField(s)} onUpdate={() => {}} onClose={() => setFieldDraft(null)} />}
+      {fieldDraft && <FieldDialog type={fieldDraft.type} names={formFields.map((f) => f.name)} sourceNames={formFields.filter((f) => f.type === 'text' || f.type === 'dropdown').map((f) => f.name)} proposedName={proposeName(fieldDraft.type)} onCreate={(s) => void createField(s)} onUpdate={() => {}} onClose={() => setFieldDraft(null)} />}
       {fieldEdit &&
         (() => {
           const f = formFields.find((x) => x.name === fieldEdit)
-          return f ? <FieldDialog key={f.name} type={f.type} field={f} names={formFields.map((x) => x.name)} proposedName={f.name} onCreate={() => {}} onUpdate={(n, p) => void changeField(n, p)} onClose={() => setFieldEdit(null)} /> : null
+          return f ? <FieldDialog key={f.name} type={f.type} field={f} names={formFields.map((x) => x.name)} sourceNames={formFields.filter((x) => x.type === 'text' || x.type === 'dropdown').map((x) => x.name)} proposedName={f.name} onCreate={() => {}} onUpdate={(n, p) => void changeField(n, p)} onClose={() => setFieldEdit(null)} /> : null
         })()}
 
       {docProps && (
@@ -3074,6 +3160,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                       onChange: setFormValue,
                       highlight: highlightFields,
                       onButton: pressFormButton,
+                      onCommit: (f, v) => void commitField(f, v),
+                      display: displayed,
                       design: tool === 'formedit' ? { selected: designSel, onSelect: setDesignSel, onPlace: moveField, onEdit: setFieldEdit, onDelete: (n) => void removeField(n) } : undefined
                     }
                   : undefined

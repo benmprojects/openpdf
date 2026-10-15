@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { FieldPatch, FieldSpec } from './formDesign'
 import type { ButtonAction, FieldType, FormField } from './forms'
+import { buildScripts, parseScripts, type CalcChoice, type FormatChoice, type ScriptUi, type ValidateChoice } from './scriptPresets'
 
 const TYPE_NAME: Record<FieldType, string> = { text: 'Text field', checkbox: 'Check box', radio: 'Radio button', dropdown: 'Drop-down list', list: 'List box', button: 'Button', signature: 'Signature field' }
 
@@ -15,6 +16,7 @@ export function FieldDialog({
   type,
   field,
   names,
+  sourceNames = [],
   proposedName,
   onCreate,
   onUpdate,
@@ -25,6 +27,8 @@ export function FieldDialog({
   field?: FormField
   /** Names in use, for the repeat check. */
   names: string[]
+  /** Fields a calculation can use (the other text fields). */
+  sourceNames?: string[]
   proposedName: string
   onCreate: (s: Omit<FieldSpec, 'page' | 'rect' | 'type'>) => void
   onUpdate: (name: string, p: FieldPatch) => void
@@ -58,6 +62,9 @@ export function FieldDialog({
   const [background, setBackground] = useState('#e8efff')
   const [noBackground, setNoBackground] = useState(type !== 'text')
   const [error, setError] = useState('')
+  const [ui, setUi] = useState<ScriptUi>(() => parseScripts(field?.scripts))
+  const setScript = (patch: Partial<ScriptUi>) => setUi({ ...ui, ...patch })
+  const scriptable = type === 'text' || type === 'dropdown'
 
   const optionList = options.split('\n').map((o) => o.trim()).filter(Boolean)
   const isRadioExisting = type === 'radio' && !editing && names.includes(name)
@@ -75,6 +82,7 @@ export function FieldDialog({
     const max = Math.max(0, Math.floor(Number(maxLength) || 0))
     if (editing) {
       const p: FieldPatch = { name: n, tooltip, required, readOnly }
+      if (scriptable) p.scripts = buildScripts(ui)
       if (type === 'text') Object.assign(p, { multiline, password, maxLength: max, align, fontSize: size, value: text })
       if (type === 'checkbox') p.value = checked
       if (type === 'radio') p.value = chosen
@@ -91,6 +99,7 @@ export function FieldDialog({
       background: noBackground ? null : background,
       fontSize: size || undefined
     }
+    if (scriptable) spec.scripts = buildScripts(ui)
     if (type === 'text') Object.assign(spec, { value: text, multiline, password, maxLength: max || undefined, align })
     if (type === 'checkbox') spec.value = checked
     if (type === 'radio') Object.assign(spec, { option: option.trim(), value: selectedByDefault ? option.trim() : '' })
@@ -246,6 +255,156 @@ export function FieldDialog({
             Font size
             <input type="number" aria-label="Font size" min={0} max={72} value={fontSize} onChange={(e) => setFontSize(e.target.value)} /> (0 fits the box)
           </label>
+        )}
+        {scriptable && (
+          <fieldset className="marks-remove script-box">
+            <legend>Format, check and calculate</legend>
+            <label className="props-row">
+              <span>Format</span>
+              <select aria-label="Format" value={ui.format} onChange={(e) => setScript({ format: e.target.value as FormatChoice })}>
+                <option value="none">None</option>
+                <option value="number">Number</option>
+                <option value="percent">Percentage</option>
+                <option value="date">Date</option>
+                <option value="time">Time</option>
+                <option value="special">Post code, phone number</option>
+                <option value="custom">Custom script</option>
+              </select>
+            </label>
+            {(ui.format === 'number' || ui.format === 'percent') && (
+              <div className="marks-row">
+                <label className="inline">
+                  Decimal places
+                  <input type="number" aria-label="Decimal places" min={0} max={10} value={ui.decimals} onChange={(e) => setScript({ decimals: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })} />
+                </label>
+                <label className="inline">
+                  Separators
+                  <select aria-label="Separators" value={ui.separators} onChange={(e) => setScript({ separators: Number(e.target.value) as ScriptUi['separators'] })}>
+                    <option value={0}>1,234.56</option>
+                    <option value={1}>1234.56</option>
+                    <option value={2}>1.234,56</option>
+                    <option value={3}>1234,56</option>
+                    <option value={4}>1&apos;234.56</option>
+                  </select>
+                </label>
+              </div>
+            )}
+            {ui.format === 'number' && (
+              <div className="marks-row">
+                <label className="inline">
+                  Currency
+                  <input aria-label="Currency symbol" value={ui.currency} placeholder="$" onChange={(e) => setScript({ currency: e.target.value })} />
+                </label>
+                <label className="inline">
+                  <input type="checkbox" checked={ui.currencyFirst} onChange={(e) => setScript({ currencyFirst: e.target.checked })} /> symbol first
+                </label>
+                <label className="inline">
+                  <input type="checkbox" checked={ui.negativeBrackets} onChange={(e) => setScript({ negativeBrackets: e.target.checked })} /> negatives in brackets
+                </label>
+              </div>
+            )}
+            {ui.format === 'date' && (
+              <label className="props-row">
+                <span>Date form</span>
+                <input aria-label="Date form" list="date-forms" value={ui.dateFormat} onChange={(e) => setScript({ dateFormat: e.target.value })} />
+                <datalist id="date-forms">
+                  {['dd/mm/yyyy', 'd/m/yy', 'd mmm yyyy', 'd mmmm yyyy', 'dddd d mmmm yyyy', 'yyyy-mm-dd'].map((f) => (
+                    <option key={f} value={f} />
+                  ))}
+                </datalist>
+              </label>
+            )}
+            {ui.format === 'time' && (
+              <label className="props-row">
+                <span>Time form</span>
+                <select aria-label="Time form" value={ui.timeFormat} onChange={(e) => setScript({ timeFormat: e.target.value })}>
+                  {['HH:MM', 'h:MM tt', 'HH:MM:ss', 'h:MM:ss tt'].map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {ui.format === 'special' && (
+              <label className="props-row">
+                <span>Kind</span>
+                <select aria-label="Special kind" value={ui.special} onChange={(e) => setScript({ special: Number(e.target.value) as ScriptUi['special'] })}>
+                  <option value={0}>Post code (5 digits)</option>
+                  <option value={1}>Post code and 4 digits</option>
+                  <option value={2}>Phone number (10 digits)</option>
+                  <option value={3}>Social security number</option>
+                </select>
+              </label>
+            )}
+            {ui.format === 'custom' && (
+              <>
+                <label className="props-row">
+                  <span>Format script</span>
+                  <textarea aria-label="Format script" rows={3} spellCheck={false} value={ui.custom.format ?? ''} onChange={(e) => setScript({ custom: { ...ui.custom, format: e.target.value } })} />
+                </label>
+                <label className="props-row">
+                  <span>Keystroke script</span>
+                  <textarea aria-label="Keystroke script" rows={2} spellCheck={false} value={ui.custom.keystroke ?? ''} onChange={(e) => setScript({ custom: { ...ui.custom, keystroke: e.target.value } })} />
+                </label>
+              </>
+            )}
+            <label className="props-row">
+              <span>Check</span>
+              <select aria-label="Check" value={ui.validate} onChange={(e) => setScript({ validate: e.target.value as ValidateChoice })}>
+                <option value="none">Nothing</option>
+                <option value="range">Number in a range</option>
+                <option value="custom">Custom script</option>
+              </select>
+            </label>
+            {ui.validate === 'range' && (
+              <div className="marks-row">
+                <label className="inline">
+                  From
+                  <input type="number" aria-label="Range from" value={ui.min} onChange={(e) => setScript({ min: e.target.value })} />
+                </label>
+                <label className="inline">
+                  to
+                  <input type="number" aria-label="Range to" value={ui.max} onChange={(e) => setScript({ max: e.target.value })} />
+                </label>
+              </div>
+            )}
+            {ui.validate === 'custom' && (
+              <label className="props-row">
+                <span>Check script</span>
+                <textarea aria-label="Check script" rows={3} spellCheck={false} value={ui.custom.validate ?? ''} onChange={(e) => setScript({ custom: { ...ui.custom, validate: e.target.value } })} />
+              </label>
+            )}
+            <label className="props-row">
+              <span>Calculate</span>
+              <select aria-label="Calculate" value={ui.calculate} onChange={(e) => setScript({ calculate: e.target.value as CalcChoice })}>
+                <option value="none">Not calculated</option>
+                <option value="SUM">Sum of fields</option>
+                <option value="PRD">Product of fields</option>
+                <option value="AVG">Average of fields</option>
+                <option value="MIN">Smallest of fields</option>
+                <option value="MAX">Largest of fields</option>
+                <option value="custom">Custom script</option>
+              </select>
+            </label>
+            {ui.calculate !== 'none' && ui.calculate !== 'custom' && (
+              <div className="marks-row" role="group" aria-label="Fields to calculate from">
+                {sourceNames.filter((n) => n !== (field?.name ?? name)).map((n) => (
+                  <label key={n} className="inline">
+                    <input type="checkbox" checked={ui.sources.includes(n)} onChange={(e) => setScript({ sources: e.target.checked ? [...ui.sources, n] : ui.sources.filter((x) => x !== n) })} /> {n}
+                  </label>
+                ))}
+                {!sourceNames.filter((n) => n !== (field?.name ?? name)).length && <span className="muted">There are no other fields to calculate from yet.</span>}
+              </div>
+            )}
+            {ui.calculate === 'custom' && (
+              <label className="props-row">
+                <span>Calculation script</span>
+                <textarea aria-label="Calculation script" rows={3} spellCheck={false} value={ui.custom.calculate ?? ''} onChange={(e) => setScript({ custom: { ...ui.custom, calculate: e.target.value } })} />
+              </label>
+            )}
+            <p className="muted small">Scripts run in a sandbox that cannot reach files or the network. A calculated field cannot be typed into.</p>
+          </fieldset>
         )}
         {!editing && type !== 'signature' && (
           <div className="marks-row">

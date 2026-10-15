@@ -5,7 +5,7 @@
  */
 import { PDFArray, PDFButton, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFOptionList, PDFRadioGroup, PDFRef, PDFString, PDFTextField, StandardFonts, TextAlignment, rgb, type PDFField, type PDFPage } from 'pdf-lib'
 import { frameFor } from './annotWrite'
-import type { ButtonAction, FieldType, FormValue } from './forms'
+import type { ButtonAction, FieldScripts, FieldType, FormValue } from './forms'
 
 export type { ButtonAction }
 import type { Rect } from './textLogic'
@@ -39,6 +39,8 @@ export interface FieldSpec {
   textColor?: string
   /** For radio buttons: the option this widget stands for (the group is `name`). */
   option?: string
+  /** Scripts for the field's format, keystrokes, validation and calculation. */
+  scripts?: FieldScripts
 }
 
 const colour = (hex: string | null | undefined) => {
@@ -74,6 +76,36 @@ function actionDict(doc: PDFDocument, a: ButtonAction): PDFDict | null {
     return ctx.obj({ S: 'SubmitForm', F: { FS: 'URL', F: PDFString.of(a.url) }, Flags: flags }) as PDFDict
   }
   return null
+}
+
+/**
+ * Writes a field's scripts as additional actions (/AA: F format, K keystroke, V validate, C calculate) and keeps the
+ * form's calculation order (/CO) in step: a field with a calculate script is listed, one without is not.
+ */
+function writeScripts(doc: PDFDocument, f: PDFField, scripts: FieldScripts | undefined): void {
+  const ctx = doc.context
+  const dict = f.acroField.dict
+  let aa = dict.lookupMaybe(PDFName.of('AA'), PDFDict)
+  const keys: [keyof FieldScripts, string][] = [['format', 'F'], ['keystroke', 'K'], ['validate', 'V'], ['calculate', 'C']]
+  for (const [k, key] of keys) {
+    const code = scripts?.[k]
+    if (code) {
+      aa ??= ctx.obj({}) as PDFDict
+      aa.set(PDFName.of(key), ctx.obj({ S: 'JavaScript', JS: PDFHexString.fromText(code) }))
+    } else aa?.delete(PDFName.of(key))
+  }
+  if (aa && aa.keys().length) dict.set(PDFName.of('AA'), aa)
+  else dict.delete(PDFName.of('AA'))
+
+  const acro = doc.getForm().acroForm.dict
+  let co = acro.lookupMaybe(PDFName.of('CO'), PDFArray)
+  let at = -1
+  for (let i = 0; co && i < co.size(); i++) if (co.get(i)?.toString() === f.ref.toString()) at = i
+  if (scripts?.calculate && at < 0) {
+    co ??= ctx.obj([]) as PDFArray
+    co.push(f.ref)
+    acro.set(PDFName.of('CO'), co)
+  } else if (!scripts?.calculate && at >= 0 && co) co.remove(at)
 }
 
 /** Sets the options shared by every kind of field. */
@@ -129,6 +161,7 @@ async function addOne(doc: PDFDocument, spec: FieldSpec): Promise<void> {
     f.addToPage(page, { ...look, font })
     if (spec.fontSize !== undefined) f.setFontSize(spec.fontSize)
     common(f, spec)
+    if (spec.scripts) writeScripts(doc, f, spec.scripts)
   } else if (spec.type === 'checkbox') {
     checkName(spec.name, names)
     const f = form.createCheckBox(spec.name)
@@ -211,6 +244,8 @@ export interface FieldPatch {
   align?: 0 | 1 | 2
   caption?: string
   action?: ButtonAction
+  /** Replaces the field's scripts (an empty object removes them). */
+  scripts?: FieldScripts
 }
 
 /** Changes a field's properties. Returns the new file. */
@@ -293,6 +328,7 @@ export async function updateField(bytes: Uint8Array, name: string, patch: FieldP
       else w.dict.delete(PDFName.of('A'))
     }
   }
+  if (patch.scripts !== undefined) writeScripts(doc, f, patch.scripts)
   if (patch.name !== undefined && patch.name !== name) {
     checkName(patch.name, form.getFields().map((x) => x.getName()))
     f.acroField.setPartialName(patch.name)

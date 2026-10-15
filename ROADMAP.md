@@ -72,10 +72,10 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 
 ## Phase 5: Forms (P1)
 - [x] Fill AcroForms (text, checkbox, radio, combo, list; signature fields are shown but signing is Phase 6): Forms tab. Fields are real controls over the page (PDFium draws no widgets), values are written with pdf-lib on save, print and page edits
-- [ ] Form field designer (all field types), tab order, calculation and format scripts. Done: draw text, check box, radio, drop-down, list, button and signature fields; properties dialog; move, resize, rename and delete; tab order (rows, columns, field order with Earlier/Later); button actions (clear form, web address, send, script stored). Still to do: calculation and format scripts (with the JavaScript item)
+- [x] Form field designer (all field types), tab order, calculation and format scripts: draw, edit, move, resize and delete fields of every kind; tab order; button actions; Format (number, percentage, date, time, special), Check (range) and Calculate (sum, product, average, smallest, largest) from the field dialog, or custom scripts
 - [x] Flatten, reset, import and export form data (FDF, XFDF, CSV, XML): Forms tab (Clear form, Revert, Import, Export, Flatten)
 - [x] Auto-detect form fields (Forms > Detect fields: underscore and dotted blanks, rules, empty boxes and small squares, named from their labels; confirm in a dialog; tables start unticked)
-- [ ] JavaScript field actions (sandboxed)
+- [x] JavaScript field actions (sandboxed): QuickJS (WebAssembly) with a 250 ms limit, 32 MB memory cap and no host access; the Acrobat Forms subset (event, getField, AFNumber/AFPercent/AFDate/AFTime/AFSpecial, AFSimple_Calculate, AFRange_Validate, util.printd/scand, app.alert). Not done: document-level and page-open scripts, Submit actions, field actions on mouse enter/exit/focus
 
 ## Phase 6: Security and signatures (P1)
 - [ ] Password and permission encryption (AES-256), remove security

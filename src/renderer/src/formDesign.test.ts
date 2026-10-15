@@ -149,3 +149,30 @@ describe('tab order', () => {
     expect(await moveInTabOrder(b, 'c', -1)).toBe(b)
   })
 })
+
+describe('scripts', () => {
+  const sum = 'AFSimple_Calculate("SUM", new Array("a", "b"));'
+
+  it('writes format, keystroke, validate and calculate scripts, and the calculation order', async () => {
+    let b = await addField(await blank(), spec({ name: 'a' }))
+    b = await addField(b, spec({ name: 'b', rect: { x: 50, y: 90, w: 100, h: 20 } }))
+    b = await addField(b, spec({ name: 'total', rect: { x: 50, y: 130, w: 100, h: 20 }, scripts: { calculate: sum, format: 'AFNumber_Format(2, 0, 0, 0, "$", true);', keystroke: 'AFNumber_Keystroke();', validate: 'AFRange_Validate(true, 0, false, 0);' } }))
+    let f = await byName(b)
+    expect(f.get('total')!.scripts).toEqual({ calculate: sum, format: 'AFNumber_Format(2, 0, 0, 0, "$", true);', keystroke: 'AFNumber_Keystroke();', validate: 'AFRange_Validate(true, 0, false, 0);' })
+    expect(f.get('total')!.calcOrder).toBe(0)
+    expect(f.get('a')!.scripts).toBeUndefined()
+    expect(f.get('a')!.calcOrder).toBeUndefined()
+
+    // A second calculated field comes after the first; removing the first script drops it from the order.
+    b = await updateField(b, 'b', { scripts: { calculate: 'event.value = 1;' } })
+    f = await byName(b)
+    expect(f.get('b')!.calcOrder).toBe(1)
+    b = await updateField(b, 'total', { scripts: { format: 'AFNumber_Format(0, 0, 0, 0, "", true);' } })
+    f = await byName(b)
+    expect(f.get('total')!.scripts).toEqual({ format: 'AFNumber_Format(0, 0, 0, 0, "", true);' })
+    expect(f.get('total')!.calcOrder).toBeUndefined()
+    expect(f.get('b')!.calcOrder).toBe(0)
+    b = await updateField(b, 'b', { scripts: {} })
+    expect((await byName(b)).get('b')!.scripts).toBeUndefined()
+  })
+})
