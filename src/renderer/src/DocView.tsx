@@ -23,10 +23,16 @@ import { PdfClient, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, type Match } from './textLogic'
 import { useHistory } from './useHistory'
-import { PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
+import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout'
+import { GAP, PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
 import { printDocument } from './print'
 import {
   ArrowLeftRight,
+  BookOpen,
+  Columns2,
+  FileText,
+  GalleryVertical,
+  ScanSearch,
   Bookmark,
   ChevronDown,
   ChevronUp,
@@ -169,6 +175,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // View-only rotation for this tab. It never touches the bytes, so it cannot mark the document unsaved.
   const [rotation, setRotation] = useState<Rotation>(0)
   const rotateView = useCallback((dir: 1 | -1) => setRotation((r) => turn(r, dir)), [])
+  const [pageMode, setPageMode] = useState<PageMode>(DEFAULT_MODE)
+  const zoomTo = useCallback((z: number) => setMode(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))), [])
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [currentPage, setCurrentPage] = useState(0)
   const [sidebar, setSidebar] = useState<SidebarTab | null>('pages')
@@ -204,12 +212,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (typeof mode === 'number') return mode
     if (!pages.length || !size.w) return 1
     const shown = pages.map((p) => displayDims(p, rotation))
-    const maxW = Math.max(...shown.map((p) => p.width))
-    const maxH = Math.max(...shown.map((p) => p.height))
-    const byWidth = (size.w - 2 * PAD) / maxW
-    const z = mode === 'fit-width' ? byWidth : Math.min(byWidth, (size.h - 2 * PAD) / maxH)
+    const { maxWidth, maxHeight } = rowExtent(layoutRows(pages.length, pageMode), shown, 0)
+    const gaps = pageMode.twoUp ? GAP : 0 // pixels between the two pages of a row
+    const byWidth = (size.w - 2 * PAD - gaps) / maxWidth
+    const z = mode === 'fit-width' ? byWidth : Math.min(byWidth, (size.h - 2 * PAD) / maxHeight)
     return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
-  }, [mode, pages, size, rotation])
+  }, [mode, pages, size, rotation, pageMode])
 
   const stepZoom = useCallback(
     (dir: 1 | -1) => {
@@ -479,7 +487,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' ? null : tool // every remaining tool is named after the kind it creates
+    tool === 'select' || tool === 'hand' || tool === 'zoom' ? null : tool // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
   const showWidth = isShapeKind(swatchKind) || swatchKind === 'stamp'
   const activeWidth = selected && (isShapeKind(selected.kind) || selected.kind === 'stamp') ? selected.lineWidth : drawWidth
@@ -899,6 +907,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Tools">
                 <RB big icon={MousePointer2} label="Select" onClick={() => setTool('select')} disabled={!pages.length} pressed={tool === 'select'} title="Select text and annotations" />
                 <RB big icon={Hand} label="Hand" onClick={() => setTool('hand')} disabled={!pages.length} pressed={tool === 'hand'} title="Hand tool: drag to pan" />
+                <RB big icon={ScanSearch} label="Zoom" onClick={() => setTool(tool === 'zoom' ? 'select' : 'zoom')} disabled={!pages.length} pressed={tool === 'zoom'} title="Zoom tool: drag a box to fit it, click to zoom in, Shift+click to zoom out" />
               </RGroup>
               <RGroup label="Edit">
                 <RStack>
@@ -1016,7 +1025,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={PanelRight} label="Dock right" onClick={() => onPaneSide('right')} pressed={paneSide === 'right'} title="Dock the side pane on the right" />
                 </RStack>
               </RGroup>
+              <RGroup label="Page display">
+                <RB big icon={FileText} label="Single" onClick={() => setPageMode({ ...pageMode, twoUp: false })} pressed={!pageMode.twoUp} disabled={!pages.length} title="One page per row" />
+                <RB big icon={Columns2} label="Two pages" onClick={() => setPageMode({ ...pageMode, twoUp: true })} pressed={pageMode.twoUp} disabled={!pages.length} title="Two pages side by side" />
+                <RStack>
+                  <RB icon={GalleryVertical} label="Continuous" onClick={() => setPageMode({ ...pageMode, continuous: !pageMode.continuous })} pressed={pageMode.continuous} disabled={!pages.length} title="Scroll through all pages, or show one page (or pair) at a time" />
+                  <RB icon={BookOpen} label="Cover page" onClick={() => setPageMode({ ...pageMode, cover: !pageMode.cover })} pressed={pageMode.cover} disabled={!pages.length || !pageMode.twoUp} title="With two pages: show the first page on its own, like a book cover" />
+                </RStack>
+              </RGroup>
               <RGroup label="Zoom">
+                <RB big icon={ScanSearch} label="Zoom tool" onClick={() => setTool(tool === 'zoom' ? 'select' : 'zoom')} disabled={!pages.length} pressed={tool === 'zoom'} title="Zoom tool: drag a box to fit it, click to zoom in, Shift+click to zoom out" />
                 <RStack>
                   <RB icon={ArrowLeftRight} label="Fit width" onClick={() => setMode('fit-width')} disabled={!pages.length} pressed={mode === 'fit-width'} title="Fit width (Ctrl+0)" />
                   <RB icon={Expand} label="Fit page" onClick={() => setMode('fit-page')} disabled={!pages.length} pressed={mode === 'fit-page'} title="Fit page" />
@@ -1244,6 +1262,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               pages={pages}
               zoom={zoom}
               rotation={rotation}
+              mode={pageMode}
+              onZoomTo={zoomTo}
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}

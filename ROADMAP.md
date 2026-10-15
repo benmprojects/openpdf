@@ -22,7 +22,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Password-protected files
 - [x] Zoom: fit width, fit page, presets, Ctrl+/-; continuous scroll
 - [x] Rotate view (view only, per tab, Ctrl+Shift++ / Ctrl+Shift+-)
-- [ ] Marquee zoom, single and two-page modes
+- [x] Marquee zoom tool (drag to fit, click to zoom in, Shift+click out); single page or continuous; one or two pages per row; cover page
 - [x] Thumbnails, bookmarks/outline
 - [ ] Attachments, layers, page labels
 - [x] Text search (highlight all, whole word, match case, next/previous)

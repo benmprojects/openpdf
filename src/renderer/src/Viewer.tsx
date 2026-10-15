@@ -13,6 +13,7 @@ import {
   type Match,
   type Rect
 } from './textLogic'
+import { layoutRows, rowOfPage, type PageMode } from './pageLayout'
 import { displayDims, stackTransform, toDisplay, toPage, type Rotation } from './viewRotation'
 
 /** Space around the page stack and between pages, in CSS pixels. */
@@ -55,6 +56,7 @@ export type Tool =
   | 'ellipse'
   | 'ink'
   | 'stamp'
+  | 'zoom'
 
 export interface DrawStyle {
   color: string
@@ -85,6 +87,10 @@ interface Props {
   zoom: number
   /** View-only rotation of every page; the file is not changed. */
   rotation: Rotation
+  /** Single page or continuous, one or two pages per row. */
+  mode: PageMode
+  /** The marquee zoom tool asks for a new zoom level. */
+  onZoomTo: (zoom: number) => void
   tool: Tool
   annots: Annot[]
   selectedAnnot: number | null
@@ -120,6 +126,8 @@ export function Viewer({
   pages,
   zoom,
   rotation,
+  mode,
+  onZoomTo,
   tool,
   annots,
   selectedAnnot,
@@ -147,6 +155,8 @@ export function Viewer({
   const pageEls = useRef<(HTMLDivElement | null)[]>([])
   const [sel, setSel] = useState<Selection | null>(null)
   const [draft, setDraft] = useState<Annot | null>(null)
+  /** The marquee zoom rectangle, in screen pixels. */
+  const [band, setBand] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const drawStyleRef = useRef(drawStyle)
   drawStyleRef.current = drawStyle
   const selRef = useRef<Selection | null>(null)
@@ -164,15 +174,27 @@ export function Viewer({
     return map
   }, [annots])
 
-  const offsets = useMemo(() => {
-    const tops: number[] = []
+  const rows = useMemo(() => layoutRows(pages.length, mode), [pages.length, mode])
+  const rowOf = useMemo(() => rowOfPage(rows), [rows])
+  // Outside continuous mode only one row is on screen; scrolling past its ends turns to the next or previous one.
+  const [shownRow, setShownRow] = useState(0)
+  const shownRowSafe = Math.min(shownRow, Math.max(0, rows.length - 1))
+  const visibleRows = useMemo(
+    () => (mode.continuous ? rows.map((_, i) => i) : rows.length ? [shownRowSafe] : []),
+    [mode.continuous, rows, shownRowSafe]
+  )
+  const pendingEdge = useRef<'top' | 'bottom' | null>(null)
+
+  /** Top of each visible row in document pixels, and of each page (its row's top; hidden pages get the first row's). */
+  const { rowTops, offsets } = useMemo(() => {
+    const tops = new Map<number, number>()
     let y = PAD
-    for (const p of pages) {
-      tops.push(y)
-      y += Math.round(displayDims(p, rotation).height * zoom) + GAP
+    for (const ri of visibleRows) {
+      tops.set(ri, y)
+      y += Math.max(...rows[ri].map((p) => Math.round(displayDims(pages[p], rotation).height * zoom))) + GAP
     }
-    return tops
-  }, [pages, zoom, rotation])
+    return { rowTops: tops, offsets: pages.map((_, i) => tops.get(rowOf[i]) ?? PAD) }
+  }, [visibleRows, rows, rowOf, pages, zoom, rotation])
 
   /** A screen point to page points on the given page element, undoing the view rotation. */
   const pointOnPage = useCallback(
@@ -183,18 +205,37 @@ export function Viewer({
     [rotation, zoom, pages]
   )
 
-  const pageAtDocY = useCallback(
+  /** The row at a document y, as an index into `rows`. */
+  const rowAtDocY = useCallback(
     (y: number) => {
-      let lo = 0
-      let hi = offsets.length - 1
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1
-        if (offsets[mid] <= y) lo = mid
-        else hi = mid - 1
-      }
-      return lo
+      let best = visibleRows[0] ?? 0
+      for (const ri of visibleRows) if ((rowTops.get(ri) ?? 0) <= y) best = ri
+      return best
     },
-    [offsets]
+    [visibleRows, rowTops]
+  )
+  /** First page of the row at a document y. */
+  const pageAtDocY = useCallback((y: number) => rows[rowAtDocY(y)]?.[0] ?? 0, [rows, rowAtDocY])
+  /** The page under a screen point: the row by height, then the page in that row nearest the point across. */
+  const pageAtPoint = useCallback(
+    (cx: number, cy: number) => {
+      const sc = scroller.current
+      if (!sc) return 0
+      const row = rows[rowAtDocY(cy - sc.getBoundingClientRect().top + sc.scrollTop)] ?? [0]
+      let best = row[0]
+      let bestDist = Infinity
+      for (const p of row) {
+        const r = pageEls.current[p]?.getBoundingClientRect()
+        if (!r) continue
+        const d = cx < r.left ? r.left - cx : cx > r.right ? cx - r.right : 0
+        if (d < bestDist) {
+          bestDist = d
+          best = p
+        }
+      }
+      return best
+    },
+    [rows, rowAtDocY]
   )
 
   // Keep the view anchored on the same spot of the document when the zoom or the window size changes.
@@ -204,22 +245,56 @@ export function Viewer({
   const reportPage = useCallback(() => {
     const el = scroller.current
     if (!el || !offsets.length) return
-    const idx = pageAtDocY(el.scrollTop + el.clientHeight * 0.4)
+    const idx = mode.continuous ? pageAtDocY(el.scrollTop + el.clientHeight * 0.4) : (rows[shownRowSafe]?.[0] ?? 0)
     if (idx !== lastPage.current) {
       lastPage.current = idx
       onPageChange(idx)
     }
-  }, [offsets, pageAtDocY, onPageChange])
+  }, [offsets, pageAtDocY, onPageChange, mode.continuous, rows, shownRowSafe])
+
+  /** Set by the marquee zoom tool: the page point to centre once the new zoom is laid out. */
+  const zoomTarget = useRef<{ page: number; x: number; y: number } | null>(null)
 
   useLayoutEffect(() => {
     const el = scroller.current
     const a = anchor.current
-    if (el && a) {
+    const t = zoomTarget.current
+    zoomTarget.current = null
+    const pageEl = t ? pageEls.current[t.page] : null
+    if (el && t && pageEl) {
+      const d = toDisplay(rotation, t.x, t.y, pages[t.page])
+      el.scrollLeft = pageEl.offsetLeft + d.u * zoom - el.clientWidth / 2
+      el.scrollTop = pageEl.offsetTop + d.v * zoom - el.clientHeight / 2
+    } else if (el && a) {
       el.scrollTop = a.y * el.scrollHeight - el.clientHeight / 2
       el.scrollLeft = a.x * el.scrollWidth - el.clientWidth / 2
     }
     reportPage()
-  }, [zoom, rotation, reportPage])
+  }, [zoom, rotation, mode, reportPage]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (!el || !pendingEdge.current) return
+    el.scrollTop = pendingEdge.current === 'top' ? 0 : el.scrollHeight
+    pendingEdge.current = null
+    reportPage()
+  }, [shownRowSafe, reportPage])
+
+  // One row at a time: the wheel turns to the next or previous row at the ends of the current one.
+  const onWheel = useCallback(
+    (e: React.WheelEvent) => {
+      const el = scroller.current
+      if (mode.continuous || !el || e.ctrlKey) return
+      if (e.deltaY > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 1 && shownRowSafe < rows.length - 1) {
+        pendingEdge.current = 'top'
+        setShownRow(shownRowSafe + 1)
+      } else if (e.deltaY < 0 && el.scrollTop <= 0 && shownRowSafe > 0) {
+        pendingEdge.current = 'bottom'
+        setShownRow(shownRowSafe - 1)
+      }
+    },
+    [mode.continuous, shownRowSafe, rows.length]
+  )
 
   useEffect(() => {
     const el = scroller.current
@@ -250,9 +325,7 @@ export function Viewer({
 
   const posAt = useCallback(
     async (cx: number, cy: number): Promise<CharPos | null> => {
-      const sc = scroller.current
-      if (!sc) return null
-      const i = pageAtDocY(cy - sc.getBoundingClientRect().top + sc.scrollTop)
+      const i = pageAtPoint(cx, cy)
       const el = pageEls.current[i]
       if (!el) return null
       const p = pointOnPage(el, i, cx, cy)
@@ -260,12 +333,46 @@ export function Viewer({
       const char = hitTest(pt.boxes, p.x, p.y)
       return char < 0 ? null : { page: i, char }
     },
-    [client, pointOnPage, pageAtDocY]
+    [client, pointOnPage, pageAtPoint]
   )
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0) return
+      if (tool === 'zoom') {
+        const sc = scroller.current
+        if (!sc) return
+        e.preventDefault()
+        const sx = e.clientX
+        const sy = e.clientY
+        const out = e.shiftKey || e.altKey
+        const move = (ev: MouseEvent) => setBand({ x: Math.min(sx, ev.clientX), y: Math.min(sy, ev.clientY), w: Math.abs(ev.clientX - sx), h: Math.abs(ev.clientY - sy) })
+        const up = (ev: MouseEvent) => {
+          window.removeEventListener('mousemove', move)
+          window.removeEventListener('mouseup', up)
+          setBand(null)
+          const w = Math.abs(ev.clientX - sx)
+          const h = Math.abs(ev.clientY - sy)
+          const cx = (sx + ev.clientX) / 2
+          const cy = (sy + ev.clientY) / 2
+          const page = pageAtPoint(cx, cy)
+          const el = pageEls.current[page]
+          if (!el) return
+          // A click zooms in (Shift or Alt: out) one step around the point; a drag fits the dragged box.
+          const next =
+            w < 6 && h < 6
+              ? out
+                ? zoom / 1.5
+                : zoom * 1.5
+              : Math.min((sc.clientWidth - 2 * PAD) / (w / zoom), (sc.clientHeight - 2 * PAD) / (h / zoom))
+          const target = pointOnPage(el, page, cx, cy)
+          zoomTarget.current = { page, x: target.x, y: target.y }
+          onZoomTo(next)
+        }
+        window.addEventListener('mousemove', move)
+        window.addEventListener('mouseup', up)
+        return
+      }
       if (tool === 'hand') {
         const sc = scroller.current
         if (!sc) return
@@ -371,9 +478,7 @@ export function Viewer({
         window.removeEventListener('mouseup', onUp)
         if (moved) return
         // A plain click: pick the text markup under the pointer, or clear the annotation selection.
-        const sc = scroller.current
-        if (!sc) return
-        const i = pageAtDocY(ev.clientY - sc.getBoundingClientRect().top + sc.scrollTop)
+        const i = pageAtPoint(ev.clientX, ev.clientY)
         const el = pageEls.current[i]
         if (!el) return
         const { x, y } = pointOnPage(el, i, ev.clientX, ev.clientY)
@@ -383,7 +488,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtDocY, pointOnPage, onSelectAnnot, onPlace, onCreateShape]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo]
   )
 
   const ordered = useMemo(() => {
@@ -414,12 +519,25 @@ export function Viewer({
     () => ({
       scrollToPage(index) {
         const el = scroller.current
-        if (el && offsets[index] !== undefined) el.scrollTop = offsets[index] - PAD / 2
+        if (!el || offsets[index] === undefined) return
+        if (!mode.continuous) {
+          if (rowOf[index] !== shownRowSafe) {
+            pendingEdge.current = 'top'
+            setShownRow(rowOf[index])
+          } else el.scrollTop = 0
+          return
+        }
+        el.scrollTop = offsets[index] - PAD / 2
       },
       async scrollToMatch(match) {
         const el = scroller.current
+        if (!el) return
+        if (!mode.continuous && rowOf[match.page] !== shownRowSafe) {
+          setShownRow(rowOf[match.page])
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+        }
         const pageEl = pageEls.current[match.page]
-        if (!el || !pageEl) return
+        if (!pageEl) return
         const pt = await client.pageText(match.page)
         const r = rangeRects(pt.boxes, match.from, match.to)[0]
         if (!r) return
@@ -427,7 +545,7 @@ export function Viewer({
         const corners = [toDisplay(rotation, r.x, r.y, pages[match.page]), toDisplay(rotation, r.x + r.w, r.y + r.h, pages[match.page])]
         const u = Math.min(corners[0].u, corners[1].u)
         const v = Math.min(corners[0].v, corners[1].v)
-        const top = offsets[match.page] + v * zoom
+        const top = pageEl.offsetTop + v * zoom
         if (top < el.scrollTop + 40 || top > el.scrollTop + el.clientHeight - 80) el.scrollTop = top - el.clientHeight / 3
         const left = pageEl.offsetLeft + u * zoom
         if (left < el.scrollLeft + 20 || left > el.scrollLeft + el.clientWidth - 60) el.scrollLeft = left - el.clientWidth / 3
@@ -457,34 +575,44 @@ export function Viewer({
       hasSelection: () => selRef.current !== null,
       clearSelection: () => setSel(null)
     }),
-    [client, offsets, zoom, rotation, pages, ordered]
+    [client, offsets, zoom, rotation, pages, ordered, mode.continuous, rowOf, shownRowSafe]
   )
 
   return (
-    <div ref={scroller} className={tool === 'hand' ? 'scroller hand' : tool === 'select' ? 'scroller' : 'scroller place'} onMouseDown={onMouseDown}>
+    <div
+      ref={scroller}
+      className={tool === 'hand' ? 'scroller hand' : tool === 'zoom' ? 'scroller zoom' : tool === 'select' ? 'scroller' : 'scroller place'}
+      onMouseDown={onMouseDown}
+      onWheel={onWheel}
+    >
       <div className="viewer" style={{ padding: PAD }}>
-        {pages.map((size, i) => (
-          <PageView
-            key={i}
-            client={client}
-            index={i}
-            size={size}
-            zoom={zoom}
-            rotation={rotation}
-            annots={annotsByPage.get(i)}
-            draft={draft && draft.page === i ? draft : undefined}
-            epoch={epoch}
-            scroller={scroller}
-            annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
-            selection={selForPage(i)}
-            matches={matchesByPage.get(i)}
-            currentMatch={currentMatch}
-            elRef={(el) => {
-              pageEls.current[i] = el
-            }}
-          />
+        {visibleRows.map((ri) => (
+          <div key={ri} className="page-row" style={{ gap: GAP, marginBottom: GAP }}>
+            {rows[ri].map((i) => (
+              <PageView
+                key={i}
+                client={client}
+                index={i}
+                size={pages[i]}
+                zoom={zoom}
+                rotation={rotation}
+                annots={annotsByPage.get(i)}
+                draft={draft && draft.page === i ? draft : undefined}
+                epoch={epoch}
+                scroller={scroller}
+                annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
+                selection={selForPage(i)}
+                matches={matchesByPage.get(i)}
+                currentMatch={currentMatch}
+                elRef={(el) => {
+                  pageEls.current[i] = el
+                }}
+              />
+            ))}
+          </div>
         ))}
       </div>
+      {band && <div className="zoom-band" style={{ left: band.x, top: band.y, width: band.w, height: band.h }} />}
     </div>
   )
 }
@@ -661,7 +789,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, annots
       }}
       data-page={index}
       className="page"
-      style={{ width: rotated ? cssH : cssW, height: rotated ? cssW : cssH, marginBottom: GAP }}
+      style={{ width: rotated ? cssH : cssW, height: rotated ? cssW : cssH }}
     >
       {/* Everything below stays in the unrotated page frame; the view rotation turns the whole stack. */}
       <div className="page-stack" style={{ width: cssW, height: cssH, transform: stackTransform(rotation, cssW, cssH) }}>

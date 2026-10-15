@@ -823,6 +823,21 @@ kbd {
 .page canvas {
   display: block;
 }
+.page-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scroller.zoom .page {
+  cursor: zoom-in;
+}
+.zoom-band {
+  position: fixed;
+  z-index: 40;
+  border: 1px dashed var(--focus);
+  background: color-mix(in srgb, var(--focus) 12%, transparent);
+  pointer-events: none;
+}
 /* At high zoom: a sharp render of just the part of the page in view, over a low-resolution whole page. */
 .page-tile {
   position: absolute;
