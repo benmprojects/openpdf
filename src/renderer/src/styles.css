@@ -1044,6 +1044,50 @@ kbd {
     forced-color-adjust: none;
   }
 }
+.measure-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.measure path,
+.measure circle {
+  stroke: #d1242f;
+  fill: none;
+}
+.measure circle {
+  fill: #d1242f;
+}
+.measure .measure-fill {
+  fill: rgba(209, 36, 47, 0.12);
+  stroke: none;
+}
+.measure.live path,
+.measure.live circle {
+  stroke: #0b6bcb;
+}
+.measure.live circle {
+  fill: #0b6bcb;
+}
+.measure-label {
+  fill: #1c2027;
+  stroke: #fff;
+  font-weight: 600;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+.rnote {
+  max-width: 220px;
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scroller.place .page {
+  cursor: crosshair;
+}
 .page-row {
   display: flex;
   align-items: center;

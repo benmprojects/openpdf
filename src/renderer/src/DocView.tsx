@@ -15,7 +15,8 @@ import {
   translated,
   withBounds,
   type Annot,
-  type AnnotKind
+  type AnnotKind,
+  type Pt
 } from './annotations'
 import { writeAnnotations, type DeletedAnnot } from './annotWrite'
 import { deletePages, extractPages, insertPagesFrom, movePages, parsePageRanges, rotatePages, splitEvery } from './pageOps'
@@ -29,6 +30,8 @@ import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
 import { Reader, type ReaderState } from './readAloud'
+import type { MeasureKind, Measurement } from './MeasureLayer'
+import { calibrate, formatArea, formatLength, pathLength, PAPER_MM, polygonArea, readViewports, scaleAt, type Scale, type Viewport } from './measure'
 import { readLayers, withHiddenLayers, type Layer } from './layers'
 import {
   ArrowLeftRight,
@@ -54,6 +57,10 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Ruler,
+  Spline,
+  Pentagon,
+  Scaling,
   Pause,
   Play,
   Volume2,
@@ -138,14 +145,17 @@ interface Props {
   jump?: SearchJump
 }
 
-type RibbonTab = 'file' | 'home' | 'comment' | 'organise' | 'view'
+type RibbonTab = 'file' | 'home' | 'comment' | 'measure' | 'organise' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
   ['home', 'Home'],
   ['comment', 'Comment'],
+  ['measure', 'Measure'],
   ['organise', 'Organise'],
   ['view', 'View']
 ]
+
+const LENGTH_UNITS = ['mm', 'cm', 'm', 'km', 'in', 'ft', 'yd', 'mi']
 
 /** Tells this window's recovery snapshots apart from those left by an earlier run. */
 const SESSION = Math.random().toString(36).slice(2, 10)
@@ -600,7 +610,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const selected = annots.find((a) => a.id === selectedAnnot) ?? null
   const toolKind: AnnotKind | null =
-    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' ? null : tool // every other tool is named after the kind it creates
+    tool === 'select' || tool === 'hand' || tool === 'zoom' || tool === 'snapshot' || tool.startsWith('measure') || tool === 'calibrate'
+      ? null
+      : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
   const showWidth = isShapeKind(swatchKind) || swatchKind === 'stamp'
   const activeWidth = selected && (isShapeKind(selected.kind) || selected.kind === 'stamp') ? selected.lineWidth : drawWidth
@@ -818,6 +830,49 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     // With text selected, read just the selection; otherwise from the current page to the end.
     const selected = viewer.current?.hasSelection() ? await viewer.current.selectedText() : null
     void r.start(currentPage, selected ?? undefined)
+  }
+
+  // ---- Measurement ----------------------------------------------------------------------------------
+  // Measurements are an overlay for now (not saved). The scale comes from calibration, the page's own
+  // viewport measure dictionaries, or paper millimetres.
+  const [measurements, setMeasurements] = useState<Measurement[]>([])
+  const nextMeasureId = useRef(1)
+  const [calibrated, setCalibrated] = useState<Scale | null>(null)
+  const [viewports, setViewports] = useState<Viewport[][]>([])
+  const [calibrating, setCalibrating] = useState<{ lengthPt: number; real: string; unit: string } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setMeasurements([]) // page edits move pages around, so old measurements would point at the wrong place
+    readViewports(bytes).then((v) => !cancelled && setViewports(v))
+    return () => {
+      cancelled = true
+    }
+  }, [bytes])
+  const measureScale = useCallback((page: number, at: Pt) => scaleAt(at, viewports[page], calibrated), [viewports, calibrated])
+  const measureLabel = useCallback(
+    (kind: MeasureKind, points: Pt[], page: number) => {
+      const s = measureScale(page, points[0])
+      if (kind === 'area') return formatArea(polygonArea(points), s)
+      return formatLength(pathLength(points), s)
+    },
+    [measureScale]
+  )
+  const onMeasure = useCallback((kind: MeasureKind | 'calibrate', page: number, points: Pt[]) => {
+    if (kind === 'calibrate') {
+      setCalibrating({ lengthPt: pathLength(points), real: '', unit: 'm' })
+      return
+    }
+    setMeasurements((list) => [...list, { id: nextMeasureId.current++, page, kind, points }])
+  }, [])
+  const scaleText = calibrated
+    ? `Calibrated: ${calibrated.label}`
+    : viewports[currentPage]?.length
+      ? `From the document${viewports[currentPage][0].scale.label ? `: ${viewports[currentPage][0].scale.label}` : ''} (${viewports[currentPage][0].scale.unit})`
+      : 'Paper size (mm)'
+  const copyMeasurements = async () => {
+    const lines = measurements.map((m) => `Page ${m.page + 1}\t${m.kind}\t${measureLabel(m.kind, m.points, m.page)}`)
+    await navigator.clipboard.writeText(lines.join('\n'))
+    setNotice({ kind: 'info', text: `Copied ${lines.length} measurement${lines.length === 1 ? '' : 's'}` })
   }
 
   // ---- Presentation ---------------------------------------------------------------------------------
@@ -1215,6 +1270,30 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
             </>
           )}
+          {ribbon === 'measure' && (
+            <>
+              <RGroup label="Measure">
+                <RB big icon={Ruler} label="Distance" onClick={() => setTool(tool === 'measure-distance' ? 'select' : 'measure-distance')} disabled={!pages.length} pressed={tool === 'measure-distance'} title="Measure a distance: click two points. Shift keeps 45 degree steps" />
+                <RB big icon={Spline} label="Perimeter" onClick={() => setTool(tool === 'measure-perimeter' ? 'select' : 'measure-perimeter')} disabled={!pages.length} pressed={tool === 'measure-perimeter'} title="Measure a path: click points, double-click or Enter to finish, Backspace to undo a point" />
+                <RB big icon={Pentagon} label="Area" onClick={() => setTool(tool === 'measure-area' ? 'select' : 'measure-area')} disabled={!pages.length} pressed={tool === 'measure-area'} title="Measure an area: click the corners, double-click or Enter to finish" />
+              </RGroup>
+              <RGroup label="Scale">
+                <RB big icon={Scaling} label="Calibrate" onClick={() => setTool(tool === 'calibrate' ? 'select' : 'calibrate')} disabled={!pages.length} pressed={tool === 'calibrate'} title="Set the scale: click both ends of a line of known length, then enter its real length" />
+                <RStack>
+                  <span className="rnote" title={scaleText}>
+                    {scaleText}
+                  </span>
+                  <RB icon={RotateCcw} label="Use document scale" onClick={() => setCalibrated(null)} disabled={!calibrated} title="Forget the calibration and use the document's scale (or paper size)" />
+                </RStack>
+              </RGroup>
+              <RGroup label="Results">
+                <RStack>
+                  <RB icon={Copy} label="Copy all" onClick={() => void copyMeasurements()} disabled={!measurements.length} title="Copy every measurement as text" />
+                  <RB icon={Trash2} label="Clear all" onClick={() => setMeasurements([])} disabled={!measurements.length} title="Remove every measurement from the view" />
+                </RStack>
+              </RGroup>
+            </>
+          )}
           {ribbon === 'organise' && (
             <>
               <RGroup label={pageSel.length > 1 ? `Pages (${pageSel.length} selected)` : `Page ${opPages[0] + 1}`}>
@@ -1372,6 +1451,46 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             goTo(p)
           }}
         />
+      )}
+
+      {calibrating && (
+        <form
+          className="page-dialog"
+          aria-label="Calibrate scale"
+          onSubmit={(e) => {
+            e.preventDefault()
+            try {
+              setCalibrated(calibrate(calibrating.lengthPt, Number(calibrating.real.replace(',', '.')), calibrating.unit))
+              setCalibrating(null)
+              setTool('measure-distance')
+            } catch (err) {
+              setNotice({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+            }
+          }}
+        >
+          <span className="muted">The line is {formatLength(calibrating.lengthPt, PAPER_MM)} on paper. Its real length is</span>
+          <input
+            autoFocus
+            className="copies"
+            aria-label="Real length"
+            inputMode="decimal"
+            value={calibrating.real}
+            onChange={(e) => setCalibrating({ ...calibrating, real: e.target.value })}
+          />
+          <select aria-label="Unit" value={calibrating.unit} onChange={(e) => setCalibrating({ ...calibrating, unit: e.target.value })}>
+            {LENGTH_UNITS.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
+          </select>
+          <button className="primary" type="submit">
+            Set scale
+          </button>
+          <button type="button" onClick={() => setCalibrating(null)}>
+            Cancel
+          </button>
+        </form>
       )}
 
       {printDialog && (
@@ -1567,6 +1686,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onZoomTo={zoomTo}
               onSnapshot={(page, rect) => void takeSnapshot(page, rect)}
               pageColours={pageColours}
+              measurements={measurements}
+              onMeasure={onMeasure}
+              measureLabel={measureLabel}
               tool={tool}
               annots={annots}
               selectedAnnot={selectedAnnot}

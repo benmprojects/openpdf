@@ -1,6 +1,7 @@
 /**
  * Writes a small PDF exercising viewer features the basic test PDF lacks: embedded files, page labels
- * (i, ii, then 1, 2, ...) and two optional content groups (layers), one of them off by default.
+ * (i, ii, then 1, 2, ...), two optional content groups (layers), one of them off by default, and a 1:100 drawing
+ * scale (viewport measure dictionary) on the first page.
  * Usage: npx tsx scripts/make-feature-pdf.mts out.pdf
  */
 import { writeFileSync } from 'node:fs'
@@ -36,6 +37,9 @@ for (let i = 0; i < 4; i++) {
     ].join('\n')
     const stream = ctx.flateStream(ops)
     page.node.addContentStream(ctx.register(stream))
+    // A drawing scale of 1:100 in metres over the whole page (1 pt on paper = 0.3528 mm = 0.03528 m real).
+    const measure = ctx.obj({ Type: 'Measure', Subtype: 'RL', R: PDFString.of('1:100'), X: [ctx.obj({ Type: 'NumberFormat', U: PDFString.of('m'), C: (25.4 / 72 / 1000) * 100 })] })
+    page.node.set(PDFName.of('VP'), ctx.obj([ctx.obj({ Type: 'Viewport', BBox: [0, 0, 595, 842], Measure: measure })]))
     page.drawText('Blue box: Notes layer. Green box: Hidden layer.', { x: 60, y: 470, size: 11, font, color: rgb(0.2, 0.2, 0.2) })
   }
 }

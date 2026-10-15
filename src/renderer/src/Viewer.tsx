@@ -13,6 +13,7 @@ import {
   type Match,
   type Rect
 } from './textLogic'
+import { MeasureLayer, type MeasureKind, type Measurement } from './MeasureLayer'
 import { layoutRows, rowOfPage, type PageMode } from './pageLayout'
 import { displayDims, stackTransform, toDisplay, toPage, type Rotation } from './viewRotation'
 
@@ -60,6 +61,10 @@ export type Tool =
   | 'stamp'
   | 'zoom'
   | 'snapshot'
+  | 'measure-distance'
+  | 'measure-perimeter'
+  | 'measure-area'
+  | 'calibrate'
 
 export interface DrawStyle {
   color: string
@@ -98,6 +103,10 @@ interface Props {
   onSnapshot: (page: number, rect: Rect) => void
   /** How page colours are shown: as they are, inverted for night reading, or high contrast. */
   pageColours: 'normal' | 'night' | 'contrast'
+  measurements: Measurement[]
+  /** A finished measurement, or the line drawn with the calibrate tool. */
+  onMeasure: (kind: MeasureKind | 'calibrate', page: number, points: Pt[]) => void
+  measureLabel: (kind: MeasureKind, points: Pt[], page: number) => string
   tool: Tool
   annots: Annot[]
   selectedAnnot: number | null
@@ -137,6 +146,9 @@ export function Viewer({
   onZoomTo,
   onSnapshot,
   pageColours,
+  measurements,
+  onMeasure,
+  measureLabel,
   tool,
   annots,
   selectedAnnot,
@@ -164,6 +176,13 @@ export function Viewer({
   const pageEls = useRef<(HTMLDivElement | null)[]>([])
   const [sel, setSel] = useState<Selection | null>(null)
   const [draft, setDraft] = useState<Annot | null>(null)
+  /** The measurement being drawn. */
+  const [measureDraft, setMeasureDraft] = useState<{ kind: MeasureKind | 'calibrate'; page: number; points: Pt[]; cursor: Pt | null } | null>(null)
+  const measureDraftRef = useRef(measureDraft)
+  measureDraftRef.current = measureDraft
+  const measureKind: MeasureKind | 'calibrate' | null =
+    tool === 'measure-distance' ? 'distance' : tool === 'measure-perimeter' ? 'perimeter' : tool === 'measure-area' ? 'area' : tool === 'calibrate' ? 'calibrate' : null
+  useEffect(() => setMeasureDraft(null), [measureKind])
   /** The marquee zoom rectangle, in screen pixels. */
   const [band, setBand] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const drawStyleRef = useRef(drawStyle)
@@ -289,6 +308,51 @@ export function Viewer({
     reportPage()
   }, [shownRowSafe, reportPage])
 
+  // While a measurement is being drawn: follow the pointer, Enter finishes, Backspace drops the last point, Esc cancels.
+  const drafting = measureDraft !== null
+  useEffect(() => {
+    if (!drafting) return
+    const onMove = (ev: MouseEvent) => {
+      const d = measureDraftRef.current
+      const el = d && pageEls.current[d.page]
+      if (!d || !el) return
+      const size = pages[d.page]
+      const raw = pointOnPage(el, d.page, ev.clientX, ev.clientY)
+      let p = { x: Math.min(size.width, Math.max(0, raw.x)), y: Math.min(size.height, Math.max(0, raw.y)) }
+      const prev = d.points[d.points.length - 1]
+      if (prev && ev.shiftKey) p = constrain('line', prev, p)
+      setMeasureDraft({ ...d, cursor: p })
+    }
+    const onKey = (ev: KeyboardEvent) => {
+      const d = measureDraftRef.current
+      if (!d) return
+      if (ev.key === 'Escape') {
+        ev.stopImmediatePropagation()
+        setMeasureDraft(null)
+      } else if (ev.key === 'Backspace') {
+        ev.preventDefault()
+        ev.stopImmediatePropagation()
+        setMeasureDraft(d.points.length > 1 ? { ...d, points: d.points.slice(0, -1) } : null)
+      } else if (ev.key === 'Enter' && (d.kind === 'perimeter' || d.kind === 'area')) {
+        ev.preventDefault()
+        if (d.points.length >= (d.kind === 'area' ? 3 : 2)) onMeasure(d.kind, d.page, d.points)
+        setMeasureDraft(null)
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [drafting, pages, pointOnPage, onMeasure])
+
+  const measuresByPage = useMemo(() => {
+    const map = new Map<number, Measurement[]>()
+    for (const m of measurements) map.set(m.page, [...(map.get(m.page) ?? []), m])
+    return map
+  }, [measurements])
+
   // One row at a time: the wheel turns to the next or previous row at the ends of the current one.
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
@@ -348,6 +412,35 @@ export function Viewer({
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0) return
+      if (measureKind) {
+        const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
+        if (!pageEl) return
+        e.preventDefault()
+        const page = Number(pageEl.dataset.page)
+        const d = measureDraftRef.current
+        if (d && d.page !== page) return // a measurement stays on one page
+        const size = pages[page]
+        const raw = pointOnPage(pageEl, page, e.clientX, e.clientY)
+        let p = { x: Math.min(size.width, Math.max(0, raw.x)), y: Math.min(size.height, Math.max(0, raw.y)) }
+        const prev = d?.points[d.points.length - 1]
+        if (prev && e.shiftKey) p = constrain('line', prev, p)
+        const twoPoint = measureKind === 'distance' || measureKind === 'calibrate'
+        // A double click ends a perimeter or area (its second click already added the point).
+        if (e.detail >= 2 && d && !twoPoint) {
+          const need = measureKind === 'area' ? 3 : 2
+          if (d.points.length >= need) onMeasure(measureKind, page, d.points)
+          setMeasureDraft(null)
+          return
+        }
+        const points = [...(d?.points ?? []), p]
+        if (twoPoint && points.length === 2) {
+          setMeasureDraft(null)
+          onMeasure(measureKind, page, points)
+          return
+        }
+        setMeasureDraft({ kind: measureKind, page, points, cursor: null })
+        return
+      }
       if (tool === 'snapshot') {
         const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
         if (!pageEl) return
@@ -523,7 +616,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, onMeasure]
   )
 
   const ordered = useMemo(() => {
@@ -643,6 +736,9 @@ export function Viewer({
                 rotation={rotation}
                 annots={annotsByPage.get(i)}
                 draft={draft && draft.page === i ? draft : undefined}
+                measures={measuresByPage.get(i)}
+                measureDraft={measureDraft && measureDraft.page === i ? measureDraft : undefined}
+                measureLabel={measureLabel}
                 epoch={epoch}
                 scroller={scroller}
                 annotProps={{ tool, selectedAnnot, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
@@ -668,6 +764,9 @@ interface PageViewProps {
   size: PageSize
   zoom: number
   rotation: Rotation
+  measures?: Measurement[]
+  measureDraft?: { kind: MeasureKind | 'calibrate'; points: Pt[]; cursor: Pt | null }
+  measureLabel: (kind: MeasureKind, points: Pt[], page: number) => string
   /** The scrolling container, so very large pages can render only the part in view. */
   scroller: React.RefObject<HTMLDivElement | null>
   annots?: Annot[]
@@ -692,7 +791,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -869,6 +968,9 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, annots
           onEdit={annotProps.onEditAnnot}
           onText={annotProps.onAnnotText}
         />
+      )}
+      {(measures?.length || measureDraft) && (
+        <MeasureLayer items={measures ?? []} draft={measureDraft} zoom={zoom} rotation={rotation} size={size} label={measureLabel} page={index} />
       )}
       {visible && text && (
         <div className="sr-only" role="article" aria-label={`Page ${index + 1}`}>
