@@ -11,7 +11,8 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - The user asked for a professional look with icons, like a ribbon editor. Keep new UI consistent with the design system below.
 
 ## Current state
-- Phases 0, 1 and 2 complete (see ROADMAP). Phase 3: page organisation, copy/replace/split, Layout tab (headers, footers, numbers, Bates, watermarks, backgrounds, crop, resize), and bookmark, page label and link editing are done.
+- Phases 0, 1, 2 and 3 complete (see ROADMAP). Phase 3: page organisation, copy/replace/split, Layout tab (headers, footers, numbers, Bates, watermarks, backgrounds, crop, resize), and bookmark, page label and link editing are done.
+- Document properties (File tab > Properties): `metadata.ts` reads and writes the Info dictionary and rewrites a matching XMP packet (dc, pdf and xmp schemas; any other XMP properties are replaced), and can remove all metadata. `DocPropsDialog.tsx`. Files with no Info dictionary are handled. Not covered: custom Info keys and editing raw XMP.
 - Optimise (Organise tab): `optimise.ts` re-encodes oversized 8-bit grey/RGB images as JPEG (pdf-lib plus canvas; PNG-predicted images are unfiltered first; masks, indexed, CMYK and TIFF-predicted images are left alone) and drops page thumbnails; then `src/main/qpdf.ts` runs qpdf (WASM, `@neslinesli93/qpdf-wasm`, ISC, pinned) over IPC `pdf:qpdf` for object streams, recompression, unused resources and linearising. `OptimiseDialog.tsx` has presets. Undoable like other page edits. Saving writes bytes as-is, so linearisation survives. Install with `npm i --legacy-peer-deps`.
 - Bookmark, page label and link editing:
   - `outlineEdit.ts`: bookmark tree edits (insert, remove, update, move, indent, outdent) and `writeOutline` (a fresh /Outlines tree, every bookmark to the top of its page). `readLabelRanges` / `writeLabelRanges` / `labelFor` for /PageLabels.
@@ -89,9 +90,7 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - Lint: some react-hooks rules are relaxed to warnings (see CLAUDE.md).
 
 ## Next steps (strict phase order)
-1. Phase 3 remainder, in ROADMAP order:
-   - optimise and compress;
-   - document properties and metadata.
+1. Phase 3 is done. Next: Phase 4 (content editing), then 5 forms, 6 security/signatures/redaction, 7 OCR and conversion, 8 automation, 9 polish and release. Check ROADMAP for each phase's items.
 2. (Done this session) Phase 1, in ROADMAP order:
    - Marquee zoom; single and two-page modes.
    - Attachments, layers (optional content), page labels.
@@ -101,7 +100,7 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
    - Read-aloud (Web Speech API), reading mode, accessibility (screen reader, high contrast).
    - Rulers, grid, guides, measurement (distance, perimeter, area).
    - PDFium exposes attachments (FPDFDoc_GetAttachment*), page labels (FPDF_GetPageLabel) and optional content via raw calls in `pdfiumRaw.ts`. Check the exports exist in the wasm first.
-3. Then Phase 2 gaps, Phase 3 remainder, and on through Phase 9.
+3. Then on through Phase 9.
 
 ## Decisions already made
 Electron + React + PDFium; MIT licence; do not write our own engine; no reverse engineering of proprietary software; KillerPDF (GPLv3) and Stirling-PDF are references only; Lucide icons (ISC).

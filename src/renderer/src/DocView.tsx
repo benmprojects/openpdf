@@ -65,6 +65,8 @@ import { PageMarksDialog, type MarksMode, type MarksRequest } from './PageMarksD
 import { readLabelRanges, writeLabelRanges, writeOutline, type BookmarkNode, type LabelRange } from './outlineEdit'
 import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
+import { readProps, removeProps, writeProps, type DocProps } from './metadata'
+import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
 import { ComparePanel } from './ComparePanel'
@@ -378,6 +380,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [pageLabels, setPageLabels] = useState<string[] | null>(null)
   const [labelRanges, setLabelRanges] = useState<LabelRange[] | null>(null)
   const [optimising, setOptimising] = useState(false)
+  const [docProps, setDocProps] = useState<DocProps | null>(null)
+  const openDocProps = async () => {
+    try {
+      setDocProps(await readProps(bytes))
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not read the document properties: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   const runOptimise = async (o: OptimiseOptions) => {
     setOptimising(false)
     let before = 0
@@ -1902,6 +1912,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={FileOutput} label="Export FDF" onClick={() => void exportComments('fdf')} disabled={!commentAnnots.length} title="Export the comments as FDF" />
                 </RStack>
               </RGroup>
+              <RGroup label="Info">
+                <RB big icon={FileText} label="Properties" onClick={() => void openDocProps()} disabled={!pages.length || busy || !!password} title="Title, author, keywords and other document properties" />
+              </RGroup>
               <RGroup label="Output">
                 <RB big icon={Printer} label="Print" onClick={openPrint} disabled={!pages.length || !!printing} title="Print (Ctrl+P)" />
               </RGroup>
@@ -2266,6 +2279,24 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           onPickImage={async () => (await window.openpdf.pickFile({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg'] }))?.data ?? null}
           onApply={(r) => void applyMarks(r)}
           onClose={() => setMarksMode(null)}
+        />
+      )}
+
+      {docProps && (
+        <DocPropsDialog
+          initial={docProps}
+          fileName={name}
+          pageCount={pages.length}
+          size={bytes.length}
+          onClose={() => setDocProps(null)}
+          onApply={(p) => {
+            setDocProps(null)
+            void applyPageEdit((b) => writeProps(b, p), 'Document properties updated')
+          }}
+          onRemove={() => {
+            setDocProps(null)
+            void applyPageEdit((b) => removeProps(b), 'All metadata removed')
+          }}
         />
       )}
 
