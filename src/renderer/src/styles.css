@@ -557,3 +557,61 @@ select:focus-visible {
   z-index: 3;
   pointer-events: auto;
 }
+
+/* Page organisation */
+.thumb.selected {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+.thumb.drop-before {
+  box-shadow: 0 -3px 0 var(--accent);
+}
+.thumb.drop-after {
+  box-shadow: 0 3px 0 var(--accent);
+}
+.ctx-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 4px 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+.ctx-menu button {
+  padding: 6px 14px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.ctx-menu button:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.ctx-menu button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.ctx-menu hr {
+  width: 100%;
+  margin: 4px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+.page-dialog {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.page-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}

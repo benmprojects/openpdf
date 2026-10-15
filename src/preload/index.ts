@@ -15,7 +15,10 @@ const api = {
     ipcRenderer.invoke('file:save', path, data),
   /** Shows a Save dialog; resolves null if cancelled. */
   saveFileAs: (suggestedName: string, data: Uint8Array): Promise<{ name: string; path: string } | null> =>
-    ipcRenderer.invoke('file:save-as', suggestedName, data)
+    ipcRenderer.invoke('file:save-as', suggestedName, data),
+  /** Asks for a folder and writes the files into it, never overwriting. Resolves null if cancelled. */
+  saveMany: (files: { name: string; data: Uint8Array }[]): Promise<{ dir: string; written: string[] } | null> =>
+    ipcRenderer.invoke('file:save-many', files)
 }
 
 contextBridge.exposeInMainWorld('openpdf', api)

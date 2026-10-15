@@ -5,6 +5,15 @@ const THUMB_WIDTH = 132
 
 export type SidebarTab = 'pages' | 'bookmarks'
 
+/** A page edit requested from the thumbnail pane. `move.before` is an index in the current order (page count = end). */
+export type PageOp =
+  | { kind: 'rotate'; delta: 90 | -90 | 180 }
+  | { kind: 'delete' }
+  | { kind: 'move'; before: number }
+  | { kind: 'insert'; at: number }
+  | { kind: 'extract' }
+  | { kind: 'split' }
+
 interface Props {
   client: PdfClient
   pages: PageSize[]
@@ -13,9 +22,11 @@ interface Props {
   onTab: (t: SidebarTab) => void
   currentPage: number
   onGoTo: (page: number) => void
+  onPageOp: (op: PageOp, pages: number[]) => void
+  busy: boolean
 }
 
-export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoTo }: Props) {
+export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy }: Props) {
   return (
     <aside className="sidebar">
       <div className="sidebar-tabs" role="tablist">
@@ -27,7 +38,7 @@ export function Sidebar({ client, pages, outline, tab, onTab, currentPage, onGoT
         </button>
       </div>
       {tab === 'pages' ? (
-        <Thumbnails client={client} pages={pages} currentPage={currentPage} onGoTo={onGoTo} />
+        <Thumbnails client={client} pages={pages} currentPage={currentPage} onGoTo={onGoTo} onPageOp={onPageOp} busy={busy} />
       ) : (
         <Bookmarks outline={outline} onGoTo={onGoTo} />
       )}
@@ -39,14 +50,23 @@ function Thumbnails({
   client,
   pages,
   currentPage,
-  onGoTo
+  onGoTo,
+  onPageOp,
+  busy
 }: {
   client: PdfClient
   pages: PageSize[]
   currentPage: number
   onGoTo: (p: number) => void
+  onPageOp: (op: PageOp, pages: number[]) => void
+  busy: boolean
 }) {
   const list = useRef<HTMLDivElement>(null)
+  const [sel, setSel] = useState<number[]>([])
+  const anchor = useRef(0)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [drop, setDrop] = useState<{ index: number; side: 'before' | 'after' } | null>(null)
+  const dragging = useRef<number[]>([])
 
   // Keep the current page's thumbnail in view as the document scrolls.
   useEffect(() => {
@@ -54,11 +74,121 @@ function Thumbnails({
     el?.scrollIntoView({ block: 'nearest' })
   }, [currentPage])
 
+  // The page list changes after every edit, so a stale selection would point at the wrong pages.
+  useEffect(() => setSel([]), [pages])
+
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    window.addEventListener('click', close)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [menu])
+
+  const target = sel.length ? sel : [currentPage]
+  const run = (op: PageOp, on: number[] = target) => {
+    setMenu(null)
+    if (!busy) onPageOp(op, on)
+  }
+
+  const click = (e: React.MouseEvent, i: number) => {
+    if (e.shiftKey) {
+      const [a, b] = [Math.min(anchor.current, i), Math.max(anchor.current, i)]
+      setSel(Array.from({ length: b - a + 1 }, (_, k) => a + k))
+    } else if (e.ctrlKey || e.metaKey) {
+      anchor.current = i
+      setSel((s) => (s.includes(i) ? s.filter((x) => x !== i) : [...s, i].sort((x, y) => x - y)))
+    } else {
+      anchor.current = i
+      setSel([i])
+      onGoTo(i)
+    }
+  }
+
+  const slot = (e: React.DragEvent) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    return e.clientY < r.top + r.height / 2 ? ('before' as const) : ('after' as const)
+  }
+
   return (
-    <div className="thumbs" ref={list}>
+    <div
+      className="thumbs"
+      ref={list}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Delete' && sel.length) run({ kind: 'delete' }, sel)
+        else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault()
+          setSel(pages.map((_, i) => i))
+        }
+      }}
+    >
       {pages.map((size, i) => (
-        <Thumb key={i} client={client} index={i} size={size} current={i === currentPage} onGoTo={onGoTo} />
+        <Thumb
+          key={i}
+          client={client}
+          index={i}
+          size={size}
+          current={i === currentPage}
+          selected={sel.includes(i)}
+          drop={drop?.index === i ? drop.side : null}
+          onClick={(e) => click(e, i)}
+          onContext={(e) => {
+            e.preventDefault()
+            if (!sel.includes(i)) {
+              setSel([i])
+              anchor.current = i
+            }
+            setMenu({ x: e.clientX, y: e.clientY })
+          }}
+          onDragStart={(e) => {
+            dragging.current = sel.includes(i) ? sel : [i]
+            if (!sel.includes(i)) setSel([i])
+            e.dataTransfer.effectAllowed = 'move'
+            e.dataTransfer.setData('text/plain', 'openpdf-pages')
+          }}
+          onDragOver={(e) => {
+            if (!dragging.current.length) return
+            e.preventDefault()
+            const side = slot(e)
+            setDrop((d) => (d?.index === i && d.side === side ? d : { index: i, side }))
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            const moving = dragging.current
+            const before = slot(e) === 'before' ? i : i + 1
+            dragging.current = []
+            setDrop(null)
+            // Dropping onto its own position changes nothing.
+            const sorted = [...moving].sort((a, b) => a - b)
+            const stays = sorted.every((p, k) => p === sorted[0] + k) && before >= sorted[0] && before <= sorted[sorted.length - 1] + 1
+            if (!stays) run({ kind: 'move', before }, sorted)
+          }}
+          onDragEnd={() => {
+            dragging.current = []
+            setDrop(null)
+          }}
+        />
       ))}
+      {menu && (
+        <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} role="menu" onClick={(e) => e.stopPropagation()}>
+          <button role="menuitem" onClick={() => run({ kind: 'rotate', delta: -90 })}>Rotate left</button>
+          <button role="menuitem" onClick={() => run({ kind: 'rotate', delta: 90 })}>Rotate right</button>
+          <button role="menuitem" onClick={() => run({ kind: 'rotate', delta: 180 })}>Rotate 180°</button>
+          <hr />
+          <button role="menuitem" onClick={() => run({ kind: 'delete' })} disabled={target.length >= pages.length}>
+            Delete {target.length > 1 ? `${target.length} pages` : 'page'}
+          </button>
+          <button role="menuitem" onClick={() => run({ kind: 'extract' })}>Extract pages…</button>
+          <hr />
+          <button role="menuitem" onClick={() => run({ kind: 'insert', at: Math.min(...target) })}>Insert pages from file before…</button>
+          <button role="menuitem" onClick={() => run({ kind: 'insert', at: Math.max(...target) + 1 })}>Insert pages from file after…</button>
+          <button role="menuitem" onClick={() => run({ kind: 'split' })}>Split document…</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -68,13 +198,27 @@ function Thumb({
   index,
   size,
   current,
-  onGoTo
+  selected,
+  drop,
+  onClick,
+  onContext,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd
 }: {
   client: PdfClient
   index: number
   size: PageSize
   current: boolean
-  onGoTo: (p: number) => void
+  selected: boolean
+  drop: 'before' | 'after' | null
+  onClick: (e: React.MouseEvent) => void
+  onContext: (e: React.MouseEvent) => void
+  onDragStart: (e: React.DragEvent) => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent) => void
+  onDragEnd: () => void
 }) {
   const holder = useRef<HTMLButtonElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -111,8 +255,14 @@ function Thumb({
     <button
       ref={holder}
       data-thumb={index}
-      className={current ? 'thumb current' : 'thumb'}
-      onClick={() => onGoTo(index)}
+      className={`thumb${current ? ' current' : ''}${selected ? ' selected' : ''}${drop ? ` drop-${drop}` : ''}`}
+      draggable
+      onClick={onClick}
+      onContextMenu={onContext}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       aria-label={`Page ${index + 1}`}
       aria-current={current ? 'page' : undefined}
     >

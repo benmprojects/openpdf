@@ -65,6 +65,24 @@ ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array
   return writePdf(res.filePath, data)
 })
 
+/** Asks for a folder, then writes each file into it without overwriting: a clash gets " (2)" and so on. */
+ipcMain.handle('file:save-many', async (e, files: { name: string; data: Uint8Array }[]) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  if (res.canceled || !res.filePaths[0]) return null
+  const dir = res.filePaths[0]
+  const written: string[] = []
+  for (const f of files) {
+    const stem = f.name.replace(/\.pdf$/i, '')
+    let target = join(dir, `${stem}.pdf`)
+    for (let n = 2; await readFile(target).then(() => true, () => false); n++) target = join(dir, `${stem} (${n}).pdf`)
+    await writePdf(target, f.data)
+    written.push(target)
+  }
+  return { dir, written }
+})
+
 // PDF paths passed on the command line (e.g. file association or `openpdf a.pdf b.pdf`).
 ipcMain.handle('file:initial', async () => {
   const paths = process.argv.slice(1).filter((a) => a.toLowerCase().endsWith('.pdf'))

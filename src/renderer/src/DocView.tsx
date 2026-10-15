@@ -18,8 +18,9 @@ import {
   type AnnotKind
 } from './annotations'
 import { writeAnnotations, type DeletedAnnot } from './annotWrite'
+import { deletePages, extractPages, insertPagesFrom, movePages, parsePageRanges, rotatePages, splitEvery } from './pageOps'
 import { PdfClient, type OutlineNode, type PageSize } from './pdfClient'
-import { Sidebar, type SidebarTab } from './Sidebar'
+import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, type Match } from './textLogic'
 import { useHistory } from './useHistory'
 import { PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
@@ -47,10 +48,31 @@ interface Props {
   onMeta: (id: number, meta: DocMeta) => void
 }
 
+/** [0,1,2,4] -> "1-3, 5" */
+function compactRanges(pages: number[]): string {
+  const out: string[] = []
+  for (let i = 0; i < pages.length; ) {
+    let j = i
+    while (pages[j + 1] === pages[j] + 1) j++
+    out.push(j > i ? `${pages[i] + 1}-${pages[j] + 1}` : String(pages[i] + 1))
+    i = j + 1
+  }
+  return out.join(', ')
+}
+
 export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta }: Props) {
   const onMeta = useCallback((meta: DocMeta) => reportMeta(docId, meta), [docId, reportMeta])
   // The bytes currently shown. They change after a save, which reloads the document with the annotations baked in.
   const [bytes, setBytes] = useState(data)
+  // Page edits (rotate, delete, move, insert) rewrite the whole file. Each is applied at once and the previous bytes
+  // are kept so it can be undone. Pending annotation edits are written into the file first, so undoing a page edit
+  // brings back the annotations as ordinary saved ones, not as editable overlay changes.
+  const [savedBytes, setSavedBytes] = useState(data)
+  const [pageUndo, setPageUndo] = useState<Uint8Array[]>([])
+  const [pageRedo, setPageRedo] = useState<Uint8Array[]>([])
+  const [pageDialog, setPageDialog] = useState<{ kind: 'extract' | 'split'; pages: number[] } | null>(null)
+  const [dialogText, setDialogText] = useState('')
+  const [busy, setBusy] = useState(false)
   const [client, setClient] = useState<PdfClient | null>(null)
   const [pages, setPages] = useState<PageSize[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -198,7 +220,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     return [...baseline.current].filter(([id]) => !present.has(id)).map(([, b]) => ({ page: b.page, origin: b.origin }))
   }, [annots])
   const changed = (a: Annot) => !a.origin || baseline.current.get(a.id)?.sig !== signature(a)
-  const dirty = deleted.length > 0 || annots.some(changed)
+  const annotsDirty = deleted.length > 0 || annots.some(changed)
+  const dirty = annotsDirty || bytes !== savedBytes
   useEffect(() => onMeta({ dirty }), [dirty, onMeta])
 
   useEffect(() => {
@@ -384,7 +407,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       }
       setSaving(true)
       try {
-        const out = dirty ? await writeAnnotations(bytes, annots.filter(changed), deleted) : bytes
+        const out = annotsDirty ? await writeAnnotations(bytes, annots.filter(changed), deleted) : bytes
         const saved =
           !asNew && path
             ? await window.openpdf.saveFile(path, out)
@@ -395,6 +418,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         history.reset([])
         setSelectedAnnot(null)
         setEditingAnnot(null)
+        setSavedBytes(out)
         setBytes(out)
         setNotice({ kind: 'info', text: `Saved ${saved.name}` })
       } catch (e) {
@@ -403,8 +427,126 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setSaving(false)
       }
     },
-    [saving, password, annots, deleted, dirty, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
+    [saving, password, annots, deleted, annotsDirty, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
   )
+
+  // ---- Page organisation ----------------------------------------------------------------------------
+  const swapBytes = useCallback((next: Uint8Array) => {
+    baseline.current = new Map()
+    history.reset([])
+    setSelectedAnnot(null)
+    setEditingAnnot(null)
+    setBytes(next)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Runs a structural edit. `fn` gets bytes with pending annotation edits already written in. */
+  const applyPageEdit = useCallback(
+    async (fn: (base: Uint8Array) => Promise<Uint8Array | null>, done?: string) => {
+      if (busy || saving) return
+      if (password) {
+        setNotice({ kind: 'error', text: 'Editing pages of password-protected PDFs is not supported yet.' })
+        return
+      }
+      setBusy(true)
+      try {
+        const base = annotsDirty ? await writeAnnotations(bytes, annots.filter(changed), deleted) : bytes
+        const out = await fn(base)
+        if (!out) return
+        setPageUndo((u) => [...u, base])
+        setPageRedo([])
+        swapBytes(out)
+        if (done) setNotice({ kind: 'info', text: done })
+      } catch (e) {
+        setNotice({ kind: 'error', text: `Page edit failed: ${e instanceof Error ? e.message : String(e)}` })
+      } finally {
+        setBusy(false)
+      }
+    },
+    [busy, saving, password, annotsDirty, bytes, annots, deleted, swapBytes] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+
+  const undoPageEdit = useCallback(() => {
+    const prev = pageUndo[pageUndo.length - 1]
+    if (!prev || busy) return
+    setPageUndo((u) => u.slice(0, -1))
+    setPageRedo((r) => [...r, bytes])
+    swapBytes(prev)
+  }, [pageUndo, busy, bytes, swapBytes])
+
+  const redoPageEdit = useCallback(() => {
+    const next = pageRedo[pageRedo.length - 1]
+    if (!next || busy) return
+    setPageRedo((r) => r.slice(0, -1))
+    setPageUndo((u) => [...u, bytes])
+    swapBytes(next)
+  }, [pageRedo, busy, bytes, swapBytes])
+
+  const baseName = name.replace(/\.pdf$/i, '')
+
+  const runPageOp = useCallback(
+    async (op: PageOp, selection: number[]) => {
+      const n = pages.length
+      const count = `${selection.length} page${selection.length === 1 ? '' : 's'}`
+      switch (op.kind) {
+        case 'rotate':
+          return applyPageEdit((b) => rotatePages(b, selection, op.delta))
+        case 'delete':
+          if (selection.length >= n) return setNotice({ kind: 'error', text: 'A document must keep at least one page.' })
+          return applyPageEdit((b) => deletePages(b, selection), `Deleted ${count}`)
+        case 'move':
+          return applyPageEdit((b) => movePages(b, selection, op.before))
+        case 'insert': {
+          const files = await window.openpdf.openFileDialog()
+          if (!files.length) return
+          let at = op.at
+          let total = 0
+          return applyPageEdit(async (b) => {
+            let cur = b
+            for (const f of files) {
+              const r = await insertPagesFrom(cur, f.data, at)
+              cur = r.bytes
+              at += r.count
+              total += r.count
+            }
+            return cur
+          }).then(() => total && setNotice({ kind: 'info', text: `Inserted ${total} page${total === 1 ? '' : 's'}` }))
+        }
+        case 'extract':
+        case 'split':
+          setDialogText(op.kind === 'split' ? '1' : compactRanges(selection))
+          setPageDialog({ kind: op.kind, pages: selection })
+      }
+    },
+    [pages.length, applyPageEdit]
+  )
+
+  const submitPageDialog = async () => {
+    const d = pageDialog
+    if (!d) return
+    try {
+      const src = annotsDirty ? await writeAnnotations(bytes, annots.filter(changed), deleted) : bytes
+      if (d.kind === 'extract') {
+        const idx = parsePageRanges(dialogText, pages.length)
+        const out = await extractPages(src, idx)
+        const saved = await window.openpdf.saveFileAs(`${baseName} (extract).pdf`, out)
+        if (saved) setNotice({ kind: 'info', text: `Extracted ${idx.length} page${idx.length === 1 ? '' : 's'} to ${saved.name}` })
+      } else {
+        const size = parseInt(dialogText, 10)
+        if (!Number.isFinite(size) || size < 1) throw new Error('Enter a whole number of pages per file, 1 or more.')
+        const parts = await splitEvery(src, size)
+        const res = await window.openpdf.saveMany(
+          parts.map((p) => ({ name: `${baseName} (pages ${p.first}-${p.last}).pdf`, data: p.bytes }))
+        )
+        if (res) setNotice({ kind: 'info', text: `Wrote ${res.written.length} files to ${res.dir}` })
+      }
+      setPageDialog(null)
+    } catch (e) {
+      setNotice({ kind: 'error', text: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  /** Merge: append whole files to the end of this document. */
+  const mergeFiles = () => void runPageOp({ kind: 'insert', at: pages.length }, [])
 
   // ---- Search ---------------------------------------------------------------------------------------
   const [searchOpen, setSearchOpen] = useState(false)
@@ -491,8 +633,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         void save(e.shiftKey)
       } else if (ctrl && !inField && (k === 'z' || k === 'y')) {
         e.preventDefault()
-        if (k === 'y' || e.shiftKey) history.redo()
-        else history.undo()
+        const redo = k === 'y' || e.shiftKey
+        if (redo) (history.canRedo || !pageRedo.length ? history.redo : redoPageEdit)()
+        else (history.canUndo || !pageUndo.length ? history.undo : undoPageEdit)()
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && !inField && selectedAnnot !== null) {
         e.preventDefault()
         removeAnnot(selectedAnnot)
@@ -526,7 +669,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, searchOpen, tool, selectedAnnot, openSearch, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo])
+  }, [active, searchOpen, tool, selectedAnnot, openSearch, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
 
   // ---- Page box -------------------------------------------------------------------------------------
   const [pageText, setPageText] = useState('1')
@@ -703,11 +846,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           Delete
         </button>
         <span className="sep" />
-        <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)">
+        <button
+          onClick={history.canUndo || !pageUndo.length ? history.undo : undoPageEdit}
+          disabled={!history.canUndo && !pageUndo.length}
+          title="Undo (Ctrl+Z)"
+        >
           Undo
         </button>
-        <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Y)">
+        <button
+          onClick={history.canRedo || !pageRedo.length ? history.redo : redoPageEdit}
+          disabled={!history.canRedo && !pageRedo.length}
+          title="Redo (Ctrl+Y)"
+        >
           Redo
+        </button>
+        <span className="sep" />
+        <button onClick={mergeFiles} disabled={!pages.length || busy} title="Merge: add the pages of other PDFs to the end">
+          Merge…
         </button>
         <span className="sep" />
         <button onClick={() => void save(false)} disabled={saving || !pages.length} title="Save (Ctrl+S)">
@@ -769,6 +924,27 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </div>
       )}
 
+      {pageDialog && (
+        <form
+          className="page-dialog"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void submitPageDialog()
+          }}
+        >
+          <label>
+            {pageDialog.kind === 'extract' ? 'Pages to extract (for example 1-3, 5)' : 'Pages per file'}
+            <input autoFocus value={dialogText} onChange={(e) => setDialogText(e.target.value)} />
+          </label>
+          <button className="primary" type="submit">
+            {pageDialog.kind === 'extract' ? 'Extract…' : 'Split…'}
+          </button>
+          <button type="button" onClick={() => setPageDialog(null)}>
+            Cancel
+          </button>
+        </form>
+      )}
+
       <div className="body">
         {error ? (
           <div className="error">{error}</div>
@@ -805,6 +981,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onTab={setSidebar}
                 currentPage={currentPage}
                 onGoTo={goTo}
+                onPageOp={(op, sel) => void runPageOp(op, sel)}
+                busy={busy}
               />
             )}
             <Viewer

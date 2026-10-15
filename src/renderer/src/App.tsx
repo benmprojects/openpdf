@@ -63,7 +63,7 @@ export function App() {
     const list = tabsRef.current
     const idx = list.findIndex((t) => t.id === id)
     if (idx < 0) return
-    if (list[idx].dirty && !window.confirm(`${list[idx].name} has unsaved annotations. Close it and discard them?`)) return
+    if (list[idx].dirty && !window.confirm(`${list[idx].name} has unsaved changes. Close it and discard them?`)) return
     const rest = list.filter((t) => t.id !== id)
     setTabs(rest)
     if (activeRef.current === id) setActiveId(rest.length ? rest[Math.min(idx, rest.length - 1)].id : null)
@@ -145,7 +145,7 @@ export function App() {
           >
             <span className="tab-name">
               {t.dirty && (
-                <span className="tab-dirty" title="Unsaved annotations" aria-label="Unsaved changes">
+                <span className="tab-dirty" title="Unsaved changes" aria-label="Unsaved changes">
                   •{' '}
                 </span>
               )}
