@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { PDFDocument, StandardFonts } from 'pdf-lib'
+import { PDFDict, PDFDocument, PDFName, StandardFonts } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { convertToPdfA, substitute } from './pdfa'
 import { checkStandards } from './standards'
@@ -49,5 +49,40 @@ describe.skipIf(!have)('convertToPdfA', () => {
     const out = await convertToPdfA(await make(), async () => null)
     expect(out.report.remaining.join(' ')).toContain('could not be embedded')
     expect((await checkStandards(out.bytes)).checks.find((c) => c.label === 'Embeds every font')?.status).toBe('fail')
+  })
+})
+
+describe('structural fixes', () => {
+  const none = async () => null
+
+  it('gives a page the resources it would have inherited, and names a layer configuration', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([200, 200])
+    const ctx = doc.context
+    // Move the page's resources up to the page tree, so the page inherits them.
+    const res = page.node.get(PDFName.of('Resources'))!
+    page.node.delete(PDFName.of('Resources'))
+    doc.catalog.lookup(PDFName.of('Pages'), PDFDict).set(PDFName.of('Resources'), res)
+    doc.catalog.set(PDFName.of('OCProperties'), ctx.obj({ OCGs: [], D: { Order: [], AS: [] } }))
+    const out = await convertToPdfA(await doc.save(), none)
+    const back = await PDFDocument.load(out.bytes)
+    expect(back.getPage(0).node.has(PDFName.of('Resources'))).toBe(true)
+    const d = back.catalog.lookup(PDFName.of('OCProperties'), PDFDict).lookup(PDFName.of('D'), PDFDict)
+    expect(d.has(PDFName.of('Name'))).toBe(true)
+    expect(d.has(PDFName.of('AS'))).toBe(false)
+    expect(out.report.fixed.join(' ')).toContain('own resources')
+  })
+
+  it('adds a glyph map to TrueType CID fonts', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([200, 200])
+    const ctx = doc.context
+    const cid = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'CIDFontType2', BaseFont: 'Test', FontDescriptor: ctx.register(ctx.obj({ Type: 'FontDescriptor', FontFile2: ctx.register(ctx.flateStream(new Uint8Array(4))) })) }))
+    const type0 = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'Type0', BaseFont: 'Test', Encoding: 'Identity-H', DescendantFonts: [cid] }))
+    page.node.set(PDFName.of('Resources'), ctx.obj({ Font: { F9: type0 } }))
+    const out = await convertToPdfA(await doc.save(), none)
+    const back = await PDFDocument.load(out.bytes)
+    const f = (back.getPage(0).node.lookup(PDFName.of('Resources'), PDFDict).lookup(PDFName.of('Font'), PDFDict).lookup(PDFName.of('F9'), PDFDict).lookup(PDFName.of('DescendantFonts')) as unknown as { lookup(i: number): PDFDict }).lookup(0)
+    expect(f.lookup(PDFName.of('CIDToGIDMap'))).toBe(PDFName.of('Identity'))
   })
 })

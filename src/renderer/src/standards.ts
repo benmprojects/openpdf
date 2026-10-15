@@ -63,7 +63,21 @@ export function fontsOf(doc: PDFDocument): PDFDict[] {
       if (x instanceof PDFRawStream && x.dict.lookup(N('Subtype')) === N('Form')) visit(x.dict.lookupMaybe(N('Resources'), PDFDict), depth + 1)
     }
   }
+  // Fonts used by the form's default resources and by annotation appearances count too.
+  visit(doc.catalog.lookupMaybe(N('AcroForm'), PDFDict)?.lookupMaybe(N('DR'), PDFDict), 0)
   for (const page of doc.getPages()) {
+    const annots = page.node.lookupMaybe(N('Annots'), PDFArray)
+    if (annots) {
+      for (let i = 0; i < annots.size(); i++) {
+        const ap = annots.lookupMaybe(i, PDFDict)?.lookupMaybe(N('AP'), PDFDict)
+        if (!ap) continue
+        for (const key of ['N', 'D', 'R']) {
+          const entry = ap.lookup(N(key))
+          const streams = entry instanceof PDFRawStream ? [entry] : entry instanceof PDFDict ? entry.keys().map((k) => entry.lookup(k)) : []
+          for (const s of streams) if (s instanceof PDFRawStream) visit(s.dict.lookupMaybe(N('Resources'), PDFDict), 0)
+        }
+      }
+    }
     let node: PDFDict | undefined = page.node
     for (let i = 0; node && i < 32; i++) {
       const res = node.lookupMaybe(N('Resources'), PDFDict)

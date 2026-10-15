@@ -139,6 +139,21 @@ export async function sanitise(bytes: Uint8Array, o: SanitiseOptions): Promise<{
       }
     }
   }
+  // A popup whose parent annotation was removed would keep that annotation (and what it carries) alive.
+  for (const page of doc.getPages()) {
+    const annots = page.node.lookupMaybe(N('Annots'), PDFArray)
+    if (!annots) continue
+    const present = new Set<PDFDict>()
+    for (let i = 0; i < annots.size(); i++) {
+      const d = annots.lookupMaybe(i, PDFDict)
+      if (d) present.add(d)
+    }
+    for (let i = annots.size() - 1; i >= 0; i--) {
+      const d = annots.lookupMaybe(i, PDFDict)
+      const parent = d?.lookupMaybe(N('Parent'), PDFDict)
+      if (d && d.lookup(N('Subtype')) === N('Popup') && parent && !present.has(parent)) annots.remove(i)
+    }
+  }
   if (o.bookmarks) cat.delete(N('Outlines'))
   if (o.thumbnails) for (const page of doc.getPages()) page.node.delete(N('Thumb'))
 

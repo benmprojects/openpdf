@@ -143,6 +143,32 @@ export async function convertToPdfA(
   if (embedded) report.fixed.push(`Embedded ${embedded} font${embedded === 1 ? '' : 's'}`)
   if (cannot.size) report.remaining.push(`Fonts that could not be embedded: ${[...cannot].slice(0, 6).join(', ')}${cannot.size > 6 ? ` and ${cannot.size - 6} more` : ''}`)
 
+  // CID fonts that are TrueType need an explicit glyph map (the default is the identity map, so this changes nothing).
+  let cidFixed = 0
+  for (const f of fontsOf(doc)) {
+    const desc = f.lookupMaybe(N('DescendantFonts'), PDFArray)?.lookupMaybe(0, PDFDict)
+    if (desc && desc.lookup(N('Subtype')) === N('CIDFontType2') && !desc.has(N('CIDToGIDMap'))) {
+      desc.set(N('CIDToGIDMap'), N('Identity'))
+      cidFixed++
+    }
+  }
+  if (cidFixed) report.fixed.push(`Added a glyph map to ${cidFixed} CID font${cidFixed === 1 ? '' : 's'}`)
+
+  // Every page needs resources of its own, not ones inherited from the page tree.
+  let ownResources = 0
+  for (const page of doc.getPages()) {
+    if (page.node.has(N('Resources'))) continue
+    for (let node: PDFDict | undefined = page.node.lookupMaybe(N('Parent'), PDFDict), i = 0; node && i < 32; node = node.lookupMaybe(N('Parent'), PDFDict), i++) {
+      const res = node.get(N('Resources'))
+      if (res) {
+        page.node.set(N('Resources'), res)
+        ownResources++
+        break
+      }
+    }
+  }
+  if (ownResources) report.fixed.push(`Gave ${ownResources} page${ownResources === 1 ? '' : 's'} their own resources`)
+
   // Info, dates and XMP.
   let info = ctx.lookupMaybe(ctx.trailerInfo.Info, PDFDict)
   if (!info) {
@@ -216,6 +242,15 @@ export async function convertToPdfA(
   // Optional content: the default configuration may not switch layers automatically.
   const oc = doc.catalog.lookupMaybe(N('OCProperties'), PDFDict)
   const d = oc?.lookupMaybe(N('D'), PDFDict)
+  const configs = [d, ...(oc?.lookupMaybe(N('Configs'), PDFArray) ? Array.from({ length: oc!.lookupMaybe(N('Configs'), PDFArray)!.size() }, (_, i) => oc!.lookupMaybe(N('Configs'), PDFArray)!.lookupMaybe(i, PDFDict)) : [])]
+  let unnamed = 0
+  for (const c of configs) {
+    if (c && !c.has(N('Name'))) {
+      c.set(N('Name'), PDFString.of(c === d ? 'Default' : 'Configuration'))
+      unnamed++
+    }
+  }
+  if (unnamed) report.fixed.push('Named the layer configuration')
   if (d?.has(N('AS'))) {
     d.delete(N('AS'))
     report.fixed.push('Removed automatic layer switching')

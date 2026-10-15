@@ -89,7 +89,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Import: images, Word, Excel (via optional LibreOffice integration), HTML, text (Convert tab; Office files need LibreOffice, whose path is built but not checked here because it is not installed)
 - [x] Export: images (PNG, JPEG, TIFF), text, Word (best effort), HTML (Convert tab; text formats keep headings and paragraphs, not pictures or layout)
 - [x] Scan from TWAIN/WIA scanners (Convert tab > Scan, through WIA: the scanner's own window, or direct from the glass or a feeder; TWAIN-only devices are not supported; not tried on hardware)
-- [x] Create PDF from clipboard and screenshots; PDF/A output (File > Convert to PDF/A: PDF/A-2b best effort, not validated with veraPDF)
+- [x] Create PDF from clipboard and screenshots; PDF/A output (File > Convert to PDF/A: PDF/A-2b; the generated corpus converts to files that veraPDF 1.30 accepts as PDF/A-2b, 16 of 16, but arbitrary real-world files are not guaranteed)
 
 ## Phase 8: Productivity and automation (P2)
 - [x] Batch processing and action wizard (watermark, OCR, optimise on folders) (File > Batch: ordered steps, saved actions, shareable action files; originals are never changed or overwritten)
