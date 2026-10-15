@@ -157,6 +157,8 @@ export interface ImportedAnnot {
   fill?: string
   /** Second line of one of our dated stamps. */
   stampInfo?: string
+  opacity?: number
+  fontFamily?: 'Helvetica' | 'Times' | 'Courier'
   author?: string
   /** PDF date strings. */
   created?: string
@@ -230,6 +232,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
   const keyRT = cString(m, 'RT')
   const keyState = cString(m, 'State')
   const keyStateModel = cString(m, 'StateModel')
+  const keyCA = cString(m, 'CA')
   const replies: ImportedReply[] = []
   const out: ImportedAnnot[] = []
 
@@ -393,9 +396,18 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
           fill = `#${hex2(c.getUint32(scratch + 32, true))}${hex2(c.getUint32(scratch + 36, true))}${hex2(c.getUint32(scratch + 40, true))}`
         }
 
+        let opacity: number | undefined
+        if (m._FPDFAnnot_GetNumberValue(annot, keyCA, scratch + 60)) {
+          const v = new DataView(m.HEAPU8.buffer).getFloat32(scratch + 60, true)
+          if (v > 0 && v < 1) opacity = Math.max(0.1, v)
+        }
+
         let fontSize = 12
+        let fontFamily: 'Helvetica' | 'Times' | 'Courier' | undefined
         if (kind === 'textbox' || kind === 'typewriter') {
           const da = readString(annot, keyDA)
+          const face = /\/(\S+)\s+[\d.]+\s+Tf/.exec(da)?.[1] ?? ''
+          fontFamily = /^(TiRo|Times|TimesNewRoman)/i.test(face) ? 'Times' : /^(Cour|Courier)/i.test(face) ? 'Courier' : undefined
           const size = /([\d.]+)\s+Tf/.exec(da)
           if (size) fontSize = Math.max(6, Math.min(72, parseFloat(size[1])))
           const rgbm = /([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/.exec(da)
@@ -418,6 +430,8 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
           rect,
           fill,
           stampInfo: kind === 'stamp' ? readString(annot, keyInfo) || undefined : undefined,
+          opacity,
+          fontFamily,
           author: readString(annot, keyT) || undefined,
           created: readString(annot, keyCreated) || undefined,
           modified: readString(annot, keyM) || undefined
@@ -436,7 +450,7 @@ export function readPageAnnots(lib: PDFiumLibrary, page: PDFiumPage): { annots: 
     m.wasmExports.free(keyBE)
     m.wasmExports.free(keyMeasure)
     m.wasmExports.free(keyInfo)
-    for (const k of [keyT, keyM, keyCreated, keyIRT, keyRT, keyState, keyStateModel]) m.wasmExports.free(k)
+    for (const k of [keyT, keyM, keyCreated, keyIRT, keyRT, keyState, keyStateModel, keyCA]) m.wasmExports.free(k)
   }
   return { annots: out, replies }
 }

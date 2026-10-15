@@ -70,6 +70,9 @@ function RecentList({
   )
 }
 
+const NO_DEFAULTS = {}
+const NO_PRESETS: [] = []
+
 export function App() {
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeId, setActiveId] = useState<number | null>(null)
@@ -377,6 +380,9 @@ export function App() {
             onOpen={open}
             onCloseDoc={() => close(t.id)}
             author={settings?.author ?? ''}
+            toolDefaults={settings?.toolDefaults ?? NO_DEFAULTS}
+            toolPresets={settings?.toolPresets ?? NO_PRESETS}
+            onSettings={changeSettings}
           />
         ))}
         {!tabs.length && (

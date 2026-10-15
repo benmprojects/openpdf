@@ -15,6 +15,42 @@ export interface Settings {
   sidebarWidth: number
   /** Which side of the window the side pane docks to. */
   paneSide: 'left' | 'right'
+  /** Style each annotation tool starts with, by annotation kind (saved with "Make default"). */
+  toolDefaults: Record<string, ToolStyle>
+  /** Named tool presets: a kind and a style, shown in the Presets list. */
+  toolPresets: ToolPreset[]
+}
+
+/** Mirrors ToolStyle in the renderer's annotations.ts. */
+export interface ToolStyle {
+  color?: string
+  fill?: string
+  dash?: 'dashed' | 'dotted'
+  lineWidth?: number
+  opacity?: number
+  fontFamily?: 'Helvetica' | 'Times' | 'Courier'
+  fontSize?: number
+}
+
+export interface ToolPreset {
+  id: string
+  name: string
+  kind: string
+  style: ToolStyle
+}
+
+const HEX = /^#[0-9a-f]{6}$/i
+function cleanStyle(raw: unknown): ToolStyle {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const out: ToolStyle = {}
+  if (typeof r.color === 'string' && HEX.test(r.color)) out.color = r.color
+  if (typeof r.fill === 'string' && HEX.test(r.fill)) out.fill = r.fill
+  if (r.dash === 'dashed' || r.dash === 'dotted') out.dash = r.dash
+  if (typeof r.lineWidth === 'number' && r.lineWidth > 0 && r.lineWidth <= 50) out.lineWidth = r.lineWidth
+  if (typeof r.opacity === 'number' && r.opacity >= 0.1 && r.opacity <= 1) out.opacity = r.opacity
+  if (r.fontFamily === 'Helvetica' || r.fontFamily === 'Times' || r.fontFamily === 'Courier') out.fontFamily = r.fontFamily
+  if (typeof r.fontSize === 'number' && r.fontSize >= 4 && r.fontSize <= 144) out.fontSize = r.fontSize
+  return out
 }
 
 const RECENT_MAX = 12
@@ -25,7 +61,9 @@ const defaults = (): Settings => ({
   autosaveMinutes: 2,
   author: process.env.USERNAME ?? process.env.USER ?? '',
   sidebarWidth: 220,
-  paneSide: 'left'
+  paneSide: 'left',
+  toolDefaults: {},
+  toolPresets: []
 })
 
 let current: Settings | null = null
@@ -47,7 +85,22 @@ function sanitise(raw: Partial<Settings>): Settings {
       typeof raw.autosaveMinutes === 'number' && raw.autosaveMinutes >= 0 && raw.autosaveMinutes <= 60 ? raw.autosaveMinutes : d.autosaveMinutes,
     author: typeof raw.author === 'string' ? raw.author.slice(0, 200) : d.author,
     sidebarWidth: typeof raw.sidebarWidth === 'number' ? Math.min(600, Math.max(140, raw.sidebarWidth)) : d.sidebarWidth,
-    paneSide: raw.paneSide === 'right' ? 'right' : 'left'
+    paneSide: raw.paneSide === 'right' ? 'right' : 'left',
+    toolDefaults:
+      raw.toolDefaults && typeof raw.toolDefaults === 'object'
+        ? Object.fromEntries(
+            Object.entries(raw.toolDefaults)
+              .filter(([k]) => /^[a-z]{2,20}$/.test(k))
+              .slice(0, 40)
+              .map(([k, v]) => [k, cleanStyle(v)])
+          )
+        : {},
+    toolPresets: Array.isArray(raw.toolPresets)
+      ? raw.toolPresets
+          .filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.kind === 'string' && /^[a-z]{2,20}$/.test(p.kind))
+          .slice(0, 100)
+          .map((p) => ({ id: p.id.slice(0, 64), name: p.name.slice(0, 80), kind: p.kind, style: cleanStyle(p.style) }))
+      : []
   }
 }
 

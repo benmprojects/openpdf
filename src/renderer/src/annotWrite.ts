@@ -211,6 +211,19 @@ export async function writeAnnotations(
   const ctx = pdf.context
   let font: PDFFont | null = null
   const getFont = async () => (font ??= await pdf.embedFont(StandardFonts.Helvetica))
+  // Text fonts by family, embedded on first use; `tag` is the resource name used in /DA and appearances.
+  const textFonts = new Map<string, Promise<PDFFont>>()
+  const FONT_FOR = { Helvetica: StandardFonts.Helvetica, Times: StandardFonts.TimesRoman, Courier: StandardFonts.Courier }
+  const TAG_FOR = { Helvetica: 'Helv', Times: 'TiRo', Courier: 'Cour' }
+  const textFont = async (a: Annot) => {
+    const fam = a.fontFamily ?? 'Helvetica'
+    let p = textFonts.get(fam)
+    if (!p) {
+      p = fam === 'Helvetica' ? getFont() : pdf.embedFont(FONT_FOR[fam])
+      textFonts.set(fam, p)
+    }
+    return { fnt: await p, tag: TAG_FOR[fam] }
+  }
   let boldFont: PDFFont | null = null
   const getBold = async () => (boldFont ??= await pdf.embedFont(StandardFonts.HelveticaBold))
   const now = PDFString.fromDate(new Date())
@@ -342,7 +355,7 @@ export async function writeAnnotations(
           a.rects.map((r) => squigglePoints(r).map((p, i) => `${n(p.x)} ${n(p.y)} ${i ? 'l' : 'm'}`).join(' ') + ' S').join(' ')
       } else if (a.kind === 'highlight') {
         body = `/GS gs ${rgb(a.color)} rg ` + a.rects.map((r) => `${n(r.x)} ${n(r.y)} ${n(r.w)} ${n(r.h)} re f`).join(' ')
-        resources = { ExtGState: { GS: { Type: 'ExtGState', BM: 'Multiply', CA: 1, ca: 1 } } }
+        resources = { ExtGState: { GS: { Type: 'ExtGState', BM: 'Multiply', CA: a.opacity ?? 1, ca: a.opacity ?? 1 } } }
       } else {
         const at = a.kind === 'underline' ? UNDERLINE_AT : STRIKEOUT_AT
         body =
@@ -528,7 +541,7 @@ export async function writeAnnotations(
       }
     } else if (a.kind === 'callout') {
       const box = a.rects[0]
-      const fnt = await getFont()
+      const { fnt, tag } = await textFont(a)
       const size = a.fontSize
       const tip = a.points?.[0]?.[0] ?? { x: box.x - 40, y: box.y + box.h / 2 }
       const knee = calloutAttach(box, tip)
@@ -541,18 +554,19 @@ export async function writeAnnotations(
       const body =
         `1 g ${rgb(a.color)} RG 1 w ${n(box.x + 0.5)} ${n(box.y + 0.5)} ${n(box.w - 1)} ${n(box.h - 1)} re B ` +
         `${n(knee.x)} ${n(knee.y)} m ${n(tip.x)} ${n(tip.y)} l S ${n(l.x)} ${n(l.y)} m ${n(at.x)} ${n(at.y)} l ${n(rr.x)} ${n(rr.y)} l S ` +
-        `q ${n(box.x)} ${n(box.y)} ${n(box.w)} ${n(box.h)} re W n BT /Helv ${n(size)} Tf ${rgb(a.color)} rg ${text} ET Q`
+        `q ${n(box.x)} ${n(box.y)} ${n(box.w)} ${n(box.h)} re W n BT /${tag} ${n(size)} Tf ${rgb(a.color)} rg ${text} ET Q`
       const pad = 6
       const all = userBounds(f, [box, { x: tip.x - pad, y: tip.y - pad, w: 2 * pad, h: 2 * pad }])
       const inner = userBounds(f, [box])
-      const ap = makeForm(ctx, all, `q ${cm(f)} ${body} Q`, { Font: { Helv: fnt.ref } })
+      const ap = makeForm(ctx, all, `q ${cm(f)} ${body} Q`, { Font: { [tag]: fnt.ref } })
       dict = {
         ...base,
         Rect: all,
         Subtype: 'FreeText',
         IT: 'FreeTextCallout',
         Contents: PDFHexString.fromText(a.text),
-        DA: PDFString.of(`/Helv ${n(size)} Tf ${rgb(a.color)} rg ${rgb(a.color)} RG`),
+        DA: PDFString.of(`/${tag} ${n(size)} Tf ${rgb(a.color)} rg ${rgb(a.color)} RG`),
+        DR: { Font: { [tag]: fnt.ref } },
         CL: [...toUser(f, tip.x, tip.y), ...toUser(f, knee.x, knee.y)],
         LE: 'OpenArrow',
         RD: [inner[0] - all[0], inner[1] - all[1], all[2] - inner[2], all[3] - inner[3]],
@@ -563,7 +577,7 @@ export async function writeAnnotations(
       delete dict.C
     } else {
       const typewriter = a.kind === 'typewriter'
-      const fnt = await getFont()
+      const { fnt, tag } = await textFont(a)
       const size = a.fontSize
       // A typewriter box is as wide as its longest line (measured with the PDF font, so nothing is clipped).
       const lines = typewriter ? winAnsiSafe(fnt, a.text).split(/\r\n|\r|\n/) : wrapText(fnt, a.text, size, a.rects[0].w - 2 * TEXTBOX_PADDING)
@@ -574,9 +588,9 @@ export async function writeAnnotations(
       const text = lines
         .map((ln, i) => `1 0 0 -1 ${n(r.x + TEXTBOX_PADDING)} ${n(r.y + TEXTBOX_PADDING + size * 0.95 + i * lh)} Tm ${fnt.encodeText(ln).toString()} Tj`)
         .join(' ')
-      const body = `${n(r.x)} ${n(r.y)} ${n(r.w)} ${n(r.h)} re W n BT /Helv ${n(size)} Tf ${rgb(a.color)} rg ${text} ET`
+      const body = `${n(r.x)} ${n(r.y)} ${n(r.w)} ${n(r.h)} re W n BT /${tag} ${n(size)} Tf ${rgb(a.color)} rg ${text} ET`
       const box = typewriter ? userBounds(f, [r]) : bounds
-      const ap = makeForm(ctx, box, `q ${cm(f)} ${body} Q`, { Font: { Helv: fnt.ref } })
+      const ap = makeForm(ctx, box, `q ${cm(f)} ${body} Q`, { Font: { [tag]: fnt.ref } })
       delete base.C // /C on a FreeText is the background fill; ours is transparent
       dict = {
         ...base,
@@ -584,9 +598,27 @@ export async function writeAnnotations(
         ...(typewriter ? { IT: 'FreeTextTypeWriter' } : {}),
         Subtype: 'FreeText',
         Contents: PDFHexString.fromText(a.text),
-        DA: PDFString.of(`/Helv ${n(size)} Tf ${rgb(a.color)} rg`),
+        DA: PDFString.of(`/${tag} ${n(size)} Tf ${rgb(a.color)} rg`),
+        DR: { Font: { [tag]: fnt.ref } },
         Q: 0,
         AP: { N: ap }
+      }
+    }
+
+    if (a.opacity !== undefined && a.opacity < 1) {
+      dict.CA = a.opacity
+      const apRef = (dict.AP as { N?: PDFRef } | undefined)?.N
+      if (apRef && a.kind !== 'highlight') {
+        const old = ctx.lookup(apRef) as unknown as { dict: PDFDict; getContents(): Uint8Array }
+        const res = (old.dict.lookupMaybe(PDFName.of('Resources'), PDFDict) ?? (ctx.obj({}) as PDFDict)).clone(ctx)
+        const ext = res.lookupMaybe(PDFName.of('ExtGState'), PDFDict) ?? (ctx.obj({}) as PDFDict)
+        ext.set(PDFName.of('GSop'), ctx.obj({ Type: 'ExtGState', CA: a.opacity, ca: a.opacity }))
+        res.set(PDFName.of('ExtGState'), ext)
+        const bbox = old.dict.lookup(PDFName.of('BBox'))
+        const prev = new TextDecoder('latin1').decode(old.getContents())
+        ctx.delete(apRef)
+        const stream = ctx.stream(`/GSop gs ${prev}`, { Type: 'XObject', Subtype: 'Form', BBox: bbox, Resources: res } as never)
+        dict.AP = { N: ctx.register(stream) }
       }
     }
 

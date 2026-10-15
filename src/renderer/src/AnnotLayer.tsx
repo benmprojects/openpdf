@@ -9,6 +9,7 @@ import {
   LINE_WIDTH,
   annotLabel,
   arrowHeadPoints,
+  FONT_CSS,
   calloutAttach,
   caretRectAfter,
   isMarkup,
@@ -100,7 +101,7 @@ export function AnnotLayer({
           return a.rects.map((r, i) => {
             const base = { left: r.x * zoom, width: r.w * zoom }
             return (
-              <div key={`${a.id}-${i}`}>
+              <div key={`${a.id}-${i}`} style={{ opacity: a.opacity }}>
                 {a.kind === 'highlight' && !ghost && (
                   <div className="annot-highlight" style={{ ...base, top: r.y * zoom, height: r.h * zoom, background: a.color }} />
                 )}
@@ -187,6 +188,8 @@ export function AnnotLayer({
                   width: w * zoom,
                   height: h * zoom,
                   color: a.color,
+                  opacity: a.opacity,
+                  fontFamily: FONT_CSS[a.fontFamily ?? 'Helvetica'],
                   borderColor: ghost ? 'transparent' : a.color,
                   background: ghost ? 'transparent' : '#fff',
                   fontSize: a.fontSize * zoom,
@@ -221,7 +224,7 @@ export function AnnotLayer({
                 role="button"
                 aria-label={`${annotLabel(a.kind)}: ${a.text || 'empty'}`}
                 title={a.text || undefined}
-                style={{ left: x * zoom, top: y * zoom, width: r.w * zoom, height: r.h * zoom, background: a.color }}
+                style={{ left: x * zoom, top: y * zoom, width: r.w * zoom, height: r.h * zoom, background: a.color, opacity: a.opacity }}
                 onMouseDown={(e) => begin(e, a, 'move')}
                 onDoubleClick={() => interactive && onEdit(a.id)}
               >
@@ -248,6 +251,8 @@ export function AnnotLayer({
               width: w * zoom,
               height: h * zoom,
               color: a.color,
+              opacity: a.opacity,
+              fontFamily: FONT_CSS[a.fontFamily ?? 'Helvetica'],
               fontSize: a.fontSize * zoom,
               lineHeight: TEXTBOX_LINE_HEIGHT,
               padding: TEXTBOX_PADDING * zoom

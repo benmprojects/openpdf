@@ -31,6 +31,28 @@ export interface Pt {
 
 /** Review states a reviewer can give a comment (ISO 32000 12.5.6.3, state model "Review"). */
 export type ReviewState = 'None' | 'Accepted' | 'Rejected' | 'Cancelled' | 'Completed'
+export type FontFamily = 'Helvetica' | 'Times' | 'Courier'
+export const FONT_FAMILIES: FontFamily[] = ['Helvetica', 'Times', 'Courier']
+/** CSS font stack that looks like each PDF standard font on screen. */
+export const FONT_CSS: Record<FontFamily, string> = {
+  Helvetica: 'Helvetica, Arial, sans-serif',
+  Times: "'Times New Roman', Times, serif",
+  Courier: "'Courier New', Courier, monospace"
+}
+/** Kinds whose text font can be chosen. */
+export const hasFont = (k: AnnotKind) => k === 'textbox' || k === 'typewriter' || k === 'callout'
+
+/** Style a tool applies to what it creates; also what a saved preset holds. */
+export interface ToolStyle {
+  color?: string
+  fill?: string
+  dash?: 'dashed' | 'dotted'
+  lineWidth?: number
+  opacity?: number
+  fontFamily?: FontFamily
+  fontSize?: number
+}
+
 export const REVIEW_STATES: ReviewState[] = ['None', 'Accepted', 'Rejected', 'Cancelled', 'Completed']
 
 /** A reply in a comment's thread, or a change of its review state when `state` is set. */
@@ -71,6 +93,10 @@ export interface Annot {
   fill?: string
   /** Line style of shapes; solid when unset. */
   dash?: 'dashed' | 'dotted'
+  /** 0.1 to 1; fully opaque when unset. */
+  opacity?: number
+  /** Text box, typewriter and callout font. Helvetica when unset. */
+  fontFamily?: FontFamily
   /** Who made it (/T). */
   author?: string
   /** ISO date-times of creation and last change. */
@@ -125,7 +151,7 @@ export function formatWhen(iso?: string): string {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.image ? a.image.length : null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null])
 }
 
 export const NOTE_SIZE = 22

@@ -46,7 +46,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Custom image stamps (PNG/JPEG library in userData), dated stamps with name, date and time; stamp picker
 - [x] Comment list: sort, filter, search, reply threads, review status, summary PDF, CSV export; author and dates on new comments
 - [x] Colour choice, move, resize, delete, undo/redo, Save and Save As
-- [ ] Properties panel (font, opacity, border), saved tool presets, custom tool sets
+- [x] Properties panel (colour, fill, opacity, line width and style, font and size, author; Ctrl+E), tool defaults saved in Settings, named tool presets
 - [x] Edit annotations already in a file: highlight, underline, strikeout, note, text box (select, recolour, move, resize, edit text, delete; unedited ones are left byte-for-byte as they were)
 - [ ] Edit other existing annotation types (shapes, ink, stamps, links) and reply threads
 - [ ] Attach file, sound and links; import and export FDF/XFDF

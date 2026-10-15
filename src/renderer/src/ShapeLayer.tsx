@@ -212,7 +212,7 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
       )
     }
     return (
-      <g key={orig.id}>
+      <g key={orig.id} opacity={a.opacity}>
         {body}
         {label}
         {selected && (

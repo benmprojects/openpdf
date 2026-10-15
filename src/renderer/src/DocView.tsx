@@ -10,6 +10,9 @@ import {
   STAMP_LABELS,
   defaultColor,
   isShapeKind,
+  isMarkup,
+  hasFont,
+  type ToolStyle,
   eraseFromPaths,
   canDash,
   canFill,
@@ -41,6 +44,7 @@ import type { Guide } from './GuideLayer'
 import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
+import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
 import { CommentsPane } from './CommentsPane'
 import { commentsCsv, commentSummaryPdf } from './commentReport'
 import { StampPicker, type StampChoice } from './StampPicker'
@@ -73,6 +77,7 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  SlidersHorizontal,
   Eraser as EraserIcon,
   Hexagon,
   Cloud,
@@ -170,6 +175,9 @@ interface Props {
   onCloseDoc: () => void
   /** Settings author name, for dated stamps. */
   author: string
+  toolDefaults: Record<string, ToolStyle>
+  toolPresets: ToolPreset[]
+  onSettings: (patch: { toolDefaults?: Record<string, ToolStyle>; toolPresets?: ToolPreset[] }) => void
   /** A search-in-files result to show. */
   jump?: SearchJump
 }
@@ -208,7 +216,7 @@ function compactRanges(pages: number[]): string {
   return out.join(', ')
 }
 
-export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onCloseDoc, jump, author }: Props) {
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onCloseDoc, jump, author, toolDefaults, toolPresets, onSettings }: Props) {
   const [ribbon, setRibbon] = useState<RibbonTab>('home')
   // Pages selected in the thumbnail pane; the Organise tab acts on them, or on the current page if none are.
   const [pageSel, setPageSel] = useState<number[]>([])
@@ -392,6 +400,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // Fill and line style chosen per shape kind, applied to new shapes.
   const [fills, setFills] = useState<Partial<Record<AnnotKind, string>>>({})
   const [dashes, setDashes] = useState<Partial<Record<AnnotKind, 'dashed' | 'dotted'>>>({})
+  const [styleMap, setStyleMap] = useState<Partial<Record<AnnotKind, ToolStyle>>>({})
+  const styleMapRef = useRef(styleMap)
+  styleMapRef.current = styleMap
+  // Saved tool defaults (Settings) seed each tool's style.
+  useEffect(() => {
+    const d = toolDefaults as Partial<Record<AnnotKind, ToolStyle>>
+    setColors((m) => ({ ...m, ...Object.fromEntries(Object.entries(d).flatMap(([k, s]) => (s?.color ? [[k, s.color]] : []))) }))
+    setFills((m) => ({ ...m, ...Object.fromEntries(Object.entries(d).map(([k, s]) => [k, s?.fill])) }))
+    setDashes((m) => ({ ...m, ...Object.fromEntries(Object.entries(d).map(([k, s]) => [k, s?.dash])) }))
+    setStyleMap((m) => ({ ...m, ...d }))
+  }, [toolDefaults])
   const fillsRef = useRef(fills)
   fillsRef.current = fills
   const dashesRef = useRef(dashes)
@@ -465,6 +484,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               points: r.points,
               fill: r.fill,
               stampInfo: r.stampInfo,
+              opacity: r.opacity,
+              fontFamily: r.fontFamily,
               author: r.author,
               created: r.created ? pdfDateToIso(r.created) : undefined,
               modified: r.modified ? pdfDateToIso(r.modified) : undefined,
@@ -568,10 +589,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     rects,
     text,
     fontSize: DEFAULT_FONT_SIZE,
-    lineWidth: 1,
+    lineWidth: styleMapRef.current[kind]?.lineWidth ?? 1,
     author: authorRef.current || undefined,
-    created: new Date().toISOString()
+    created: new Date().toISOString(),
+    ...extraStyle(kind)
   })
+  /** Opacity, font and font size a new annotation of `kind` starts with. */
+  const extraStyle = (kind: AnnotKind): Partial<Annot> => {
+    const s = styleMapRef.current[kind] ?? {}
+    return {
+      ...(s.opacity !== undefined && s.opacity < 1 ? { opacity: s.opacity } : {}),
+      ...(hasFont(kind) && s.fontFamily ? { fontFamily: s.fontFamily } : {}),
+      ...(hasFont(kind) && s.fontSize ? { fontSize: s.fontSize } : {})
+    }
+  }
 
   const markSelection = useCallback(
     async (kind: AnnotKind, replace = false) => {
@@ -675,7 +706,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         ...shape,
         id: nextAnnotId.current++,
         ...(canFill(shape.kind) && fillsRef.current[shape.kind] ? { fill: fillsRef.current[shape.kind] } : {}),
-        ...(canDash(shape.kind) && dashesRef.current[shape.kind] ? { dash: dashesRef.current[shape.kind] } : {})
+        ...(canDash(shape.kind) && dashesRef.current[shape.kind] ? { dash: dashesRef.current[shape.kind] } : {}),
+        ...extraStyle(shape.kind)
       }
       history.commit((list) => [...list, a])
       setSelectedAnnot(a.id)
@@ -791,7 +823,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       : (tool as AnnotKind) // every other tool is named after the kind it creates
   const swatchKind: AnnotKind = selected?.kind ?? toolKind ?? lastMarkup
   const showWidth = isShapeKind(swatchKind) || swatchKind === 'stamp'
-  const activeWidth = selected && (isShapeKind(selected.kind) || selected.kind === 'stamp') ? selected.lineWidth : drawWidth
+  const activeWidth = selected && (isShapeKind(selected.kind) || selected.kind === 'stamp') ? selected.lineWidth : (styleMap[swatchKind]?.lineWidth ?? drawWidth)
   const activeColor = selected ? selected.color : colors[swatchKind]
 
   const pickColor = (c: string) => {
@@ -802,6 +834,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const pickWidth = (w: number) => {
     setDrawWidth(w)
+    setStyleMap((m) => ({ ...m, [swatchKind]: { ...m[swatchKind], lineWidth: w } }))
     if (selected && (isShapeKind(selected.kind) || selected.kind === 'stamp')) {
       touch(selected.id)
       history.commit((list) => list.map((a) => (a.id === selected.id ? withBounds({ ...a, lineWidth: w }) : a)))
@@ -824,6 +857,71 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       touch(selected.id)
       history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, dash: d } : a)))
     }
+  }
+
+  // ---- Properties panel and tool presets ------------------------------------------------------------
+  const [propsOpen, setPropsOpen] = useState(false)
+  const panelStyle: ToolStyle & { color: string } = selected
+    ? {
+        color: selected.color,
+        fill: selected.fill,
+        dash: selected.dash,
+        lineWidth: selected.lineWidth,
+        opacity: selected.opacity,
+        fontFamily: selected.fontFamily,
+        fontSize: selected.fontSize
+      }
+    : { ...(styleMap[swatchKind] ?? {}), color: colors[swatchKind], fill: fills[swatchKind], dash: dashes[swatchKind], lineWidth: styleMap[swatchKind]?.lineWidth ?? drawWidth }
+  /** Applies a style change to the selected annotation, or to the current tool. */
+  const applyStyle = (patch: ToolStyle) => {
+    if (selected) {
+      touch(selected.id)
+      history.commit((list) =>
+        list.map((a) => {
+          if (a.id !== selected.id) return a
+          const next: Annot = { ...a, ...patch, ...(patch.opacity === 1 ? { opacity: undefined } : {}) }
+          if ('fill' in patch && !canFill(a.kind)) delete next.fill
+          if (a.kind === 'typewriter' && (patch.fontSize || patch.fontFamily)) next.rects = [typewriterRect(a.rects[0].x, a.rects[0].y, a.text, next.fontSize)]
+          return patch.lineWidth !== undefined ? withBounds(next) : next
+        })
+      )
+      return
+    }
+    if (patch.color) setColors((m) => ({ ...m, [swatchKind]: patch.color! }))
+    if ('fill' in patch) setFills((m) => ({ ...m, [swatchKind]: patch.fill }))
+    if ('dash' in patch) setDashes((m) => ({ ...m, [swatchKind]: patch.dash }))
+    const rest: ToolStyle = { ...patch }
+    delete rest.color
+    delete rest.fill
+    delete rest.dash
+    if (Object.keys(rest).length) setStyleMap((m) => ({ ...m, [swatchKind]: { ...m[swatchKind], ...rest } }))
+  }
+  const setAuthorOf = (author: string) => {
+    if (!selected) return
+    touch(selected.id)
+    history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, author: author || undefined } : a)))
+  }
+  const makeDefault = () => {
+    const { color, fill, dash, lineWidth, opacity, fontFamily, fontSize } = panelStyle
+    const style: ToolStyle = { color, ...(fill ? { fill } : {}), ...(dash ? { dash } : {}), lineWidth, ...(opacity !== undefined ? { opacity } : {}), ...(fontFamily ? { fontFamily } : {}), ...(fontSize ? { fontSize } : {}) }
+    onSettings({ toolDefaults: { ...toolDefaults, [swatchKind]: style } })
+    setNotice({ kind: 'info', text: `New ${annotLabel(swatchKind).toLowerCase()} annotations will use this style` })
+  }
+  const savePreset = (presetName: string) => {
+    const { color, fill, dash, lineWidth, opacity, fontFamily, fontSize } = panelStyle
+    const style: ToolStyle = { color, ...(fill ? { fill } : {}), ...(dash ? { dash } : {}), lineWidth, ...(opacity !== undefined ? { opacity } : {}), ...(fontFamily ? { fontFamily } : {}), ...(fontSize ? { fontSize } : {}) }
+    onSettings({ toolPresets: [...toolPresets, { id: crypto.randomUUID(), name: presetName, kind: swatchKind, style }] })
+  }
+  /** A preset arms its tool with its style. */
+  const applyPreset = (p: ToolPreset) => {
+    const k = p.kind as AnnotKind
+    if (p.style.color) setColors((m) => ({ ...m, [k]: p.style.color! }))
+    setFills((m) => ({ ...m, [k]: p.style.fill }))
+    setDashes((m) => ({ ...m, [k]: p.style.dash }))
+    setStyleMap((m) => ({ ...m, [k]: { ...m[k], lineWidth: p.style.lineWidth, opacity: p.style.opacity, fontFamily: p.style.fontFamily, fontSize: p.style.fontSize } }))
+    setSelectedAnnot(null)
+    if (!isMarkup(k)) setTool(k as Tool)
+    else setLastMarkup(k)
   }
 
   /** Choosing a stamp arms the stamp tool; a text label also relabels the selected text stamp. */
@@ -1338,6 +1436,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       } else if (ctrl && e.shiftKey && (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract')) {
         e.preventDefault()
         rotateView(-1)
+      } else if (ctrl && k === 'e') {
+        e.preventDefault()
+        setPropsOpen((o) => !o)
       } else if (ctrl && k === 'h') {
         e.preventDefault()
         setReadingMode((m) => !m)
@@ -1448,6 +1549,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           )}
           </div>
         </div>
+      </RGroup>
+      <RGroup label="Properties">
+        <RB big icon={SlidersHorizontal} label="Properties" onClick={() => setPropsOpen((o) => !o)} pressed={propsOpen} title="Properties of the selection, or of the current tool (Ctrl+E)" />
+        {toolPresets.length > 0 && (
+          <select className="rselect" aria-label="Presets" value="" onChange={(e) => { const p = toolPresets.find((x) => x.id === e.target.value); if (p) applyPreset(p) }} title="Use a saved preset">
+            <option value="">Presets…</option>
+            {toolPresets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        )}
       </RGroup>
       <RGroup label="Edit">
         <RB big icon={Trash2} label="Delete" onClick={() => selected && removeAnnot(selected.id)} disabled={!selected} title="Delete the selected annotation (Delete)" />
@@ -2059,7 +2173,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               epoch={epoch}
               onAnnotText={finishText}
               onPlace={place}
-              drawStyle={{ color: colors[toolKind ?? 'line'], lineWidth: drawWidth }}
+              drawStyle={{ color: colors[toolKind ?? 'line'], lineWidth: styleMap[toolKind ?? 'line']?.lineWidth ?? drawWidth }}
               onCreateShape={createShape}
               onReshapeAnnot={reshapeAnnot}
               onSelectionChange={setHasTextSelection}
@@ -2068,6 +2182,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onPageChange={setCurrentPage}
               onSize={onSize}
             />
+            {propsOpen && (
+              <PropertiesPanel
+                annot={selected}
+                kind={swatchKind}
+                style={panelStyle}
+                onStyle={applyStyle}
+                onAuthor={setAuthorOf}
+                onMakeDefault={makeDefault}
+                presets={toolPresets}
+                onSavePreset={savePreset}
+                onUsePreset={applyPreset}
+                onDeletePreset={(id) => onSettings({ toolPresets: toolPresets.filter((p) => p.id !== id) })}
+                onClose={() => setPropsOpen(false)}
+              />
+            )}
           </>
         )}
       </div>

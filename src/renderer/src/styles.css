@@ -1343,6 +1343,106 @@ kbd {
   font-size: 11px;
   gap: 2px;
 }
+.props-panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 300px;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+.props-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 14px 16px;
+}
+.props-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 10px;
+  align-items: center;
+}
+.props-grid input:not([type='checkbox']):not([type='range']):not([type='color']),
+.props-grid select {
+  min-width: 0;
+}
+.props-colour {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.props-colour input[type='color'] {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: none;
+}
+.props-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.props-range input {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.props-actions {
+  margin: 14px 0 4px;
+}
+.props-body h3 {
+  margin: 16px 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.props-preset-form {
+  display: flex;
+  gap: 6px;
+}
+.props-preset-form input {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.props-presets {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.props-presets li {
+  display: flex;
+  align-items: center;
+}
+.props-preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  padding: 5px 6px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.props-preset:hover {
+  background: var(--panel-3);
+}
+.props-preset .muted {
+  margin-left: auto;
+}
 .page-row {
   display: flex;
   align-items: center;
