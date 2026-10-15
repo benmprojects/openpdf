@@ -48,9 +48,12 @@ function titleBarColours() {
 }
 
 function createWindow(): void {
+  // Test hook: test windows open off-screen and without taking focus, unless OPENPDF_E2E_SHOW=1.
+  const hideForTests = e2e && process.env.OPENPDF_E2E_SHOW !== '1'
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
+    ...(hideForTests ? { x: -30000, y: -30000, show: false, skipTaskbar: true } : {}),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#17181b' : '#e9ebef',
     // The document tab strip doubles as the title bar; Windows draws its own buttons over the right-hand end.
     titleBarStyle: 'hidden',
@@ -90,6 +93,8 @@ function createWindow(): void {
   })
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else win.loadFile(join(__dirname, '../renderer/index.html'))
+  // Shown without activating, so it renders normally but stays off-screen and out of the way.
+  if (hideForTests) win.showInactive()
 }
 
 async function readPdf(path: string) {
