@@ -103,7 +103,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 ## Phase 9: Polish and release
 - [x] Performance targets: open a 500-page file under 2 s to first page; memory cap on huge files (`e2e/perf.spec.ts`: about 0.5 s for 500 pages and 0.3 s for a page with 2000 annotations; renderer about 400 MB after scrolling all 500 pages, test limit 1.5 GB)
 - [ ] Localisation (English-AU first), i18n framework
-- [ ] Accessibility audit, installer, auto-update, telemetry off by default
+- [x] Accessibility audit, installer, auto-update, telemetry off by default (audit: `e2e/a11y.spec.ts`; the packaged program is built and tested with `electron-builder --dir`, but the NSIS installer step is blocked on the development PC, so `npm run dist` is a hand test; updates are opt in with an address the user supplies; there is no telemetry at all)
 - [ ] Test corpus (public-domain PDFs plus pdf.js and PDFium test suites), fuzz tests on parsers. Done: generated corpus (`scripts/make-corpus.py`, 23 files: damaged, encrypted, inherited page trees, extreme sizes, layers, forms, CJK, 2000 annotations) checked by `scripts/corpus-check.mts`; seeded parser fuzz tests (`fuzz.test.ts`); PDF fuzzing (`scripts/fuzz-pdf.mts`); both run in `check.sh`. Still to do: run `scripts/fetch-corpus.sh` (pdf.js and PDFium suites) and fix what `corpus-check` finds
 
 ## Risks and open questions

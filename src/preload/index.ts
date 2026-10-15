@@ -9,6 +9,7 @@ import type { ScanOptions, ScannerInfo } from '../main/scan'
 import type { BatchAction } from '../renderer/src/batch'
 import type { CatalogueEntry, InstalledPlugin } from '../main/plugins'
 import type { Place } from '../shared/places'
+import type { UpdateStatus } from '../main/updates'
 import type { PluginManifest } from '../shared/plugins'
 
 export type { ImageStamp }
@@ -65,6 +66,11 @@ const api = {
   decryptPdf: (data: Uint8Array, password: string): Promise<Uint8Array> => ipcRenderer.invoke('pdf:decrypt', data, password),
   /** The file encrypted with new passwords and permissions. */
   encryptPdf: (data: Uint8Array, o: EncryptOptions): Promise<Uint8Array> => ipcRenderer.invoke('pdf:encrypt', data, o),
+  /** Updates, opt in: look at the feed, download, restart to install. */
+  checkForUpdates: (feed: string): Promise<UpdateStatus> => ipcRenderer.invoke('updates:check', feed),
+  downloadUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('updates:download'),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('updates:install'),
+  updateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke('updates:status'),
   /** Plugins. Installing from a folder or zip asks for it; each resolves null when cancelled. */
   pluginsList: (): Promise<InstalledPlugin[]> => ipcRenderer.invoke('plugins:list'),
   pluginInstallFolder: (): Promise<PluginManifest | null> => ipcRenderer.invoke('plugins:install-folder'),

@@ -21,6 +21,8 @@ export interface Settings {
   toolDefaults: Record<string, ToolStyle>
   /** Named tool presets: a kind and a style, shown in the Presets list. */
   toolPresets: ToolPreset[]
+  /** Update checks: off unless turned on, and only to the address given. */
+  updates: { check: boolean; feed: string }
 }
 
 /** Mirrors ToolStyle in the renderer's annotations.ts. */
@@ -66,7 +68,8 @@ const defaults = (): Settings => ({
   paneSide: 'left',
   spellcheck: true,
   toolDefaults: {},
-  toolPresets: []
+  toolPresets: [],
+  updates: { check: false, feed: '' }
 })
 
 let current: Settings | null = null
@@ -104,7 +107,11 @@ function sanitise(raw: Partial<Settings>): Settings {
           .filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.kind === 'string' && /^[a-z]{2,20}$/.test(p.kind))
           .slice(0, 100)
           .map((p) => ({ id: p.id.slice(0, 64), name: p.name.slice(0, 80), kind: p.kind, style: cleanStyle(p.style) }))
-      : []
+      : [],
+    updates: {
+      check: typeof raw.updates?.check === 'boolean' ? raw.updates.check : false,
+      feed: typeof raw.updates?.feed === 'string' ? raw.updates.feed.trim().slice(0, 300) : ''
+    }
   }
 }
 

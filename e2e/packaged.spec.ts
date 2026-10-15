@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createServer } from 'node:http'
 import { join, resolve } from 'node:path'
 
 /**
@@ -113,6 +114,45 @@ test('the packaged program runs a batch from the command line', async () => {
     const text = execFileSync('python', ['-c', 'import sys, pymupdf\nprint(pymupdf.open(sys.argv[1])[0].get_text())', join(dir, 'out', 'a_processed.pdf')]).toString()
     expect(text).toContain('PACKAGED')
   } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+  }
+})
+
+test('the packaged program finds a newer version at an update address, only when asked', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'openpdf-e2e-'))
+  const pdf = join(dir, 'a.pdf')
+  execFileSync('python', ['-c', 'import sys, pymupdf\nd = pymupdf.open()\nd.new_page(width=300, height=300)\nd.save(sys.argv[1])', pdf])
+  const sha = Buffer.alloc(64, 7).toString('base64')
+  const requests: string[] = []
+  const server = createServer((req, res) => {
+    requests.push(req.url ?? '')
+    if (req.url?.startsWith('/feed/latest.yml')) {
+      res.setHeader('Content-Type', 'text/yaml')
+      res.end(`version: 9.9.9\nfiles:\n  - url: OpenPDF-Setup-9.9.9.exe\n    sha512: ${sha}\n    size: 1000\npath: OpenPDF-Setup-9.9.9.exe\nsha512: ${sha}\nreleaseDate: '2026-10-15T00:00:00.000Z'\n`)
+    } else {
+      res.statusCode = 404
+      res.end()
+    }
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  const port = (server.address() as { port: number }).port
+  const app = await launch(dir, [pdf])
+  try {
+    const win = await app.firstWindow()
+    await expect(win.locator('.page')).toHaveCount(1)
+    // Nothing was requested just by starting.
+    await win.waitForTimeout(1500)
+    expect(requests).toEqual([])
+    await win.getByRole('button', { name: 'Settings' }).click()
+    const section = win.getByRole('dialog', { name: 'Settings' }).getByRole('region', { name: 'Updates and privacy' })
+    await section.getByRole('textbox', { name: 'Update address' }).fill(`http://127.0.0.1:${port}/feed`)
+    await section.getByRole('button', { name: 'Check now' }).click()
+    await expect(section.getByRole('status')).toContainText('Version 9.9.9 is available', { timeout: 30000 })
+    await expect(section.getByRole('button', { name: 'Download' })).toBeVisible()
+    expect(requests.some((r) => r.includes('latest.yml'))).toBe(true)
+  } finally {
+    await app.close()
+    server.close()
     rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
   }
 })

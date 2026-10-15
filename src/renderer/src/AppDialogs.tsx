@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { UpdateStatus } from '../../main/updates'
 import type { Settings } from '../../preload'
 
 /** A centred modal panel. Esc and a click on the backdrop close it. */
@@ -53,6 +54,75 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   )
 }
 
+function UpdateSettings({ settings, onChange }: { settings: Settings; onChange: (patch: Partial<Settings>) => void }) {
+  const [status, setStatus] = useState<UpdateStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const run = async (fn: () => Promise<UpdateStatus>) => {
+    setBusy(true)
+    try {
+      setStatus(await fn())
+    } finally {
+      setBusy(false)
+    }
+  }
+  const text = (s: UpdateStatus): string =>
+    s.state === 'none'
+      ? `You have the latest version (${s.current}).`
+      : s.state === 'available'
+        ? `Version ${s.version} is available (you have ${s.current}).`
+        : s.state === 'downloading'
+          ? `Downloading… ${s.percent ?? 0}%`
+          : s.state === 'ready'
+            ? `Version ${s.version} is ready. Restart to install it.`
+            : (s.message ?? '')
+  return (
+    <section aria-label="Updates and privacy">
+      <h3 style={{ marginBottom: 4 }}>Updates and privacy</h3>
+      <p className="muted small">
+        OpenPDF collects no usage data and sends nothing about you or your documents. It uses the network only when you ask it to: for updates (off unless you turn
+        them on below), to download an OCR language, to ask a time-stamp server, or to read a plugin catalogue.
+      </p>
+      <label className="inline">
+        <input
+          type="checkbox"
+          checked={settings.updates.check}
+          onChange={(e) => onChange({ updates: { ...settings.updates, check: e.target.checked } })}
+        />{' '}
+        Check for updates when OpenPDF starts
+      </label>
+      <div className="form-grid" style={{ marginTop: 6 }}>
+        <label htmlFor="set-update-feed">Update address</label>
+        <input
+          id="set-update-feed"
+          placeholder="https://… (the folder with latest.yml)"
+          value={settings.updates.feed}
+          onChange={(e) => onChange({ updates: { ...settings.updates, feed: e.target.value } })}
+        />
+      </div>
+      <div className="batch-actionbar">
+        <button type="button" disabled={busy} onClick={() => void run(() => window.openpdf.checkForUpdates(settings.updates.feed))}>
+          Check now
+        </button>
+        {status?.state === 'available' && (
+          <button type="button" disabled={busy} onClick={() => void run(() => window.openpdf.downloadUpdate())}>
+            Download
+          </button>
+        )}
+        {status?.state === 'ready' && (
+          <button type="button" className="primary" onClick={() => void window.openpdf.installUpdate()}>
+            Restart and install
+          </button>
+        )}
+      </div>
+      {status && (
+        <p role="status" className={status.state === 'error' ? 'error-text' : 'muted'}>
+          {text(status)}
+        </p>
+      )}
+    </section>
+  )
+}
+
 export function SettingsDialog({
   settings,
   onChange,
@@ -91,6 +161,7 @@ export function SettingsDialog({
         Recovery snapshots are kept only until you save or close a document. After a crash they are offered back the next
         time OpenPDF starts.
       </p>
+      <UpdateSettings settings={settings} onChange={onChange} />
     </Modal>
   )
 }

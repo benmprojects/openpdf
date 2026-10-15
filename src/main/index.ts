@@ -12,6 +12,7 @@ import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
 import { deleteAction, expandPdfs, listActions, readPdf as readBatchPdf, saveAction, writeResult } from './batchIo'
 import { HELP, loadAction, parseCli } from './cli'
 import { listPlaces } from './places'
+import { checkForUpdates, downloadUpdate, installUpdate, updateStatus } from './updates'
 import type { Place } from '../shared/places'
 import { fetchCatalogue, installFromCatalogue, installFromFolder, installFromZip, listPlugins, uninstallPlugin, type CatalogueEntry } from './plugins'
 import type { BatchAction } from '../renderer/src/batch'
@@ -278,6 +279,12 @@ ipcMain.handle('scan:acquire', async (_e, o: ScanOptions) => {
   if (e2e && process.env.OPENPDF_E2E_SCAN) return Promise.all(process.env.OPENPDF_E2E_SCAN.split('|').map(async (f) => new Uint8Array(await readFile(f))))
   return scan(o)
 })
+
+/** Updates (opt in): check, download, install. */
+ipcMain.handle('updates:check', async (_e, feed: unknown) => checkForUpdates(typeof feed === 'string' ? feed : ''))
+ipcMain.handle('updates:download', () => downloadUpdate())
+ipcMain.handle('updates:install', () => installUpdate())
+ipcMain.handle('updates:status', () => updateStatus())
 
 /** Plugins: installed under the user's data folder, from a folder, a zip or a catalogue. */
 const pluginsRoot = () => join(app.getPath('userData'), 'plugins')
@@ -737,6 +744,9 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null) // the ribbon replaces Electron's default File/Edit/View/Window menu
   if (cli) return runCli(cli)
   createWindow()
+  // Only when turned on, and only the request for the feed file.
+  const u = (await loadSettings()).updates
+  if (u.check && u.feed && !e2e) void checkForUpdates(u.feed)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
