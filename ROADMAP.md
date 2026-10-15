@@ -31,7 +31,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Hand and select tools
 - [x] Snapshot tool (drag a box; copies a 200 dpi PNG, turned with the view)
 - [x] Print: page ranges, copies, fit or actual size, auto-rotate (output checked through the test hook; the system print dialog itself is not yet tested)
-- [ ] Booklet and N-up printing, presentation/full-screen mode
+- [x] Booklet and N-up printing (2, 4, 6, 9, 16 per sheet), presentation mode (F5, full screen)
 - [ ] Read-aloud (system TTS), reading mode, accessibility (screen-reader, high contrast)
 - [ ] Rulers, grid, guides, measurement tools (distance, perimeter, area)
 

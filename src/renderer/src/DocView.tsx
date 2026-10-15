@@ -27,6 +27,7 @@ import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout
 import { GAP, PAD, Viewer, type Tool, type ViewerHandle } from './Viewer'
 import { encodeRotatedPng, printDocument } from './print'
 import type { SearchJump } from './SearchPanel'
+import { Presentation } from './Presentation'
 import { readLayers, withHiddenLayers, type Layer } from './layers'
 import {
   ArrowLeftRight,
@@ -52,6 +53,7 @@ import {
   MousePointer2,
   MoveUpRight,
   PanelLeft,
+  Presentation as PresentationIcon,
   PanelRight,
   Pencil,
   Printer,
@@ -769,6 +771,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   /** Merge: append whole files to the end of this document. */
   const mergeFiles = () => void runPageOp({ kind: 'insert', at: pages.length }, [])
 
+  // ---- Presentation ---------------------------------------------------------------------------------
+  // Shows the document as Save would write it (pending annotations included) and with the view's layers.
+  const [presenting, setPresenting] = useState<{ bytes: Uint8Array; start: number } | null>(null)
+  const present = useCallback(async () => {
+    if (!pages.length) return
+    let src = bytes
+    try {
+      if (annotsDirty && !password) src = await writeAnnotations(bytes, annots.filter(changed), deleted)
+      if (hiddenLayers && !password) src = await withHiddenLayers(src, hiddenLayers)
+    } catch {
+      src = bytes
+    }
+    setPresenting({ bytes: src, start: currentPage })
+  }, [pages.length, bytes, annotsDirty, password, annots, deleted, hiddenLayers, currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ---- Print ----------------------------------------------------------------------------------------
   const [printDialog, setPrintDialog] = useState<PrintChoice | null>(null)
   const [printing, setPrinting] = useState<{ done: number; total: number; ctrl: AbortController } | null>(null)
@@ -959,6 +976,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       } else if (ctrl && e.shiftKey && (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract')) {
         e.preventDefault()
         rotateView(-1)
+      } else if (e.key === 'F5' && !ctrl) {
+        e.preventDefault()
+        void present()
       } else if (ctrl && k === 'p') {
         e.preventDefault()
         openPrint()
@@ -978,7 +998,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, searchOpen, tool, selectedAnnot, openSearch, rotateView, openPrint, printDialog, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
+  }, [active, searchOpen, tool, selectedAnnot, openSearch, rotateView, openPrint, printDialog, present, stepMatch, stepZoom, save, removeAnnot, history.undo, history.redo, history.canUndo, history.canRedo, pageUndo.length, pageRedo.length, undoPageEdit, redoPageEdit])
 
   // ---- Page box -------------------------------------------------------------------------------------
   const [pageText, setPageText] = useState('1')
@@ -1187,6 +1207,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={ZoomIn} label="Zoom in" onClick={() => stepZoom(1)} disabled={!pages.length} title="Zoom in (Ctrl++)" />
                 </RStack>
               </RGroup>
+              <RGroup label="Show">
+                <RB big icon={PresentationIcon} label="Present" onClick={() => void present()} disabled={!pages.length} title="Full-screen presentation from this page (F5). Esc to leave" />
+              </RGroup>
               <RGroup label="Rotate view">
                 <RB big icon={RotateCcw} label="Left" ariaLabel="Rotate view anticlockwise" onClick={() => rotateView(-1)} disabled={!pages.length} title="Rotate view anticlockwise (Ctrl+Shift+−). The file is not changed" />
                 <RB big icon={RotateCw} label="Right" ariaLabel="Rotate view clockwise" onClick={() => rotateView(1)} disabled={!pages.length} title="Rotate view clockwise (Ctrl+Shift++). The file is not changed" />
@@ -1237,6 +1260,18 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           </span>
           <IconButton icon={X} className="close" label="Close find" title="Close (Esc)" onClick={() => setSearchOpen(false)} />
         </div>
+      )}
+
+      {presenting && (
+        <Presentation
+          bytes={presenting.bytes}
+          password={password}
+          start={presenting.start}
+          onExit={(p) => {
+            setPresenting(null)
+            goTo(p)
+          }}
+        />
       )}
 
       {printDialog && (

@@ -953,6 +953,36 @@ kbd {
 .page canvas {
   display: block;
 }
+.presentation {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  background: #000;
+  cursor: default;
+}
+.presentation.idle {
+  cursor: none;
+}
+.presentation canvas {
+  display: block;
+  background: #fff;
+}
+.presentation-counter {
+  position: fixed;
+  right: 16px;
+  bottom: 12px;
+  padding: 2px 8px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 4px;
+  font-size: 12px;
+  transition: opacity 0.3s;
+}
+.presentation.idle .presentation-counter {
+  opacity: 0;
+}
 .page-row {
   display: flex;
   align-items: center;

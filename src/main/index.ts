@@ -165,6 +165,11 @@ ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array
   return writeDocument(res.filePath, data)
 })
 
+/** Presentation mode. */
+ipcMain.handle('window:fullscreen', (e, on: boolean) => {
+  BrowserWindow.fromWebContents(e.sender)?.setFullScreen(!!on)
+})
+
 /** Puts a PNG on the clipboard (snapshot tool). */
 ipcMain.handle('clipboard:write-image', async (_e, png: Uint8Array) => {
   const sig = [0x89, 0x50, 0x4e, 0x47]

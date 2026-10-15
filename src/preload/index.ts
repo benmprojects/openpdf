@@ -23,6 +23,7 @@ const api = {
   /** Asks for a folder and writes the files into it, never overwriting. Resolves null if cancelled. */
   saveMany: (files: { name: string; data: Uint8Array }[]): Promise<{ dir: string; written: string[] } | null> =>
     ipcRenderer.invoke('file:save-many', files),
+  setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
   copyImage: (png: Uint8Array): Promise<void> => ipcRenderer.invoke('clipboard:write-image', png),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('file:pick-folder'),
   listPdfs: (dir: string, recursive: boolean): Promise<string[]> => ipcRenderer.invoke('file:list-pdfs', dir, recursive),
