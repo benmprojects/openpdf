@@ -24,6 +24,8 @@ Electron + Vite + React + TypeScript. `npm run dev | build | typecheck`.
 - `npm run lint`: ESLint (flat config). typescript-eslint does not support TypeScript 7 yet, so `eslint.config.mjs` shims `typescript` to `@typescript/typescript6`; some react-hooks rules are warnings only. Installing needs `npm i --legacy-peer-deps`.
 - `npx tsx scripts/annot-check.mts in.pdf out.pdf prefix`: writes every annotation kind, renders through PDFium, re-imports, compares geometry.
 - `npx tsx scripts/hide-check.mts file.pdf`: hiding an annotation leaves the page intact.
+- `bash scripts/corpus.sh`: generated corpus plus a short PDF fuzz (part of check.sh). `npx tsx scripts/corpus-check.mts <folder>` checks any folder of PDFs; `npx tsx scripts/fuzz-pdf.mts <folder> --runs N --seed S` fuzzes one.
+- `python scripts/make-big-pdf.py out.pdf 500`: large file for performance checks (`e2e/perf.spec.ts`).
 - `python scripts/make-test-pdf.py out.pdf`: test PDF with text and bookmarks.
 - UI end-to-end: launch `npx electron . --remote-debugging-port=9333 file.pdf` and drive it with `scripts/cdp.mjs` (Chrome DevTools Protocol over WebSocket). The test window is only about 800 px tall: keep click coordinates inside it, and re-measure the page rectangle before each action because the toolbar can wrap and shift the layout.
 - Work on a copy of any test PDF; Save overwrites the file.

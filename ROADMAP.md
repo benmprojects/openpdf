@@ -101,10 +101,10 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [ ] Optional cloud connectors (OneDrive, SharePoint, Google Drive)
 
 ## Phase 9: Polish and release
-- [ ] Performance targets: open a 500-page file under 2 s to first page; memory cap on huge files
+- [x] Performance targets: open a 500-page file under 2 s to first page; memory cap on huge files (`e2e/perf.spec.ts`: about 0.5 s for 500 pages and 0.3 s for a page with 2000 annotations; renderer about 400 MB after scrolling all 500 pages, test limit 1.5 GB)
 - [ ] Localisation (English-AU first), i18n framework
 - [ ] Accessibility audit, installer, auto-update, telemetry off by default
-- [ ] Test corpus (public-domain PDFs plus pdf.js and PDFium test suites), fuzz tests on parsers
+- [ ] Test corpus (public-domain PDFs plus pdf.js and PDFium test suites), fuzz tests on parsers. Done: generated corpus (`scripts/make-corpus.py`, 23 files: damaged, encrypted, inherited page trees, extreme sizes, layers, forms, CJK, 2000 annotations) checked by `scripts/corpus-check.mts`; seeded parser fuzz tests (`fuzz.test.ts`); PDF fuzzing (`scripts/fuzz-pdf.mts`); both run in `check.sh`. Still to do: run `scripts/fetch-corpus.sh` (pdf.js and PDFium suites) and fix what `corpus-check` finds
 
 ## Risks and open questions
 - **True text editing** is the hardest feature. PDFium has no reflow engine, so expect a staged approach (replace-within-line first).

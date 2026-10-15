@@ -94,6 +94,13 @@ Everything below is committed (see `git log`). Read `CLAUDE.md` (rules, testing,
 - `npm test` (54 unit tests), `npm run e2e` (6 specs; run `npm run build` first), `npm run lint` (0 errors, 27 warnings), `npx tsc --noEmit`.
 - An e2e test that leaves a document unsaved must set `OPENPDF_E2E_DISCARD=1`, or `app.close()` hangs on the native prompt.
 - If an Electron test window is left open after a failed run, kill only processes whose command line contains `openpdf-e2e` or the scratchpad path.
+- Corpus and fuzzing (Phase 9):
+  - `bash scripts/corpus.sh [runs]` builds the generated corpus (`make-corpus.py`), checks it with `corpus-check.mts --strict`, then fuzzes it (`fuzz-pdf.mts`). `check.sh` runs it with 150 fuzz runs.
+  - `corpus-check.mts <folder>` opens, renders, reads and re-saves every PDF under a folder. Statuses are ok, refused (PDFium will not open it), warn (it opens, but cannot be saved or loses annotations on save) and FAIL (crash, hang, or our code threw).
+  - `fuzz-pdf.mts` writes failing inputs to `--out` for replay; a WebAssembly trap restarts PDFium. A 3000-run fuzz found no failures (15/10/2026).
+  - `bash scripts/fetch-corpus.sh <folder>` sparse-clones the pdf.js and PDFium test PDFs. It has not been run yet. Keep that folder out of the repo.
+  - `src/renderer/src/fuzz.test.ts`: seeded fuzz of page ranges, FDF, page labels and bookmarks, PNG prediction, qpdf JSON and the font registry.
+- Performance: `e2e/perf.spec.ts` times Open to first page drawn for 500 pages (`scripts/make-big-pdf.py`) and for a page with 2000 annotations, and checks renderer memory after scrolling.
 
 ## Hand-test checklist (needs a person)
 - Signing with a certificate from the Windows store, a smart card or a token (the tests only use a .pfx file); then open the result in Adobe Acrobat and check it shows the signer (it will say the signer is unknown unless the certificate is trusted there).
