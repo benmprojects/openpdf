@@ -20,6 +20,8 @@ export interface RenderOptions {
   signal?: AbortSignal
   /** Render only this pixel region of the page as it would be rendered whole at the given scale. */
   region?: { x: number; y: number; w: number; h: number }
+  /** Draw the document's form fields (default true). False when the app draws them itself as controls. */
+  forms?: boolean
 }
 
 type Distribute<T> = T extends unknown ? Omit<T, 'id'> : never
@@ -31,6 +33,7 @@ interface QueuedRender {
   seq: number
   signal?: AbortSignal
   region?: { x: number; y: number; w: number; h: number }
+  forms: boolean
   resolve: (r: RenderedPage) => void
   reject: (e: Error) => void
 }
@@ -80,7 +83,7 @@ export class PdfClient {
   render(page: number, scale: number, opts: RenderOptions = {}): Promise<RenderedPage> {
     return new Promise((resolve, reject) => {
       if (opts.signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
-      this.queue.push({ page, scale, priority: opts.priority ?? 0, seq: this.seq++, signal: opts.signal, region: opts.region, resolve, reject })
+      this.queue.push({ page, scale, priority: opts.priority ?? 0, seq: this.seq++, signal: opts.signal, region: opts.region, forms: opts.forms !== false, resolve, reject })
       this.pump()
     })
   }
@@ -102,7 +105,7 @@ export class PdfClient {
       const job = this.queue.splice(bestIdx, 1)[0]
       this.inFlight++
       const r = job.region
-      this.call(r ? { type: 'renderRegion', page: job.page, scale: job.scale, ...r } : { type: 'render', page: job.page, scale: job.scale })
+      this.call(r ? { type: 'renderRegion', page: job.page, scale: job.scale, ...r, forms: job.forms } : { type: 'render', page: job.page, scale: job.scale, forms: job.forms })
         .then((res) => {
           if (job.signal?.aborted) job.reject(new DOMException('Aborted', 'AbortError'))
           else if (res.ok && res.type === 'render') job.resolve(res)

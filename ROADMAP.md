@@ -71,7 +71,7 @@ Legend: `[ ]` not started. P0 = must have, P1 = should have, P2 = later.
 - [x] Spell check (the browser engine underlines misspelled words in text boxes; right-click gives suggestions and Add to dictionary; Settings can turn it off; Australian English when the system has it)
 
 ## Phase 5: Forms (P1)
-- [ ] Fill AcroForms (text, checkbox, radio, combo, list, signature)
+- [x] Fill AcroForms (text, checkbox, radio, combo, list; signature fields are shown but signing is Phase 6): Forms tab. Fields are real controls over the page (PDFium draws no widgets), values are written with pdf-lib on save, print and page edits
 - [ ] Form field designer (all field types), tab order, calculation and format scripts
 - [ ] Flatten, reset, import and export form data (FDF, XFDF, CSV, XML)
 - [ ] Auto-detect form fields

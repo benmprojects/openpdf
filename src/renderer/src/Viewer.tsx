@@ -5,6 +5,7 @@ import type { ImageObject, PageLink, PageSize, PdfClient } from './pdfClient'
 import type { TextBlock } from './textBlocks'
 import { TextEditLayer } from './TextEditLayer'
 import { ObjectEditLayer } from './ObjectEditLayer'
+import { FormLayer, type FormsView } from './FormLayer'
 import type { Matrix6 } from './content'
 import type { PageText } from './pdfiumRaw'
 import {
@@ -144,6 +145,8 @@ interface Props {
   onFollowLink: (link: PageLink) => void
   /** Edit Text tool: a block of text on a page was given new text. */
   onEditText: (page: number, block: TextBlock, total: number, text: string) => void
+  /** When set, the document's form fields are drawn as controls over each page (the page images leave them out). */
+  forms?: FormsView
   /** Edit Image tool: an image was moved or resized (page-space change) or deleted (null). */
   onChangeImage: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
   onReplaceImage: (page: number, obj: ImageObject, total: number) => void
@@ -212,6 +215,7 @@ export function Viewer({
   onChangeImage,
   onReplaceImage,
   onChangePath,
+  forms,
   textEditReady,
   onLinkRect,
   onCropRect,
@@ -1081,6 +1085,7 @@ export function Viewer({
                 onChangeImage={onChangeImage}
                 onReplaceImage={onReplaceImage}
                 onChangePath={onChangePath}
+                forms={forms}
                 textEditReady={textEditReady}
                 onVisible={loadLinks}
                 eraseTrail={eraseTrail && eraseTrail.page === i ? eraseTrail : undefined}
@@ -1152,6 +1157,7 @@ interface PageViewProps {
   onChangeImage: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
   onReplaceImage: (page: number, obj: ImageObject, total: number) => void
   onChangePath: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
+  forms?: FormsView
   textEditReady: boolean
   /** Called when the page comes near the view. */
   onVisible: (page: number) => void
@@ -1183,7 +1189,8 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, forms, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+  const hasForms = !!forms && forms.fields.length > 0
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const [visible, setVisible] = useState(false)
@@ -1222,7 +1229,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
     // Debounce so rapid zoom changes do not queue a render per step.
     const timer = setTimeout(() => {
       client
-        .render(index, scale, { signal: ctrl.signal })
+        .render(index, scale, { signal: ctrl.signal, forms: !hasForms })
         .then((out) => paint(canvas.current, out, ctrl.signal))
         .catch(() => {})
     }, 60)
@@ -1230,7 +1237,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [client, index, zoom, visible, epoch, tiled, fullScale, size.width, size.height])
+  }, [client, index, zoom, visible, epoch, tiled, fullScale, size.width, size.height, hasForms])
 
   useEffect(() => {
     setTile(null)
@@ -1269,7 +1276,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
       ctrl?.abort()
       const c = (ctrl = new AbortController())
       client
-        .render(index, fullScale, { signal: c.signal, region })
+        .render(index, fullScale, { signal: c.signal, region, forms: !hasForms })
         .then((out) => {
           if (paint(tileCanvas.current, out, c.signal)) {
             shown = region
@@ -1289,7 +1296,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
       ctrl?.abort()
       sc.removeEventListener('scroll', onScroll)
     }
-  }, [client, index, visible, tiled, fullScale, zoom, rotation, size, scroller, epoch])
+  }, [client, index, visible, tiled, fullScale, zoom, rotation, size, scroller, epoch, hasForms])
 
   // Text is also loaded for every page near the view, for the screen-reader text layer.
   useEffect(() => {
@@ -1367,6 +1374,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
           onText={annotProps.onAnnotText}
         />
       )}
+      {forms && <FormLayer page={index} zoom={zoom} forms={forms} interactive={annotProps.tool === 'select'} />}
       {annotProps.tool === 'edittext' && textEditReady && <TextEditLayer client={client} page={index} zoom={zoom} onCommit={onEditText} />}
       {annotProps.tool === 'editimage' && textEditReady && <ObjectEditLayer kind="image" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangeImage} onReplace={onReplaceImage} />}
       {annotProps.tool === 'editpath' && textEditReady && <ObjectEditLayer kind="path" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangePath} />}

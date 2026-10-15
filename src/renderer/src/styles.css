@@ -2386,3 +2386,69 @@ button.compare-item:hover {
 .print-dialog input.copies {
   width: 4.5em;
 }
+
+/* ---- Form fields ---- */
+.form-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.form-layer.inert .form-widget {
+  pointer-events: none;
+}
+.form-widget {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 2px;
+  pointer-events: auto;
+  font-family: Helvetica, Arial, sans-serif;
+  line-height: 1.15;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+  overflow: hidden;
+}
+.form-layer.highlight .form-widget:not(.readonly):not(.button) {
+  /* A tint over the field's own background (white or coloured). */
+  background-image: linear-gradient(rgba(110, 160, 255, 0.22), rgba(110, 160, 255, 0.22));
+}
+.form-widget.required {
+  border-color: #d93025;
+}
+.form-widget:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}
+.form-widget.text:not(textarea) {
+  white-space: nowrap;
+}
+.form-widget.checkbox,
+.form-widget.radio {
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.form-widget.readonly {
+  cursor: default;
+}
+.form-widget.button,
+.form-widget.signature {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: #e3e5e8;
+  color: #1c2027;
+  border: 1px solid #8a8f98;
+  cursor: pointer;
+}
+.form-widget.signature {
+  background: rgba(110, 160, 255, 0.18);
+  border-style: dashed;
+  cursor: default;
+}
+.ribbon-note {
+  align-self: center;
+  padding: 0 12px;
+}

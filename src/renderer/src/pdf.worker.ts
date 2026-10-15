@@ -27,8 +27,8 @@ import {
 
 export type WorkerRequest =
   | { id: number; type: 'load'; data: Uint8Array; password?: string }
-  | { id: number; type: 'render'; page: number; scale: number }
-  | { id: number; type: 'renderRegion'; page: number; scale: number; x: number; y: number; w: number; h: number }
+  | { id: number; type: 'render'; page: number; scale: number; forms?: boolean }
+  | { id: number; type: 'renderRegion'; page: number; scale: number; x: number; y: number; w: number; h: number; forms?: boolean }
   | { id: number; type: 'outline' }
   | { id: number; type: 'text'; page: number }
   | { id: number; type: 'annots' }
@@ -103,7 +103,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (msg.type === 'render') {
       if (!doc) throw new Error('No document loaded')
       const page = doc.getPage(msg.page)
-      const out = await page.render({ scale: msg.scale, render: 'bitmap', renderFormFields: true })
+      const out = await page.render({ scale: msg.scale, render: 'bitmap', renderFormFields: msg.forms !== false })
       page.close()
       reply({ id: msg.id, ok: true, type: 'render', width: out.width, height: out.height, data: out.data }, [
         out.data.buffer as ArrayBuffer
@@ -111,7 +111,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (msg.type === 'renderRegion') {
       if (!doc || !library) throw new Error('No document loaded')
       const page = doc.getPage(msg.page)
-      const data = renderRegion(library, doc, page, msg.scale, msg.x, msg.y, msg.w, msg.h)
+      const data = renderRegion(library, doc, page, msg.scale, msg.x, msg.y, msg.w, msg.h, msg.forms !== false)
       page.close()
       reply({ id: msg.id, ok: true, type: 'render', width: msg.w, height: msg.h, data }, [data.buffer as ArrayBuffer])
     } else if (msg.type === 'attachments') {

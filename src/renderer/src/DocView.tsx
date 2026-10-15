@@ -70,6 +70,7 @@ import { replaceBlock, weightAndSlant } from './textEdit'
 import { addImage, replaceImage, transformImage } from './imageEdit'
 import { transformPath } from './pathEdit'
 import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
+import { applyFormValues, readForm, type FormField, type FormValue } from './forms'
 import { DocPropsDialog } from './DocPropsDialog'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
@@ -243,11 +244,12 @@ interface Props {
   jump?: SearchJump
 }
 
-type RibbonTab = 'file' | 'home' | 'edit' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
+type RibbonTab = 'file' | 'home' | 'edit' | 'forms' | 'comment' | 'draw' | 'measure' | 'organise' | 'layout' | 'view'
 const RIBBON_TABS: [RibbonTab, string][] = [
   ['file', 'File'],
   ['home', 'Home'],
   ['edit', 'Edit'],
+  ['forms', 'Forms'],
   ['comment', 'Comment'],
   ['draw', 'Draw'],
   ['measure', 'Measure'],
@@ -482,6 +484,34 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [extraSel, setExtraSel] = useState<ReadonlySet<number>>(new Set())
   /** The stacking order was changed and must be written on save. */
   const [zDirty, setZDirty] = useState(false)
+
+  // ---- Form fields ----------------------------------------------------------------------------------
+  const [formFields, setFormFields] = useState<FormField[]>([])
+  /** Values typed into fields since the file was last written: name to value. */
+  const [formValues, setFormValues] = useState<ReadonlyMap<string, FormValue>>(new Map())
+  const [highlightFields, setHighlightFields] = useState(true)
+  const formFieldsRef = useRef<FormField[]>([])
+  formFieldsRef.current = formFields
+  const setFormValue = useCallback((name: string, v: FormValue) => {
+    setFormValues((prev) => {
+      const f = formFieldsRef.current.find((x) => x.name === name)
+      const next = new Map(prev)
+      if (f && JSON.stringify(f.initial) === JSON.stringify(v)) next.delete(name)
+      else next.set(name, v)
+      return next
+    })
+  }, [])
+  const resetForm = () => {
+    const empty = (f: FormField): FormValue => (f.type === 'checkbox' ? false : f.type === 'list' ? [] : '')
+    const next = new Map<string, FormValue>()
+    for (const f of formFields) {
+      if (f.readOnly || f.type === 'button' || f.type === 'signature') continue
+      const e = empty(f)
+      if (JSON.stringify(e) !== JSON.stringify(f.initial)) next.set(f.name, e)
+    }
+    setFormValues(next)
+    setNotice({ kind: 'info', text: 'Form cleared. Save to keep the changes.' })
+  }
   const selectedIds = useMemo(() => new Set<number>([...(selectedAnnot !== null ? [selectedAnnot] : []), ...extraSel]), [selectedAnnot, extraSel])
   const selIdsRef = useRef<ReadonlySet<number>>(selectedIds)
   selIdsRef.current = selectedIds
@@ -662,12 +692,41 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }, [annots])
   const changed = (a: Annot) => !a.origin || baseline.current.get(a.id)?.sig !== signature(a)
   const hasNewReplies = (a: Annot) => !!a.replies?.some((r) => !r.origin)
-  const annotsDirty = deleted.length > 0 || annots.some(changed) || annots.some(hasNewReplies) || zDirty
-  /** Writes the pending annotation edits (and new replies) into `src`. */
-  const applyEdits = (src: Uint8Array) => {
-    // A changed stacking order needs every annotation in order, not just the changed ones.
-    const list = zDirty ? annots : annots.filter((a) => changed(a) || hasNewReplies(a))
-    return writeAnnotations(src, list, deleted, new Set(annots.filter(changed).map((a) => a.id)), zDirty)
+  // Read the form fields whenever the file contents change (not for password-protected files: pdf-lib cannot parse them).
+  useEffect(() => {
+    if (password) {
+      setFormFields([])
+      return
+    }
+    let cancelled = false
+    readForm(bytes)
+      .then((f) => !cancelled && setFormFields(f))
+      .catch(() => !cancelled && setFormFields([]))
+    return () => {
+      cancelled = true
+    }
+  }, [bytes, password])
+  // The pages are drawn without their fields while the controls stand in for them, so draw them again when that changes.
+  const hasFormFields = formFields.length > 0
+  useEffect(() => setEpoch((e) => e + 1), [hasFormFields])
+
+  const annotWork = deleted.length > 0 || annots.some(changed) || annots.some(hasNewReplies) || zDirty
+  const annotsDirty = annotWork || formValues.size > 0
+  /** Writes the pending annotation edits (and new replies) and filled-in form values into `src`. */
+  const applyEdits = async (src: Uint8Array) => {
+    let out = src
+    if (annotWork) {
+      // A changed stacking order needs every annotation in order, not just the changed ones.
+      const list = zDirty ? annots : annots.filter((a) => changed(a) || hasNewReplies(a))
+      out = await writeAnnotations(out, list, deleted, new Set(annots.filter(changed).map((a) => a.id)), zDirty)
+    }
+    if (formValues.size) {
+      // Text the standard font cannot show (accents, non-Latin scripts) is drawn with an installed font.
+      const wide = [...formValues.values()].some((v) => [v].flat().some((s) => typeof s === 'string' && [...s].some((ch) => ch.charCodeAt(0) > 0xff)))
+      const unicode = wide ? await window.openpdf.findFont('Arial', false, false).catch(() => null) : null
+      out = await applyFormValues(out, formValues, unicode?.data)
+    }
+    return out
   }
   const dirty = annotsDirty || bytes !== savedBytes
   useEffect(() => onMeta({ dirty }), [dirty, onMeta])
@@ -1151,6 +1210,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         baseline.current = new Map() // the reloaded document is re-imported with fresh positions
         history.reset([])
         setZDirty(false)
+        setFormValues(new Map())
         setExtraSel(new Set())
         setSelectedAnnot(null)
         setEditingAnnot(null)
@@ -1163,7 +1223,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setSaving(false)
       }
     },
-    [saving, password, annots, deleted, annotsDirty, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
+    [saving, password, annots, deleted, annotsDirty, formValues, zDirty, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   // ---- Page organisation ----------------------------------------------------------------------------
@@ -1171,6 +1231,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     baseline.current = new Map()
     history.reset([])
     setZDirty(false)
+    setFormValues(new Map())
     setExtraSel(new Set())
     setSelectedAnnot(null)
     setEditingAnnot(null)
@@ -1200,7 +1261,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setBusy(false)
       }
     },
-    [busy, saving, password, annotsDirty, bytes, annots, deleted, swapBytes] // eslint-disable-line react-hooks/exhaustive-deps
+    [busy, saving, password, annotsDirty, formValues, zDirty, bytes, annots, deleted, swapBytes] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   const runOptimise = async (o: OptimiseOptions) => {
@@ -1325,7 +1386,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         }
       }
     },
-    [pages.length, applyPageEdit, annotsDirty, bytes, name] // eslint-disable-line react-hooks/exhaustive-deps
+    [pages.length, applyPageEdit, annotsDirty, formValues, zDirty, bytes, name] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
   const submitPageDialog = async () => {
@@ -1659,7 +1720,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       src = bytes
     }
     setPresenting({ bytes: src, start: currentPage })
-  }, [pages.length, bytes, annotsDirty, password, annots, deleted, hiddenLayers, currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pages.length, bytes, annotsDirty, formValues, zDirty, password, annots, deleted, hiddenLayers, currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Print ----------------------------------------------------------------------------------------
   const [printDialog, setPrintDialog] = useState<PrintChoice | null>(null)
@@ -2232,6 +2293,15 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label="Edit">
                 <RStack>{undoButtons}</RStack>
               </RGroup>
+            </>
+          )}
+          {ribbon === 'forms' && (
+            <>
+              <RGroup label={formFields.length ? `Fill (${formFields.length} field${formFields.length === 1 ? '' : 's'})` : 'Fill'}>
+                <RB big icon={Highlighter} label="Highlight fields" onClick={() => setHighlightFields(!highlightFields)} pressed={highlightFields} disabled={!formFields.length} title="Tint form fields so they are easy to find" />
+                <RB big icon={Eraser} label="Clear form" onClick={resetForm} disabled={!formFields.length || busy} title="Empty every field (you can undo by closing without saving)" />
+              </RGroup>
+              {!formFields.length && <p className="muted ribbon-note">This document has no form fields.</p>}
             </>
           )}
           {ribbon === 'layout' && (
@@ -2824,6 +2894,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               annots={annots}
               selectedAnnot={selectedAnnot}
               extraSelected={extraSel}
+              forms={formFields.length ? { fields: formFields, values: formValues, onChange: setFormValue, highlight: highlightFields } : undefined}
               editingAnnot={editingAnnot}
               onSelectAnnot={selectAnnot}
               onMoveAnnot={moveAnnot}

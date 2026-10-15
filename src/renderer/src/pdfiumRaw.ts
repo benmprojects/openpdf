@@ -535,7 +535,9 @@ export function renderRegion(
   x: number,
   y: number,
   w: number,
-  h: number
+  h: number,
+  /** Draw the form fields too; false when the app shows them as its own controls. */
+  forms = true
 ): Uint8Array {
   const m = raw(lib)
   const p = pageHandle(page)
@@ -552,7 +554,7 @@ export function renderRegion(
     // ANNOT | LCD_TEXT | REVERSE_BYTE_ORDER (RGBA out). The page is placed so the wanted region lands on the bitmap.
     const flags = 0x01 | 0x02 | 0x10
     m._FPDF_RenderPageBitmap(bitmap, p, -x, -y, full.width, full.height, 0, flags)
-    m._FPDF_FFLDraw(form, bitmap, p, -x, -y, full.width, full.height, 0, flags & ~0x01)
+    if (forms) m._FPDF_FFLDraw(form, bitmap, p, -x, -y, full.width, full.height, 0, flags & ~0x01)
     return m.HEAPU8.slice(ptr, ptr + size)
   } finally {
     m._FORM_OnBeforeClosePage(p, form)
