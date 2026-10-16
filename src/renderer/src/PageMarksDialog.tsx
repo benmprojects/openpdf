@@ -58,7 +58,7 @@ const TITLE: Record<MarksMode, string> = {
 
 /** One dialog for every kind of page mark and page box change. */
 export function PageMarksDialog({ mode, pageCount, currentPage, selected, present, onPickImage, onApply, onClose }: Props) {
-  const [range, setRange] = useState<'all' | 'current' | 'selected' | 'custom'>(selected.length > 1 ? 'selected' : 'all')
+  const [range, setRange] = useState<'all' | 'current' | 'selected' | 'odd' | 'even' | 'custom'>(selected.length > 1 ? 'selected' : 'all')
   const [custom, setCustom] = useState(`1-${pageCount}`)
   const [error, setError] = useState<string | null>(null)
   // Text marks
@@ -92,6 +92,7 @@ export function PageMarksDialog({ mode, pageCount, currentPage, selected, presen
     if (range === 'all') return Array.from({ length: pageCount }, (_, i) => i)
     if (range === 'current') return [currentPage]
     if (range === 'selected') return selected.length ? selected : [currentPage]
+    if (range === 'odd' || range === 'even') return Array.from({ length: pageCount }, (_, i) => i).filter((i) => i % 2 === (range === 'odd' ? 0 : 1))
     return parsePageRanges(custom, pageCount)
   }
 
@@ -369,6 +370,10 @@ export function PageMarksDialog({ mode, pageCount, currentPage, selected, presen
                 <option value="all">All pages</option>
                 <option value="current">Current page ({currentPage + 1})</option>
                 {selected.length > 0 && <option value="selected">Selected thumbnails ({selected.length})</option>}
+                <option value="odd">Odd pages</option>
+                <option value="even" disabled={pageCount < 2}>
+                  Even pages
+                </option>
                 <option value="custom">Pages…</option>
               </select>
               {range === 'custom' && <input aria-label="Page range" value={custom} onChange={(e) => setCustom(e.target.value)} />}

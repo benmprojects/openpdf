@@ -36,6 +36,9 @@ import { deletePages, extractPages, insertPagesFrom, mergeDocuments, movePages, 
 import { DeleteDialog, DuplicateDialog, ExtractDialog, InsertDialog, MergeDialog, MoveDialog, ReplaceDialog, RotateDialog, SplitDialog } from './PageOpsDialogs'
 import type { DocContext, PageDialogKind, PageDialogResult } from './pageDialogLogic'
 import { applyDialogEdit, buildExtractFiles, buildSplitFiles, doneMessage } from './pageDialogRun'
+import { CommentsDialog, ExportTextDialog, FlattenDialog, SaveAsDialog, type CommentFormat, type CommentsDialogResult, type SaveAsChoice } from './CommandDialogs'
+import { applyFilter, type CommentFilter } from './commentFilter'
+import { flattenDocument, type FlattenWhat } from './flatten'
 import { getPageClip, onPageClip, setPageClip } from './pageClipboard'
 import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
@@ -86,7 +89,7 @@ import { replaceBlock, weightAndSlant } from './textEdit'
 import { addImage, replaceImage, transformImage } from './imageEdit'
 import { transformPath } from './pathEdit'
 import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
-import { applyFormValues, flattenForm, readForm, type FieldType, type FormField, type FormValue } from './forms'
+import { applyFormValues, readForm, type FieldType, type FormField, type FormValue } from './forms'
 import { detectInDocument, type Detected } from './formDetect'
 import { DetectDialog } from './DetectDialog'
 import { addField, addFields, deleteField, moveInTabOrder, placeWidget, setTabOrder, updateField, type FieldPatch, type FieldSpec, type TabOrder } from './formDesign'
@@ -349,6 +352,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [pageRedo, setPageRedo] = useState<Uint8Array[]>([])
   // The Pages-tab dialog that is open, and the pages it should start from (the thumbnail selection or menu target).
   const [pageDialog, setPageDialog] = useState<{ kind: PageDialogKind; selection: number[]; insertAfter?: number } | null>(null)
+  /** Options dialogs for Flatten, Export text, Comments import/export and Save as. */
+  const [cmdDialog, setCmdDialog] = useState<
+    { kind: 'flatten' } | { kind: 'export'; as: 'txt' | 'html' | 'docx' } | { kind: 'comments'; mode: 'import' | 'export'; format: CommentFormat } | { kind: 'saveas' } | null
+  >(null)
   const [busy, setBusy] = useState(false)
   const [client, setClient] = useState<PdfClient | null>(null)
   /** The bytes the current client loaded: editing text needs the client to match the file, or its object numbers are stale. */
@@ -1498,7 +1505,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }
 
   const save = useCallback(
-    async (asNew: boolean) => {
+    async (asNew: boolean, opts?: SaveAsChoice) => {
       if (saving) return
       if (locked) {
         setNotice({ kind: 'error', text: 'The owner of this document does not allow changes, so nothing was written. Enter the owner password to unlock it.' })
@@ -1507,13 +1514,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       if (annotsDirty && validSigsRef.current > 0 && !(await askBreak())) return
       setSaving(true)
       try {
-        const out = annotsDirty ? await applyEdits(bytes) : bytes
+        let out = annotsDirty ? await applyEdits(bytes) : bytes
+        const before = out.length
+        if (opts?.optimise) out = (await optimise(out, { maxDpi: 150, quality: 0.75, dropThumbnails: true, objectStreams: true, recompress: true, removeUnusedResources: true, linearise: false })).bytes
         const toWrite = await protect(out)
         const saved =
           !asNew && path
             ? await window.openpdf.saveFile(path, toWrite)
             : await window.openpdf.saveFileAs(name.replace(/(\.pdf)?$/i, '.pdf'), toWrite)
         if (!saved) return // the Save As dialog was cancelled
+        if (opts?.copy) {
+          // A copy: this document, its pending edits and its name stay as they were.
+          setNotice({ kind: 'info', text: `Saved a copy as ${saved.name}${opts.optimise ? ` (${formatSize(before)} to ${formatSize(out.length)})` : ''}` })
+          return
+        }
         onMeta({ name: saved.name, path: saved.path })
         baseline.current = new Map() // the reloaded document is re-imported with fresh positions
         history.reset([])
@@ -1525,9 +1539,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setEditingAnnot(null)
         setSavedBytes(out)
         setBytes(out)
-        setNotice({ kind: 'info', text: `Saved ${saved.name}` })
+        setNotice({ kind: 'info', text: `Saved ${saved.name}${opts?.optimise ? ` (${formatSize(before)} to ${formatSize(out.length)})` : ''}` })
       } catch (e) {
-        setNotice({ kind: 'error', text: `Could not save: ${e instanceof Error ? e.message : String(e)}` })
+        setNotice({ kind: 'error', text: `Could not save:${e instanceof Error ? e.message : String(e)}` })
       } finally {
         setSaving(false)
       }
@@ -2005,17 +2019,18 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
   }
   /** Every page's text as blocks in reading order (from the page's text objects, or its plain text where it has none). */
-  const exportStructure = async (): Promise<ExportBlock[][]> => {
+  const exportStructure = async (only: number[], plainLines = false): Promise<ExportBlock[][]> => {
     if (!client) return []
     const raw: Awaited<ReturnType<typeof groupBlocks>>[] = []
-    for (let p = 0; p < pages.length; p++) {
+    for (const p of only) {
       const t = await client.textObjects(p)
       raw.push(groupBlocks(t.objects, t.rotation))
     }
     const body = bodySize(raw)
     const out: ExportBlock[][] = []
-    for (let p = 0; p < pages.length; p++) {
-      const blocks = structurePage(raw[p], body)
+    for (let i = 0; i < only.length; i++) {
+      const p = only[i]
+      const blocks = plainLines ? [] : structurePage(raw[i], body)
       if (blocks.length) out.push(blocks)
       else {
         const plain = normaliseNewlines((await client.pageText(p)).text)
@@ -2024,17 +2039,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     return out
   }
-  const exportAs = async (kind: 'txt' | 'html' | 'docx') => {
+  const exportAs = async (kind: 'txt' | 'html' | 'docx', only: number[] = pages.map((_, i) => i), keepLayout = kind === 'txt') => {
     if (!client) return
     setBusy(true)
     try {
       let data: Uint8Array
       if (kind === 'txt') {
         const all: string[] = []
-        for (let p = 0; p < pages.length; p++) all.push(normaliseNewlines((await client.pageText(p)).text))
+        for (const p of only) {
+          const text = normaliseNewlines((await client.pageText(p)).text)
+          // Without the page's line breaks, lines of a paragraph are joined and blank lines still separate paragraphs.
+          all.push(keepLayout ? text : text.split(/\n{2,}/).map((para) => para.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean).join('\n\n'))
+        }
         data = new TextEncoder().encode(all.join('\n\f\n'))
       } else {
-        const structure = await exportStructure()
+        const structure = await exportStructure(only, kind === 'html' && keepLayout)
         data = kind === 'html' ? new TextEncoder().encode(toHtml(exportStem(), structure)) : await toDocx(exportStem(), structure)
       }
       const label = { txt: 'Text', html: 'HTML', docx: 'Word' }[kind]
@@ -2212,9 +2231,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       history.commit((list) => list.map((a) => (a.id === id ? { ...a, replies: (a.replies ?? []).filter((r) => r.id !== replyId) } : a))),
     [history.commit]
   )
-  const summariseComments = async () => {
+  const summariseComments = async (filter?: CommentFilter) => {
     try {
-      const out = await commentSummaryPdf(annots, pageLabels, name)
+      const out = await commentSummaryPdf(filter ? applyFilter(annots, filter) : annots, pageLabels, name)
       const saved = await window.openpdf.saveFileAs(`${baseName} (comment summary).pdf`, out)
       if (saved) setNotice({ kind: 'info', text: `Comment summary saved as ${saved.name}` })
     } catch (e) {
@@ -2222,26 +2241,31 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
   }
   /** Comments out as XFDF or FDF, in PDF page coordinates. */
-  const exportComments = async (format: 'xfdf' | 'fdf') => {
+  const exportComments = async (format: 'xfdf' | 'fdf', filter?: CommentFilter) => {
     try {
-      const norms = toNorms(commentAnnots, await pageFrames(bytes))
+      const chosen = filter ? applyFilter(commentAnnots, filter) : commentAnnots
+      const norms = toNorms(chosen, await pageFrames(bytes))
       const data = format === 'xfdf' ? new TextEncoder().encode(toXfdf(norms, name)) : toFdf(norms, name)
       const saved = await window.openpdf.saveData(`${baseName}.${format}`, data, { name: format === 'xfdf' ? 'XFDF comments' : 'FDF comments', ext: format })
-      if (saved) setNotice({ kind: 'info', text: `Exported ${commentAnnots.length} comment${commentAnnots.length === 1 ? '' : 's'} to ${saved}` })
+      if (saved) setNotice({ kind: 'info', text: `Exported ${chosen.length} comment${chosen.length === 1 ? '' : 's'} to ${saved}` })
     } catch (e) {
       setNotice({ kind: 'error', text: `Could not export the comments: ${e instanceof Error ? e.message : String(e)}` })
     }
   }
   /** Comments in from an XFDF or FDF file: added as new annotations (undo removes them). */
-  const importComments = async () => {
+  const importComments = async (opts: { replace: boolean; filter: CommentFilter } = { replace: false, filter: { by: 'all', pages: [], kinds: [], authors: [] } }) => {
     const file = await window.openpdf.pickFile({ name: 'Comment files (XFDF, FDF)', ext: ['xfdf', 'fdf', 'xml'] })
     if (!file) return
     try {
       const head = new TextDecoder('latin1').decode(file.data.subarray(0, 8))
       const norms = head.startsWith('%FDF-') ? await fromFdf(file.data) : fromXfdf(new TextDecoder().decode(file.data))
       const { annots: made, skipped } = fromNorms(norms, await pageFrames(bytes), () => nextAnnotId.current++)
-      const usable = made.filter((a) => a.page < pages.length)
-      history.commit((list) => [...list, ...usable])
+      const usable = applyFilter(
+        made.filter((a) => a.page < pages.length),
+        opts.filter
+      )
+      // Replacing removes the existing comments (not links or other tools' annotations); undo brings them back.
+      history.commit((list) => [...(opts.replace ? list.filter((a) => a.kind === 'link' || a.kind === 'foreign') : list), ...usable])
       setNotice({
         kind: 'info',
         text: `Imported ${usable.length} comment${usable.length === 1 ? '' : 's'} from ${file.name}${skipped + made.length - usable.length ? ` (${skipped + made.length - usable.length} could not be used)` : ''}`
@@ -2289,8 +2313,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     setComparison((cur) => (cur ? { ...cur, result: { ...cur.result, changed: cur.result.changed.filter((_, k) => k !== i), same: cur.result.same + 1 } } : cur))
   }
 
-  const exportCommentsCsv = async () => {
-    const saved = await window.openpdf.saveText(`${baseName} (comments).csv`, commentsCsv(annots, pageLabels), { name: 'CSV (comma separated)', ext: 'csv' })
+  const exportCommentsCsv = async (filter?: CommentFilter) => {
+    const saved = await window.openpdf.saveText(`${baseName} (comments).csv`, commentsCsv(filter ? applyFilter(annots, filter) : annots, pageLabels), { name: 'CSV (comma separated)', ext: 'csv' })
     if (saved) setNotice({ kind: 'info', text: `Comments exported to ${saved}` })
   }
 
@@ -2525,7 +2549,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       const k = e.key.toLowerCase()
       if (ctrl && k === 's') {
         e.preventDefault()
-        void save(e.shiftKey)
+        if (e.shiftKey) setCmdDialog({ kind: 'saveas' })
+        else void save(false)
       } else if (ctrl && !inField && (k === 'z' || k === 'y')) {
         e.preventDefault()
         const redo = k === 'y' || e.shiftKey
@@ -2716,15 +2741,15 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label={t('Document')}>
                 <RB big icon={FolderOpen} label={t('Open')} onClick={onOpen} title={t('Open a PDF (Ctrl+O)')} />
                 <RB big icon={Save} label={t('Save')} badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
-                <RB big icon={SaveAll} label={t('Save as')} onClick={() => void save(true)} disabled={saving || !pages.length} title={t('Save a copy (Ctrl+Shift+S)')} />
+                <RB big icon={SaveAll} label={t('Save as')} onClick={() => setCmdDialog({ kind: 'saveas' })} disabled={saving || !pages.length} title={t('Save a copy (Ctrl+Shift+S)')} />
                 <RB big icon={X} label={t('Close')} onClick={onCloseDoc} title={t('Close this document (Ctrl+W)')} />
               </RGroup>
               <RGroup label={t('Comments')}>
-                <RB big icon={FileInput} label={t('Import')} onClick={() => void importComments()} disabled={!pages.length} title={t('Import comments from an XFDF or FDF file')} />
+                <RB big icon={FileInput} label={t('Import')} onClick={() => setCmdDialog({ kind: 'comments', mode: 'import', format: 'xfdf' })} disabled={!pages.length} title={t('Import comments from an XFDF or FDF file')} />
                 <RStack>
-                  <RB icon={FileOutput} label={t('Export XFDF')} onClick={() => void exportComments('xfdf')} disabled={!commentAnnots.length} title={t('Export the comments as XFDF (XML)')} />
+                  <RB icon={FileOutput} label={t('Export XFDF')} onClick={() => setCmdDialog({ kind: 'comments', mode: 'export', format: 'xfdf' })} disabled={!commentAnnots.length} title={t('Export the comments as XFDF (XML)')} />
                   <RB icon={GitCompare} label={t('Compare…')} onClick={() => void compareWith()} disabled={!pages.length} title={t('Compare the comments with another copy of this document')} />
-                  <RB icon={FileOutput} label={t('Export FDF')} onClick={() => void exportComments('fdf')} disabled={!commentAnnots.length} title={t('Export the comments as FDF')} />
+                  <RB icon={FileOutput} label={t('Export FDF')} onClick={() => setCmdDialog({ kind: 'comments', mode: 'export', format: 'fdf' })} disabled={!commentAnnots.length} title={t('Export the comments as FDF')} />
                 </RStack>
               </RGroup>
               <RGroup label={t('Automate')}>
@@ -2999,7 +3024,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
               </RGroup>
               <RGroup label={t('Finish')}>
-                <RB big icon={Layers2} label={t('Flatten')} onClick={() => void applyPageEdit(async (b) => (await flattenForm(b)).bytes, 'Form flattened: the fields are now part of the pages')} disabled={!formFields.length || busy || locked} title={t('Make the fields part of the page so they can no longer be edited')} />
+                <RB big icon={Layers2} label={t('Flatten')} onClick={() => setCmdDialog({ kind: 'flatten' })} disabled={(!formFields.length && !commentAnnots.length) || busy || locked} title={t('Make the fields part of the page so they can no longer be edited')} />
               </RGroup>
               {!formFields.length && <p className="muted ribbon-note">This document has no form fields.</p>}
             </>
@@ -3024,9 +3049,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             <>
             <RGroup label={t('Export')}>
               <RB big icon={ImageIcon} label={t('Pictures')} onClick={() => setExportImagesOpen(true)} disabled={!pages.length || busy} title={t('Save the pages as PNG, JPEG or TIFF pictures')} />
-              <RB big icon={FileText} label={t('Text')} onClick={() => void exportAs('txt')} disabled={!pages.length || busy} title={t('Save the text of the document as a plain text file')} />
-              <RB big icon={Globe} label={t('HTML')} onClick={() => void exportAs('html')} disabled={!pages.length || busy} title={t('Save the text as a web page, with headings and paragraphs (pictures and layout are not kept)')} />
-              <RB big icon={FileOutput} label={t('Word')} onClick={() => void exportAs('docx')} disabled={!pages.length || busy} title={t('Save the text as a Word document, with headings and paragraphs (best effort: pictures and layout are not kept)')} />
+              <RB big icon={FileText} label={t('Text')} onClick={() => setCmdDialog({ kind: 'export', as: 'txt' })} disabled={!pages.length || busy} title={t('Save the text of the document as a plain text file')} />
+              <RB big icon={Globe} label={t('HTML')} onClick={() => setCmdDialog({ kind: 'export', as: 'html' })} disabled={!pages.length || busy} title={t('Save the text as a web page, with headings and paragraphs (pictures and layout are not kept)')} />
+              <RB big icon={FileOutput} label={t('Word')} onClick={() => setCmdDialog({ kind: 'export', as: 'docx' })} disabled={!pages.length || busy} title={t('Save the text as a Word document, with headings and paragraphs (best effort: pictures and layout are not kept)')} />
             </RGroup>
             <RGroup label={t('Recognise')}>
               <RB big icon={ScanText} label={t('OCR')} onClick={() => setOcrOpen(true)} disabled={!pages.length || busy || locked} title={t('Recognise the text in scanned pages so they can be searched and copied')} />
@@ -3555,6 +3580,75 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </div>
       )}
 
+      {cmdDialog && (() => {
+        const ctx: DocContext = { count: pages.length, current: Math.min(currentPage, Math.max(0, pages.length - 1)), selected: pageSel, sizes: pages }
+        const close = () => setCmdDialog(null)
+        switch (cmdDialog.kind) {
+          case 'flatten':
+            return (
+              <FlattenDialog
+                ctx={ctx}
+                fieldPages={formFields.map((f) => f.widgets[0]?.page ?? -1).filter((p) => p >= 0)}
+                annotPages={commentAnnots.map((a) => a.page)}
+                onCancel={close}
+                onSubmit={(what: FlattenWhat, only) => {
+                  close()
+                  let note = ''
+                  void applyPageEdit(async (b) => {
+                    const r = await flattenDocument(b, what, only)
+                    const bits = [r.fields && `${r.fields} form field${r.fields === 1 ? '' : 's'}`, r.annots && `${r.annots} annotation${r.annots === 1 ? '' : 's'}`].filter(Boolean)
+                    note = bits.length ? `Flattened ${bits.join(' and ')}: now part of the pages` : 'Nothing could be flattened on those pages'
+                    return bits.length ? r.bytes : null
+                  }).then(() => note && setNotice({ kind: 'info', text: note }))
+                }}
+              />
+            )
+          case 'export':
+            return (
+              <ExportTextDialog
+                kind={cmdDialog.as}
+                ctx={ctx}
+                stem={exportStem()}
+                dir={path ? path.replace(/[\\/][^\\/]*$/, '') : null}
+                onCancel={close}
+                onSubmit={(only, keep) => {
+                  close()
+                  void exportAs(cmdDialog.as, only, keep)
+                }}
+              />
+            )
+          case 'comments':
+            return (
+              <CommentsDialog
+                mode={cmdDialog.mode}
+                initialFormat={cmdDialog.format}
+                annots={commentAnnots}
+                ctx={ctx}
+                onCancel={close}
+                onSubmit={(r: CommentsDialogResult) => {
+                  close()
+                  if (r.mode === 'import') return void importComments(r)
+                  if (r.format === 'csv') return void exportCommentsCsv(r.filter)
+                  if (r.format === 'summary') return void summariseComments(r.filter)
+                  void exportComments(r.format, r.filter)
+                }}
+              />
+            )
+          case 'saveas':
+            return (
+              <SaveAsDialog
+                name={name.replace(/(\.pdf)?$/i, '.pdf')}
+                size={formatSize(bytes.length)}
+                onCancel={close}
+                onSubmit={(c) => {
+                  close()
+                  void save(true, c)
+                }}
+              />
+            )
+        }
+      })()}
+
       {pageDialog && (() => {
         const common = { ctx: dialogCtx, name: baseName, onCancel: () => setPageDialog(null), onSubmit: (r: PageDialogResult) => void submitPageDialog(r) }
         switch (pageDialog.kind) {
@@ -3643,8 +3737,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                     onReply={addReply}
                     onStatus={setReviewState}
                     onDeleteReply={deleteReply}
-                    onSummarise={() => void summariseComments()}
-                    onExportCsv={() => void exportCommentsCsv()}
+                    onSummarise={() => setCmdDialog({ kind: 'comments', mode: 'export', format: 'summary' })}
+                    onExportCsv={() => setCmdDialog({ kind: 'comments', mode: 'export', format: 'csv' })}
                   />
                 }
               />

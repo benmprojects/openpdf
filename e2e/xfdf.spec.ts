@@ -29,6 +29,7 @@ test('export comments as XFDF and FDF, and import them into another copy', async
       await expect(win.locator('.page')).toHaveCount(1)
       await win.getByRole('tab', { name: 'File', exact: true }).click()
       await win.getByRole('button', { name: `Export ${fmt}` }).click()
+      await win.getByRole('dialog', { name: 'Export comments' }).getByRole('button', { name: 'Export…' }).click()
       await expect.poll(() => existsSync(out)).toBe(true)
     } finally {
       await app.close()
@@ -49,6 +50,7 @@ test('export comments as XFDF and FDF, and import them into another copy', async
       await expect(win.locator('.page')).toHaveCount(6)
       await win.getByRole('tab', { name: 'File', exact: true }).click()
       await win.getByRole('button', { name: 'Import', exact: true }).click()
+      await win.getByRole('dialog', { name: 'Import comments' }).getByRole('button', { name: 'Import…' }).click()
       await expect(win.getByText(/Imported 3 comments/)).toBeVisible()
       await win.getByRole('tab', { name: 'Comments', exact: true }).click()
       const list = win.getByRole('list', { name: 'Comments', exact: true })

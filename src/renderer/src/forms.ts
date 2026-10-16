@@ -360,9 +360,24 @@ export async function applyFormValues(
 }
 
 /** Turns the fields into ordinary page content and removes the form (the values are kept as they look). */
-export async function flattenForm(bytes: Uint8Array): Promise<{ bytes: Uint8Array; count: number }> {
+export async function flattenForm(bytes: Uint8Array, onlyPages?: number[]): Promise<{ bytes: Uint8Array; count: number }> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
   const form = doc.getForm()
+  if (onlyPages) {
+    // Flatten only the fields whose widgets all lie on these pages: pdf-lib flattens whatever getFields returns.
+    const wanted = new Set<unknown>()
+    const pageList = doc.getPages()
+    for (const p of onlyPages) {
+      const annots = pageList[p]?.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
+      for (let i = 0; annots && i < annots.size(); i++) wanted.add(annots.get(i))
+    }
+    const all = form.getFields()
+    const keep = all.filter((f) => {
+      const ws = f.acroField.getWidgets()
+      return ws.length > 0 && ws.every((w) => wanted.has(doc.context.getObjectRef(w.dict)))
+    })
+    ;(form as unknown as { getFields: () => PDFField[] }).getFields = () => keep
+  }
   const count = form.getFields().length
   if (!count) return { bytes, count: 0 }
   try {

@@ -83,12 +83,14 @@ test('text, HTML and Word exports keep the words, with headings found from the t
   const { app, win, problems } = await open(dir, pdf, { OPENPDF_E2E_SAVE_TEXT: target })
   try {
     await win.getByRole('button', { name: 'Text', exact: true }).click()
+    await win.getByRole('dialog', { name: 'Export as text' }).getByRole('button', { name: 'Export…' }).click()
     await expect(win.getByText(/^Exported /)).toBeVisible()
     const txt = readFileSync(target, 'utf8')
     expect(txt).toContain('Annual Report')
     expect(txt).toContain('Appendix text on the second page.')
 
     await win.getByRole('button', { name: 'HTML' }).click()
+    await win.getByRole('dialog', { name: 'Export as HTML' }).getByRole('button', { name: 'Export…' }).click()
     await expect.poll(() => readFileSync(target, 'utf8')).toContain('<!DOCTYPE html>')
     const html = readFileSync(target, 'utf8')
     expect(html).toContain('<h1>Annual Report</h1>')
@@ -97,6 +99,7 @@ test('text, HTML and Word exports keep the words, with headings found from the t
     expect(html).toContain('<section id="page-2"')
 
     await win.getByRole('button', { name: 'Word' }).click()
+    await win.getByRole('dialog', { name: 'Export as Word' }).getByRole('button', { name: 'Export…' }).click()
     await expect.poll(() => readFileSync(target).subarray(0, 2).toString('latin1')).toBe('PK')
     const docx = execFileSync('python', ['-c', `import sys, zipfile\nprint(zipfile.ZipFile(sys.argv[1]).read("word/document.xml").decode("utf8"))`, target]).toString()
     expect(docx).toContain('Heading1')

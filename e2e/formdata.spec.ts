@@ -71,7 +71,14 @@ test('form data: export as CSV, XFDF, FDF and XML, import from CSV, and flatten'
 
     // Flatten: the values are written first, then the fields become page content.
     await win.getByRole('button', { name: 'Flatten' }).click()
-    await expect(win.getByText(/Form flattened/)).toBeVisible()
+    const flat = win.getByRole('dialog', { name: 'Flatten' })
+    await flat.getByRole('radio', { name: 'Comments and annotations' }).check()
+    await expect(flat.getByRole('alert')).toHaveText('There are no comments or annotations on these pages.')
+    await flat.getByRole('radio', { name: 'Form fields' }).check()
+    await expect(flat.getByRole('alert')).toHaveCount(0)
+    await expect(flat.locator('.pod-warn')).toContainText('cannot be undone')
+    await flat.getByRole('button', { name: 'Flatten' }).click()
+    await expect(win.getByText(/Flattened 4 form fields|Flattened \d+ form field/)).toBeVisible()
     await expect(win.locator('.form-widget')).toHaveCount(0)
     await win.keyboard.press('Control+s')
     await expect(win.locator('.tab-dirty')).toHaveCount(0)

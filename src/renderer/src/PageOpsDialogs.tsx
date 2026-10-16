@@ -49,7 +49,7 @@ const PRESET_LABEL: Record<RangePreset, string> = {
   custom: msg('Custom')
 }
 
-function Frame({ title, ok, error, summary, warning, onClose, onOk, children, wide }: { title: string; ok: string; error: string | null; summary: string; warning?: string | null; onClose: () => void; onOk: () => void; children: ReactNode; wide?: boolean }) {
+export function Frame({ title, ok, error, summary, warning, onClose, onOk, children, wide }: { title: string; ok: string; error: string | null; summary: string; warning?: string | null; onClose: () => void; onOk: () => void; children: ReactNode; wide?: boolean }) {
   return (
     <Modal title={title} onClose={onClose} wide={wide}>
       <form

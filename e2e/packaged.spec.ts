@@ -73,6 +73,7 @@ open(sys.argv[2], 'wb').write(pkcs12.serialize_key_and_certificates(b"t", k, c, 
 
     // Word export: the docx library loads on demand as a separate chunk.
     await win.getByRole('button', { name: 'Word' }).click()
+    await win.getByRole('dialog', { name: 'Export as Word' }).getByRole('button', { name: 'Export…' }).click()
     await expect.poll(() => (existsSync(docx) ? readFileSync(docx).subarray(0, 2).toString('latin1') : ''), { timeout: 30000 }).toBe('PK')
 
     // A plugin: the QuickJS WebAssembly sandbox.

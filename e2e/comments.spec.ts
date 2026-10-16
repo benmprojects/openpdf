@@ -69,12 +69,14 @@ test('comment list: filter, reply, status, save, read back, summarise and export
 
     // Export CSV and a summary PDF.
     await win.getByRole('button', { name: 'Export comments to CSV' }).click()
+    await win.getByRole('dialog', { name: 'Export comments' }).getByRole('button', { name: 'Export…' }).click()
     await expect.poll(() => existsSync(csvPath)).toBe(true)
     const csv = readFileSync(csvPath, 'utf8')
     expect(csv).toContain('Check the kerb height here')
     expect(csv).toContain('Measured at 150 mm, fine.')
     expect(csv.split('\r\n').filter(Boolean)).toHaveLength(1 + 2 + 2) // header, two comments, a reply and a status
     await win.getByRole('button', { name: 'Summarise comments' }).click()
+    await win.getByRole('dialog', { name: 'Export comments' }).getByRole('button', { name: 'Export…' }).click()
     await expect.poll(() => existsSync(summaryPath)).toBe(true)
     const summaryText = execFileSync('python', ['-c', 'import sys, pymupdf\nprint("".join(p.get_text() for p in pymupdf.open(sys.argv[1])))', summaryPath]).toString()
     expect(summaryText).toContain('Comment summary')
