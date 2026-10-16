@@ -45,3 +45,5 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   artifactName: ${productName}-Setup-${version}.${ext}
+msi:
+  artifactName: ${productName}-${version}.${ext}

@@ -38,14 +38,14 @@ jobs:
       # The installer is signed when a certificate is supplied as secrets (CSC_LINK, a base64 .pfx, and CSC_KEY_PASSWORD).
       - name: Build and publish the installer
         if: startsWith(github.ref, 'refs/tags/v')
-        run: npx electron-builder --win nsis --publish always
+        run: npx electron-builder --win nsis msi --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       - name: Build the installer (not published)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: npx electron-builder --win nsis --publish never
+        run: npx electron-builder --win nsis msi --publish never
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -55,5 +55,6 @@ jobs:
           name: OpenPDF-installer
           path: |
             dist/*.exe
+            dist/*.msi
             dist/latest.yml
           if-no-files-found: error
