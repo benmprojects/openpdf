@@ -1,15 +1,15 @@
 /**
- * Updates, opt in. Nothing is checked unless the person turns it on and gives an update address; nothing is sent
- * except the request for the feed file (no identifiers, no document information). The feed is the generic kind: a
+ * Updates, opt in. Nothing is checked unless the person asks or turns checking on; nothing is sent
+ * except the request for the feed file or release (no identifiers, no document information). The feed is the generic kind: a
  * `latest.yml` beside the installer, as electron-builder writes it. A downloaded installer is checked against the hash in
  * that file. Use an https address, and sign the installer, before relying on this: an unsigned installer from an
  * address an attacker can alter would not be protected.
  */
-import { app } from 'electron'
+import { app, net, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { autoUpdater } from 'electron-updater'
-import { feedAllowed } from '../shared/updateFeed'
+import { feedAllowed, isNewerVersion } from '../shared/updateFeed'
 
 export interface UpdateSettings {
   /** Look for an update when the program starts. */
@@ -24,7 +24,12 @@ export interface UpdateStatus {
   version?: string
   message?: string
   percent?: number
+  /** Set when the update has to be downloaded from a web page (builds that cannot update themselves, such as the MSI). */
+  page?: string
 }
+
+/** OpenPDF's own releases, asked directly by builds without an update source of their own. */
+const RELEASES_API = 'https://api.github.com/repos/benmprojects/openpdf/releases/latest'
 
 /** Whether this build carries its own update source (written by electron-builder from the `publish` setting). */
 const hasBuiltInFeed = () => existsSync(join(process.resourcesPath, 'app-update.yml'))
@@ -56,7 +61,7 @@ export async function checkForUpdates(feed: string): Promise<UpdateStatus> {
   const custom = feed.trim()
   if (custom && !feedAllowed(custom)) return (last = { state: 'error', current, message: 'The update address must start with https:// (or be on this computer).' })
   if (!app.isPackaged) return (last = { state: 'unavailable', current, message: 'Updates can only be checked in the installed program.' })
-  if (!custom && !hasBuiltInFeed()) return (last = { state: 'unavailable', current, message: 'This build has no update source of its own. Enter an update address.' })
+  if (!custom && !hasBuiltInFeed()) return (last = await checkReleasePage(current))
   try {
     configure(custom)
     const r = await autoUpdater.checkForUpdates()
@@ -70,6 +75,10 @@ export async function checkForUpdates(feed: string): Promise<UpdateStatus> {
 
 export async function downloadUpdate(): Promise<UpdateStatus> {
   if (last.state !== 'available') return last
+  if (last.page) {
+    await shell.openExternal(last.page)
+    return last
+  }
   last = { ...last, state: 'downloading', percent: 0 }
   try {
     await autoUpdater.downloadUpdate()
@@ -83,4 +92,22 @@ export async function downloadUpdate(): Promise<UpdateStatus> {
 /** Closes the program and runs the downloaded installer. */
 export function installUpdate(): void {
   if (last.state === 'ready') autoUpdater.quitAndInstall()
+}
+
+/**
+ * Builds that cannot replace themselves (the MSI, which Windows Installer manages) ask GitHub for the latest release
+ * and, when it is newer, offer its download page instead of downloading an installer of a different kind.
+ */
+async function checkReleasePage(current: string): Promise<UpdateStatus> {
+  try {
+    const res = await net.fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } })
+    if (!res.ok) throw new Error(`GitHub answered ${res.status}`)
+    const r = (await res.json()) as { tag_name?: string; html_url?: string }
+    const v = (r.tag_name ?? '').replace(/^v/i, '')
+    const page = r.html_url && r.html_url.startsWith('https://github.com/') ? r.html_url : undefined
+    if (v && page && isNewerVersion(v, current)) return { state: 'available', current, version: v, page }
+    return { state: 'none', current }
+  } catch (e) {
+    return { state: 'error', current, message: e instanceof Error ? e.message.split('\n')[0].slice(0, 200) : 'The update check failed.' }
+  }
 }

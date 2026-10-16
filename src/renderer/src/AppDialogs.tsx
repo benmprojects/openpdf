@@ -106,7 +106,7 @@ function UpdateSettings({ settings, onChange }: { settings: Settings; onChange: 
         </button>
         {status?.state === 'available' && (
           <button type="button" disabled={busy} onClick={() => void run(() => window.openpdf.downloadUpdate())}>
-            Download
+            {status.page ? 'Open download page' : 'Download'}
           </button>
         )}
         {status?.state === 'ready' && (

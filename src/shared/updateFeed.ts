@@ -8,3 +8,15 @@ export function feedAllowed(u: string): boolean {
     return false
   }
 }
+
+/** Whether version `a` (for example "0.1.1" or "v0.2.0") is newer than `b`. Pre-release suffixes are ignored. */
+export function isNewerVersion(a: string, b: string): boolean {
+  const parts = (v: string) => v.replace(/^v/i, '').split(/[-+]/)[0].split('.').map((n) => parseInt(n, 10) || 0)
+  const x = parts(a)
+  const y = parts(b)
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0)
+    if (d) return d > 0
+  }
+  return false
+}
