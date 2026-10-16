@@ -41,14 +41,22 @@ test('copy, paste, duplicate and replace pages; split by bookmarks', async () =>
     // Duplicate page 1 from the Organise tab.
     await thumbs.nth(0).click()
     await win.getByRole('tab', { name: 'Organise' }).click()
-    await win.getByRole('button', { name: 'Duplicate' }).click()
+    await win.getByRole('button', { name: 'Duplicate', exact: true }).click()
+    const dup = win.getByRole('dialog', { name: 'Duplicate pages' })
+    await expect(dup.locator('.pod-summary')).toHaveText('1 page will be added. The document will have 9 pages.')
+    await dup.getByRole('button', { name: 'Duplicate', exact: true }).click()
     await expect(win.locator('.page')).toHaveCount(9)
 
     // Replace page 3 with pages 3-4 of the other file.
     await thumbs.nth(2).click()
     await win.getByRole('button', { name: 'Replace', exact: true }).click()
-    await win.getByRole('textbox', { name: 'Replacement pages' }).fill('3-4')
-    await win.locator('.page-dialog').getByRole('button', { name: 'Replace' }).click()
+    const rep = win.getByRole('dialog', { name: 'Replace pages' })
+    await expect(rep.getByRole('alert')).toContainText('Choose the PDF') // OK is not available until a file is chosen
+    await expect(rep.getByRole('button', { name: 'Replace', exact: true })).toBeDisabled()
+    await rep.getByRole('button', { name: 'Choose PDF…' }).click()
+    await rep.getByRole('textbox', { name: 'Replacement pages' }).fill('3-4')
+    await expect(rep.locator('.pod-warn')).toContainText('counts differ') // 1 page replaced by 2
+    await rep.getByRole('button', { name: 'Replace', exact: true }).click()
     await expect(win.locator('.page')).toHaveCount(10)
 
     await win.keyboard.press('Control+s')
@@ -68,8 +76,10 @@ test('copy, paste, duplicate and replace pages; split by bookmarks', async () =>
 
     // Split at the top-level bookmarks.
     await win.getByRole('button', { name: 'Split', exact: true }).click()
-    await win.getByRole('combobox', { name: 'Split by' }).selectOption('bookmarks')
-    await win.locator('.page-dialog').getByRole('button', { name: 'Split…' }).click()
+    const split = win.getByRole('dialog', { name: 'Split document' })
+    await split.getByRole('combobox', { name: 'Split by' }).selectOption('bookmarks')
+    await expect(split.locator('.pod-summary')).toContainText(/This will create \d+ files/)
+    await split.getByRole('button', { name: 'Split…' }).click()
     await expect(win.getByText(/Wrote \d+ files/)).toBeVisible()
     const files = readdirSync(outDir)
     expect(files.length).toBeGreaterThan(1)

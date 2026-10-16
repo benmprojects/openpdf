@@ -93,14 +93,64 @@ export function parsePageRanges(text: string, pageCount: number): number[] {
   return sorted([...out])
 }
 
-/** Inserts copies of `pages` straight after the last of them. */
-export async function duplicatePages(bytes: Uint8Array, pages: number[]): Promise<Uint8Array> {
+/**
+ * Inserts copies of `pages`. `where`: 'block' puts the copies straight after the last of the pages, 'each' puts them after
+ * every page, 'end' at the end of the document. `copies` is how many of each page.
+ */
+export async function duplicatePages(bytes: Uint8Array, pages: number[], copies = 1, where: 'block' | 'each' | 'end' = 'block'): Promise<Uint8Array> {
   const doc = await load(bytes)
   const idx = sorted(pages)
-  const copies = await doc.copyPages(doc, idx)
-  const at = idx[idx.length - 1] + 1
-  copies.forEach((p, k) => doc.insertPage(at + k, p))
+  if (where === 'each') {
+    // From the last page backwards so earlier indices stay valid.
+    for (const i of [...idx].reverse()) {
+      for (let c = 0; c < copies; c++) doc.insertPage(i + 1, (await doc.copyPages(doc, [i]))[0])
+    }
+    return doc.save()
+  }
+  let at = where === 'end' ? doc.getPageCount() : idx[idx.length - 1] + 1
+  for (let c = 0; c < copies; c++) {
+    const made = await doc.copyPages(doc, idx)
+    made.forEach((p, k) => doc.insertPage(at + k, p))
+    at += made.length
+  }
   return doc.save()
+}
+
+/** A new document made of several documents (each all of its pages, or `pages`), in order. */
+export async function mergeDocuments(items: { data: Uint8Array; pages?: number[] | null }[]): Promise<{ bytes: Uint8Array; count: number }> {
+  const out = await PDFDocument.create()
+  let total = 0
+  for (const it of items) {
+    const src = await load(it.data)
+    const copied = await out.copyPages(src, it.pages ? sorted(it.pages) : src.getPageIndices())
+    copied.forEach((p) => out.addPage(p))
+    total += copied.length
+  }
+  return { bytes: await out.save(), count: total }
+}
+
+/** Inserts blank pages of the given size (points) so the first lands at index `at`. */
+export async function insertBlankPages(bytes: Uint8Array, at: number, count: number, size: { width: number; height: number }): Promise<Uint8Array> {
+  const doc = await load(bytes)
+  for (let k = 0; k < count; k++) doc.insertPage(at + k, [size.width, size.height])
+  return doc.save()
+}
+
+/** Inserts several documents (each all of its pages, or `pages`) in order, the first landing at index `at`. */
+export async function insertMany(
+  bytes: Uint8Array,
+  at: number,
+  items: { data: Uint8Array; pages?: number[] | null }[]
+): Promise<{ bytes: Uint8Array; count: number }> {
+  const doc = await load(bytes)
+  let total = 0
+  for (const it of items) {
+    const src = await load(it.data)
+    const copied = await doc.copyPages(src, it.pages ? sorted(it.pages) : src.getPageIndices())
+    copied.forEach((p, k) => doc.insertPage(at + total + k, p))
+    total += copied.length
+  }
+  return { bytes: await doc.save(), count: total }
 }
 
 /** Replaces `pages` with pages of `other` (all of them, or `otherPages`), placed where the first replaced page was. */

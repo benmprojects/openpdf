@@ -2753,3 +2753,289 @@ button:not([class]):disabled {
     scroll-behavior: auto !important;
   }
 }
+
+/* Print dialog: options on the left, a preview of the sheet on the right */
+.modal.wide:has(.print-modal) {
+  width: min(960px, calc(100vw - 32px));
+}
+.print-modal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px 20px;
+}
+.print-options {
+  grid-row: 1;
+  min-width: 0;
+  max-height: calc(100vh - 190px);
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.print-options fieldset {
+  margin: 0 0 10px;
+  padding: 6px 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.print-options legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.print-row {
+  display: grid;
+  grid-template-columns: 7.5em minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+  margin: 5px 0;
+}
+.print-label {
+  color: var(--muted);
+}
+.print-row select,
+.print-row input:not([type='checkbox']) {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 28px;
+  padding: 3px 8px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.print-row input[aria-invalid='true'] {
+  border-color: var(--bad);
+}
+.print-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.print-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.print-inline input[type='number'] {
+  width: 5.5em;
+  flex: none;
+}
+.print-inline select {
+  flex: 1;
+  min-width: 0;
+}
+.print-side {
+  grid-row: 1;
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.print-preview {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 420px;
+  box-sizing: border-box;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.print-sheet {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+}
+.print-cell {
+  position: absolute;
+  overflow: hidden;
+}
+.print-page {
+  position: absolute;
+  display: block;
+  background: #fff;
+}
+.print-page.bordered {
+  outline: 1px solid #777;
+  outline-offset: -1px;
+}
+.print-pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.print-pager button {
+  min-width: 32px;
+}
+.print-sheet-label {
+  min-width: 15em;
+  text-align: center;
+}
+.print-summary {
+  margin: 0;
+  text-align: center;
+}
+.print-buttons {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.print-reason {
+  margin-right: auto;
+  color: var(--bad);
+}
+.print-buttons button.primary {
+  min-width: 90px;
+}
+@media (max-width: 800px) {
+  .print-modal {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+  }
+  .print-side {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+/* Page-operation dialogs (Pages tab) */
+.pod {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+}
+.pod select,
+.pod input:not([type='checkbox']):not([type='radio']) {
+  min-height: 28px;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.pod button:not(.primary) {
+  min-height: 28px;
+  padding: 3px 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.pod button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pod-field,
+.pod-grid label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.pod-field > span:first-child,
+.pod-field > label > span:first-child,
+.pod-grid label > span:first-child {
+  min-width: 120px;
+  color: var(--muted);
+}
+.pod-field > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pod-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pod-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.pod-group legend {
+  padding: 0 6px;
+  color: var(--muted);
+}
+.pod-radio,
+.pod-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pod-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+.pod-summary {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border-radius: var(--radius);
+}
+.pod-error {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--danger-text);
+  background: var(--danger-bg);
+  border-radius: var(--radius);
+}
+.pod-warn {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--warn);
+  background: var(--panel-2);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+}
+.pod-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.pod-filelist {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.pod-files {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.pod-files li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px 140px auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+}
+.pod-files li + li {
+  border-top: 1px solid var(--border);
+}
+.pod-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

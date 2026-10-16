@@ -48,7 +48,7 @@ test('opens, finds, rotates the view and prints', async () => {
 
     // Print through the test hook, which writes the print job to a PDF.
     await win.keyboard.press('Control+p')
-    await win.locator('.print-dialog').getByRole('button', { name: 'Print…' }).click()
+    await win.getByRole('dialog', { name: 'Print' }).getByRole('button', { name: 'Print', exact: true }).click()
     await expect.poll(() => existsSync(printPath), { timeout: 60_000 }).toBe(true)
     await expect
       .poll(() => (existsSync(printPath) ? readFileSync(printPath).subarray(0, 4).toString('latin1') : ''))

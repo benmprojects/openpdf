@@ -30,6 +30,33 @@ describe('sheetSlots', () => {
   })
 })
 
+describe('booklet options', () => {
+  it('puts the spine on the right by swapping each pair', () => {
+    expect(sheetSlots(4, { kind: 'booklet', binding: 'right' })).toEqual([
+      [0, 3],
+      [2, 1]
+    ])
+  })
+  it('prints only the fronts or only the backs', () => {
+    expect(sheetSlots(8, { kind: 'booklet', sides: 'front' })).toEqual([
+      [7, 0],
+      [5, 2]
+    ])
+    expect(sheetSlots(8, { kind: 'booklet', sides: 'back' })).toEqual([
+      [1, 6],
+      [3, 4]
+    ])
+  })
+})
+
+describe('N-up page order', () => {
+  it('fills columns first when ordered down', () => {
+    expect(sheetSlots(4, { kind: 'nup', perSheet: 4, order: 'down' })).toEqual([[0, 2, 1, 3]])
+    expect(sheetSlots(6, { kind: 'nup', perSheet: 6, order: 'down' })).toEqual([[0, 3, 1, 4, 2, 5]])
+    expect(sheetSlots(3, { kind: 'nup', perSheet: 4, order: 'down' })).toEqual([[0, 2, 1, null]])
+  })
+})
+
 describe('sheetGrid', () => {
   it('uses landscape paper for two-up and booklets', () => {
     expect(sheetGrid({ kind: 'booklet' })).toEqual({ cols: 2, rows: 1, landscape: true })

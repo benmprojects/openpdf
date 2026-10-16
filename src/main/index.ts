@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
+import { clampPercent, effectiveDuplex, effectiveScaling, isPaperId, type PrintRunOptions, type Scaling } from '../shared/printPlan'
 import { findFont } from './fonts'
 import { editMenuTemplate } from './spellMenu'
 import { copyEncryption, decryptPdf, encryptionInfo, encryptPdf, runQpdf } from './qpdf'
@@ -531,8 +532,8 @@ ipcMain.handle('file:save-attachment', async (e, name: string, data: Uint8Array)
 })
 
 /** Asks for a folder, then writes each file into it without overwriting: a clash gets " (2)" and so on. */
-ipcMain.handle('file:save-many', async (e, files: { name: string; data: Uint8Array }[]) => {
-  let dir = e2e ? process.env.OPENPDF_E2E_DIR : undefined
+ipcMain.handle('file:save-many', async (e, files: { name: string; data: Uint8Array }[], into?: string | null) => {
+  let dir = typeof into === 'string' && into ? into : e2e ? process.env.OPENPDF_E2E_DIR : undefined
   if (!dir) {
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts = { properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] }
@@ -605,34 +606,76 @@ async function endJob(id: string) {
 ipcMain.handle('print:cancel', (_e, id: string) => endJob(id))
 
 /** One sheet per page. Fit: scale to the printable area keeping proportions. Actual size: the page's own size in points. */
-function printHtml(sizes: { w: number; h: number }[], fit: boolean, layout: PrintLayout): string {
+function printHtml(sizes: { w: number; h: number }[], scaling: Scaling, centre: boolean, layout: PrintLayout): string {
   const { cols, rows } = sheetGrid(layout)
-  // Several pages per side are always fitted to their cell; actual size only applies to one page per sheet.
-  const actual = !fit && layout.kind === 'single'
+  // Several pages per side are always fitted to their cell; the scaling choice only applies to one page per sheet.
+  const sc = effectiveScaling(layout, scaling)
+  const unscaled = sc.kind !== 'fit' // pages have a stated size, so the sheet has no margin of its own
+  const border = layout.kind === 'nup' && layout.border === true
   const cell = (n: number | null) => {
     if (n === null) return '<div class="cell"></div>'
     const s = sizes[n]
-    const style = actual ? ` style="width:${s.w}pt;height:${s.h}pt;max-width:none;max-height:none"` : ''
+    let style = ''
+    if (sc.kind === 'actual') style = ` style="width:${s.w}pt;height:${s.h}pt;max-width:none;max-height:none"`
+    else if (sc.kind === 'custom') {
+      const f = clampPercent(sc.percent) / 100
+      style = ` style="width:${s.w * f}pt;height:${s.h * f}pt;max-width:none;max-height:none"`
+    } else if (sc.kind === 'shrink') style = ` style="width:${s.w}pt;height:auto"` // the max sizes in the sheet style shrink it
     return `<div class="cell"><img src="${n}.png"${style}></div>`
   }
   const sheets = sheetSlots(sizes.length, layout)
     .map((slots) => `<div class="sheet">${slots.map(cell).join('')}</div>`)
     .join('')
+  const place = unscaled && !centre ? 'flex-start' : 'center'
   return `<!doctype html><html><head><meta charset="utf-8"><style>
-${actual ? '@page { margin: 0 }' : ''}
+${unscaled ? '@page { margin: 0 }' : ''}
 html, body { margin: 0; padding: 0; background: #fff }
 .sheet { width: 100vw; height: 100vh; display: grid; grid-template-columns: repeat(${cols}, 1fr); grid-template-rows: repeat(${rows}, 1fr); gap: ${cols > 1 ? '2vw' : '0'}; overflow: hidden; break-after: page }
 .sheet:last-child { break-after: auto }
-.cell { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; overflow: hidden }
-img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain }
+.cell { display: flex; align-items: ${place}; justify-content: ${place}; min-width: 0; min-height: 0; overflow: hidden }
+img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain${border ? '; outline: 0.5pt solid #777' : ''} }
 </style></head><body>${sheets}</body></html>`
 }
 
-ipcMain.handle('print:run', async (e, id: string, opts: { copies: number; fit: boolean; count: number; layout?: PrintLayout }) => {
-  const layout: PrintLayout = opts.layout ?? { kind: 'single' }
-  const { landscape } = sheetGrid(layout)
+const DUPLEX_MODE = { off: 'simplex', long: 'longEdge', short: 'shortEdge' } as const
+
+ipcMain.handle('print:printers', async (e) => {
+  const list = await e.sender.getPrintersAsync()
+  // Electron's typings omit the default flag; it is a property of the printer or an option, depending on the version.
+  const isDefault = (p: (typeof list)[number]) =>
+    (p as { isDefault?: boolean }).isDefault === true || String((p.options as Record<string, unknown> | undefined)?.['is-default']) === 'true'
+  return list.map((p) => ({ name: p.name, displayName: p.displayName || p.name, isDefault: isDefault(p) }))
+})
+
+ipcMain.handle('print:run', async (e, id: string, raw: PrintRunOptions) => {
+  const layout: PrintLayout = raw.layout ?? { kind: 'single' }
+  // Whatever the renderer sends is checked here: it only ever picks from fixed lists or numbers in range.
+  const opts = {
+    copies: Math.max(1, Math.min(999, Math.round(Number(raw.copies)) || 1)),
+    count: Math.max(0, Math.round(Number(raw.count)) || 0),
+    scaling: raw.scaling ?? ({ kind: 'fit' } as Scaling),
+    centre: raw.centre !== false,
+    landscape: raw.landscape === true,
+    paper: isPaperId(raw.paper) ? raw.paper : ('A4' as const),
+    colour: raw.colour !== false,
+    duplex: raw.duplex === 'long' || raw.duplex === 'short' ? raw.duplex : ('off' as const),
+    collate: raw.collate !== false,
+    toFile: raw.toFile === true
+  }
+  const fit = effectiveScaling(layout, opts.scaling).kind === 'fit'
+  const landscape = opts.landscape
   const job = printJobs.get(id)
   if (!job) throw new Error('Unknown print job')
+  // A printer is used without the system dialog only if it is one of the installed printers.
+  let deviceName = ''
+  if (!opts.toFile && typeof raw.deviceName === 'string' && raw.deviceName) {
+    const installed = await e.sender.getPrintersAsync()
+    if (!installed.some((p) => p.name === raw.deviceName)) {
+      await endJob(id)
+      return { ok: false, error: 'That printer is not installed' }
+    }
+    deviceName = raw.deviceName
+  }
   const parent = BrowserWindow.fromWebContents(e.sender) ?? undefined
   const win = new BrowserWindow({
     show: false,
@@ -641,31 +684,43 @@ ipcMain.handle('print:run', async (e, id: string, opts: { copies: number; fit: b
   })
   try {
     const html = join(job.dir, 'print.html')
-    await writeFile(html, printHtml(job.sizes.slice(0, opts.count), opts.fit, layout))
+    await writeFile(html, printHtml(job.sizes.slice(0, opts.count), opts.scaling, opts.centre, layout))
     await win.loadFile(html) // resolves once the page and its images have loaded
-    const margins = { marginType: opts.fit ? ('printableArea' as const) : ('none' as const) }
+    const margins = { marginType: fit ? ('printableArea' as const) : ('none' as const) }
+    const pdfOptions = {
+      pageSize: opts.paper,
+      landscape,
+      // Inches. A quarter inch stands in for a printer's unprintable edge when fitting.
+      margins: fit ? { top: 0.25, bottom: 0.25, left: 0.25, right: 0.25 } : { top: 0, bottom: 0, left: 0, right: 0 },
+      printBackground: true
+    }
     // Test hook: write what would be printed to a PDF instead of showing the system print dialog.
     if (e2e && process.env.OPENPDF_E2E_PRINT) {
-      const pdf = await win.webContents.printToPDF({
-        pageSize: 'A4',
-        landscape,
-        // Inches. A quarter inch stands in for a printer's unprintable edge when fitting.
-        margins: opts.fit ? { top: 0.25, bottom: 0.25, left: 0.25, right: 0.25 } : { top: 0, bottom: 0, left: 0, right: 0 },
-        printBackground: true
-      })
-      await writeFile(process.env.OPENPDF_E2E_PRINT, pdf)
+      await writeFile(process.env.OPENPDF_E2E_PRINT, await win.webContents.printToPDF(pdfOptions))
       return { ok: true, pdfPath: process.env.OPENPDF_E2E_PRINT }
     }
+    if (opts.toFile) {
+      const saveOpts = { title: 'Print to PDF file', defaultPath: 'print.pdf', filters: [{ name: 'PDF', extensions: ['pdf'] }] }
+      const res = parent ? await dialog.showSaveDialog(parent, saveOpts) : await dialog.showSaveDialog(saveOpts)
+      if (res.canceled || !res.filePath) return { ok: false }
+      await writeFile(res.filePath, await win.webContents.printToPDF(pdfOptions))
+      return { ok: true, pdfPath: res.filePath }
+    }
+    const duplex = effectiveDuplex(opts.duplex, layout)
     return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
       win.webContents.print(
         {
-          silent: false,
+          // A chosen printer is used directly; with none chosen the system's own dialog asks.
+          silent: deviceName !== '',
+          ...(deviceName ? { deviceName } : {}),
           printBackground: true,
-          copies: Math.max(1, Math.min(999, Math.round(opts.copies))),
+          copies: opts.copies,
+          collate: opts.collate,
+          color: opts.colour,
           margins,
           landscape,
-          // Booklets are printed on both sides and folded along the short edge.
-          ...(layout.kind === 'booklet' ? { duplexMode: 'shortEdge' as const } : {})
+          pageSize: opts.paper,
+          duplexMode: DUPLEX_MODE[duplex]
         },
         (ok, reason) => resolve(ok ? { ok } : { ok, error: reason === 'cancelled' ? undefined : reason })
       )

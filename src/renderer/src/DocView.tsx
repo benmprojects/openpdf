@@ -32,23 +32,11 @@ import {
   type Pt
 } from './annotations'
 import { writeAnnotations, type DeletedAnnot } from './annotWrite'
-import {
-  bookmarkRanges,
-  deletePages,
-  duplicatePages,
-  extractPages,
-  insertPagesFrom,
-  movePages,
-  parsePageRanges,
-  replacePages,
-  rotatePages,
-  splitByRanges,
-  splitBySize,
-  splitEvery,
-  type Part
-} from './pageOps'
+import { deletePages, extractPages, insertPagesFrom, mergeDocuments, movePages, rotatePages } from './pageOps'
+import { DeleteDialog, DuplicateDialog, ExtractDialog, InsertDialog, MergeDialog, MoveDialog, ReplaceDialog, RotateDialog, SplitDialog } from './PageOpsDialogs'
+import type { DocContext, PageDialogKind, PageDialogResult } from './pageDialogLogic'
+import { applyDialogEdit, buildExtractFiles, buildSplitFiles, doneMessage } from './pageDialogRun'
 import { getPageClip, onPageClip, setPageClip } from './pageClipboard'
-import { PDFDocument } from 'pdf-lib'
 import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
 import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
@@ -84,6 +72,7 @@ import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout
 import { GAP, PAD, Viewer, type Tool, type ViewAids, type ViewerHandle } from './Viewer'
 import type { Guide } from './GuideLayer'
 import { encodeRotatedPng, printDocument } from './print'
+import { PrintDialog, type PrintJob } from './PrintDialog'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
 import { annotsFromImported } from './importMap'
@@ -221,6 +210,7 @@ import {
   RotateCcwSquare,
   RotateCw,
   RotateCwSquare,
+  ArrowUpDown,
   Save,
   SaveAll,
   Scan,
@@ -254,16 +244,6 @@ import { displayDims, turn, type Rotation } from './viewRotation'
 import { msg, t } from './i18n'
 
 type ZoomMode = 'fit-width' | 'fit-page' | number
-
-interface PrintChoice {
-  /** 1 = one page per sheet; 'booklet' = folded booklet. */
-  perSheet: 1 | 2 | 4 | 6 | 9 | 16 | 'booklet'
-  range: 'all' | 'current' | 'custom'
-  custom: string
-  copies: number
-  fit: boolean
-  autoRotate: boolean
-}
 
 const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 8]
 const MIN_ZOOM = 0.1
@@ -367,13 +347,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [savedBytes, setSavedBytes] = useState(() => (recovered ? new Uint8Array(0) : data))
   const [pageUndo, setPageUndo] = useState<Uint8Array[]>([])
   const [pageRedo, setPageRedo] = useState<Uint8Array[]>([])
-  const [pageDialog, setPageDialog] = useState<
-    | { kind: 'extract'; pages: number[] }
-    | { kind: 'split'; pages: number[]; mode: 'count' | 'bookmarks' | 'size' }
-    | { kind: 'replace'; pages: number[]; other: { name: string; data: Uint8Array }; otherCount: number; theirs: string }
-    | null
-  >(null)
-  const [dialogText, setDialogText] = useState('')
+  // The Pages-tab dialog that is open, and the pages it should start from (the thumbnail selection or menu target).
+  const [pageDialog, setPageDialog] = useState<{ kind: PageDialogKind; selection: number[]; insertAfter?: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const [client, setClient] = useState<PdfClient | null>(null)
   /** The bytes the current client loaded: editing text needs the client to match the file, or its object numbers are stale. */
@@ -1743,29 +1718,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           return applyPageEdit((b) => deletePages(b, selection), `Deleted ${count}`)
         case 'move':
           return applyPageEdit((b) => movePages(b, selection, op.before))
-        case 'insert': {
-          const files = await window.openpdf.openFileDialog()
-          if (!files.length) return
-          let at = op.at
-          let total = 0
-          return applyPageEdit(async (b) => {
-            let cur = b
-            for (const f of files) {
-              const r = await insertPagesFrom(cur, f.data, at)
-              cur = r.bytes
-              at += r.count
-              total += r.count
-            }
-            return cur
-          }).then(() => total && setNotice({ kind: 'info', text: `Inserted ${total} page${total === 1 ? '' : 's'}` }))
-        }
+        case 'insert':
+          setPageDialog({ kind: 'insert', selection, insertAfter: op.at })
+          return
         case 'extract':
-          setDialogText(compactRanges(selection))
-          setPageDialog({ kind: 'extract', pages: selection })
+          setPageDialog({ kind: 'extract', selection })
           return
         case 'split':
-          setDialogText('1')
-          setPageDialog({ kind: 'split', pages: selection, mode: 'count' })
+          setPageDialog({ kind: 'split', selection })
           return
         case 'copy': {
           const src = annotsDirty ? await applyEdits(bytes) : bytes
@@ -1778,71 +1738,57 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           return applyPageEdit(async (b) => (await insertPagesFrom(b, clip.bytes, Math.min(op.at, n))).bytes, `Pasted ${clip.count} page${clip.count === 1 ? '' : 's'}`)
         }
         case 'duplicate':
-          return applyPageEdit((b) => duplicatePages(b, selection), `Duplicated ${count}`)
-        case 'replace': {
-          const file = await window.openpdf.pickFile({ name: 'PDF documents', ext: ['pdf'] })
-          if (!file) return
-          let otherCount: number
-          try {
-            otherCount = (await PDFDocument.load(file.data, { updateMetadata: false, ignoreEncryption: true })).getPageCount()
-          } catch {
-            return setNotice({ kind: 'error', text: `${file.name} could not be read as a PDF.` })
-          }
-          setDialogText(compactRanges(selection))
-          setPageDialog({ kind: 'replace', pages: selection, other: file, otherCount, theirs: `1-${Math.min(otherCount, selection.length)}` })
+          setPageDialog({ kind: 'duplicate', selection })
           return
-        }
+        case 'replace':
+          setPageDialog({ kind: 'replace', selection })
+          return
       }
     },
     [pages.length, applyPageEdit, annotsDirty, formValues, zDirty, bytes, name] // eslint-disable-line react-hooks/exhaustive-deps
   )
 
-  const submitPageDialog = async () => {
-    const d = pageDialog
-    if (!d) return
+  /** What the open page dialog works from. */
+  const dialogCtx: DocContext = { count: pages.length, current: Math.min(currentPage, Math.max(0, pages.length - 1)), selected: pageDialog?.selection ?? [], sizes: pages }
+
+  const submitPageDialog = async (r: PageDialogResult) => {
+    setPageDialog(null)
+    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
     try {
-      const src = annotsDirty ? await applyEdits(bytes) : bytes
-      if (d.kind === 'extract') {
-        const idx = parsePageRanges(dialogText, pages.length)
-        const out = await extractPages(src, idx)
-        const saved = await window.openpdf.saveFileAs(`${baseName} (extract).pdf`, out)
-        if (saved) setNotice({ kind: 'info', text: `Extracted ${idx.length} page${idx.length === 1 ? '' : 's'} to ${saved.name}` })
-      } else if (d.kind === 'replace') {
-        const mine = parsePageRanges(dialogText, pages.length)
-        const theirs = parsePageRanges(d.theirs, d.otherCount)
-        setPageDialog(null)
-        await applyPageEdit((b) => replacePages(b, mine, d.other.data, theirs), `Replaced ${mine.length} page${mine.length === 1 ? '' : 's'} with ${theirs.length} from ${d.other.name}`)
-        return
-      } else {
-        let parts: Part[]
-        if (d.mode === 'count') {
-          const size = parseInt(dialogText, 10)
-          if (!Number.isFinite(size) || size < 1) throw new Error('Enter a whole number of pages per file, 1 or more.')
-          parts = await splitEvery(src, size)
-        } else if (d.mode === 'size') {
-          const mb = parseFloat(dialogText.replace(',', '.'))
-          if (!(mb > 0)) throw new Error('Enter the largest file size in MB, for example 5.')
-          parts = await splitBySize(src, mb * 1024 * 1024)
-        } else {
-          if (!outline?.length) throw new Error('This document has no bookmarks to split by.')
-          parts = await splitByRanges(src, bookmarkRanges(outline, pages.length))
+      if (r.kind === 'extract' || r.kind === 'split') {
+        const src = annotsDirty ? await applyEdits(bytes) : bytes
+        if (r.kind === 'split') {
+          const res = await window.openpdf.saveMany(await buildSplitFiles(r, src, baseName), r.dir)
+          if (res) setNotice({ kind: 'info', text: `Wrote ${res.written.length} files to ${res.dir}` })
+          return
         }
-        // Characters Windows does not allow in file names, including control characters.
-        // eslint-disable-next-line no-control-regex
-        const safe = (t: string) => t.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim().slice(0, 80)
-        const res = await window.openpdf.saveMany(
-          parts.map((p) => ({ name: p.title ? `${baseName} - ${safe(p.title)}.pdf` : `${baseName} (pages ${p.first}-${p.last}).pdf`, data: p.bytes }))
-        )
-        if (res) setNotice({ kind: 'info', text: `Wrote ${res.written.length} files to ${res.dir}` })
+        if (r.each) {
+          const res = await window.openpdf.saveMany(await buildExtractFiles(src, r.pages, r.each.pattern, baseName), r.each.dir)
+          if (!res) return
+          setNotice({ kind: 'info', text: `Wrote ${res.written.length} files to ${res.dir}` })
+        } else {
+          const out = await extractPages(src, r.pages)
+          const saved = await window.openpdf.saveFileAs(`${baseName} (extract).pdf`, out)
+          if (!saved) return
+          setNotice({ kind: 'info', text: `Extracted ${plural(r.pages.length, 'page')} to ${saved.name}` })
+          if (r.openAfter) onNewDoc(saved.name, out)
+        }
+        if (r.deleteAfter) await applyPageEdit((b) => deletePages(b, r.pages), `Extracted ${plural(r.pages.length, 'page')} and removed them from this document`)
+        return
       }
-      setPageDialog(null)
+      if (r.kind === 'merge' && !r.includeThis) {
+        onNewDoc('Merged.pdf', (await mergeDocuments(r.items)).bytes)
+        setNotice({ kind: 'info', text: `Merged ${plural(r.count, 'page')} into a new document` })
+        return
+      }
+      await applyPageEdit((b) => applyDialogEdit(r, b), doneMessage(r))
     } catch (e) {
       setNotice({ kind: 'error', text: e instanceof Error ? e.message : String(e) })
     }
   }
 
-  /** Merge: append whole files to the end of this document. */
-  const mergeFiles = () => void runPageOp({ kind: 'insert', at: pages.length }, [])
+  /** Opens a Pages-tab dialog on the thumbnail selection (or the current page when nothing is selected). */
+  const openPageDialog = (kind: PageDialogKind) => setPageDialog({ kind, selection: pageSel, insertAfter: Math.max(...opPages) + 1 })
 
   // ---- Reading: read aloud, reading mode, page colours ----------------------------------------------
   const [readingMode, setReadingMode] = useState(false)
@@ -2419,42 +2365,44 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }, [pages.length, bytes, annotsDirty, formValues, zDirty, locked, annots, deleted, hiddenLayers, currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Print ----------------------------------------------------------------------------------------
-  const [printDialog, setPrintDialog] = useState<PrintChoice | null>(null)
+  const [printDialog, setPrintDialog] = useState<{ viewRange: [number, number] | null } | null>(null)
   const [printing, setPrinting] = useState<{ done: number; total: number; ctrl: AbortController } | null>(null)
   const openPrint = useCallback(() => {
-    if (!pages.length || printing) return
-    setPrintDialog((d) => d ?? { range: 'all', custom: `1-${pages.length}`, copies: 1, fit: true, autoRotate: true, perSheet: 1 })
-  }, [pages.length, printing])
-
-  const runPrint = async (c: PrintChoice) => {
-    let list: number[]
-    try {
-      list =
-        c.range === 'all' ? pages.map((_, i) => i) : c.range === 'current' ? [currentPage] : parsePageRanges(c.custom, pages.length)
-    } catch (e) {
-      setNotice({ kind: 'error', text: e instanceof Error ? e.message : String(e) })
-      return
+    if (!pages.length || printing || permissions?.print === 'none') return
+    // The pages showing in the view now: those whose box overlaps the scrolling area.
+    let viewRange: [number, number] | null = null
+    const scroller = [...document.querySelectorAll<HTMLElement>('.scroller')].find((el) => el.offsetParent !== null) // the shown tab's
+    const area = scroller?.getBoundingClientRect()
+    if (scroller && area) {
+      const seen: number[] = []
+      scroller.querySelectorAll<HTMLElement>('[data-page]').forEach((el) => {
+        const r = el.getBoundingClientRect()
+        if (r.bottom > area.top && r.top < area.bottom && r.right > area.left && r.left < area.right) seen.push(Number(el.dataset.page))
+      })
+      if (seen.length) viewRange = [Math.min(...seen), Math.max(...seen)]
     }
+    setPrintDialog((d) => d ?? { viewRange })
+  }, [pages.length, printing, permissions])
+
+  /** The document as it prints: pending annotation edits written into a copy (so the printout matches what Save would write), and layers hidden in the view hidden on paper too. */
+  const preparePrint = async () => {
+    let src = bytes
+    if (annotsDirty && !locked) src = await applyEdits(bytes)
+    if (hiddenLayers) src = await withHiddenLayers(src, hiddenLayers)
+    return src
+  }
+
+  const runPrint = async (job: PrintJob) => {
+    const list = job.options.pages
     setPrintDialog(null)
     const ctrl = new AbortController()
     setPrinting({ done: 0, total: list.length, ctrl })
     try {
-      // Pending annotation edits are written into a copy first, so the printout matches what Save would write.
-      // PDFium then draws everything, including annotations, at print resolution.
-      let src = bytes
-      if (annotsDirty && !locked) src = await applyEdits(bytes)
-      // Print what is on screen: layers hidden in the view are hidden on paper too.
-      if (hiddenLayers) src = await withHiddenLayers(src, hiddenLayers)
+      // PDFium draws everything, including annotations, at print resolution.
       const res = await printDocument(
-        src,
+        job.bytes,
         undefined,
-        {
-          pages: list,
-          copies: c.copies,
-          fit: c.fit,
-          autoRotate: c.autoRotate,
-          layout: c.perSheet === 'booklet' ? { kind: 'booklet' } : c.perSheet === 1 ? { kind: 'single' } : { kind: 'nup', perSheet: c.perSheet }
-        },
+        job.options,
         (done, total) => setPrinting((p) => (p ? { ...p, done, total } : p)),
         ctrl.signal
       )
@@ -2926,24 +2874,26 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RStack>
                   <RB icon={RotateCcwSquare} label={t('Rotate left')} onClick={() => void runPageOp({ kind: 'rotate', delta: -90 }, opPages)} disabled={!pages.length || busy} title={t('Rotate the selected pages anticlockwise (changes the file)')} />
                   <RB icon={RotateCwSquare} label={t('Rotate right')} onClick={() => void runPageOp({ kind: 'rotate', delta: 90 }, opPages)} disabled={!pages.length || busy} title={t('Rotate the selected pages clockwise (changes the file)')} />
+                  <RB icon={RotateCw} label={t('Rotate pages…')} onClick={() => openPageDialog('rotate')} disabled={!pages.length || busy} title={t('Rotate odd, even, landscape, portrait or chosen pages')} />
                 </RStack>
-                <RB big icon={Trash2} label={t('Delete')} onClick={() => void runPageOp({ kind: 'delete' }, opPages)} disabled={!pages.length || busy || opPages.length >= pages.length} title={t('Delete the selected pages')} />
+                <RB big icon={Trash2} label={t('Delete')} onClick={() => openPageDialog('delete')} disabled={!pages.length || busy || pages.length < 2} title={t('Delete the selected pages')} />
+                <RB big icon={ArrowUpDown} label={t('Move')} onClick={() => openPageDialog('move')} disabled={!pages.length || busy || pages.length < 2} title={t('Move pages to another place in the document')} />
               </RGroup>
               <RGroup label={t('Copy')}>
                 <RStack>
                   <RB icon={Copy} label={t('Copy pages')} onClick={() => void runPageOp({ kind: 'copy' }, opPages)} disabled={!pages.length || busy} title={t('Copy the selected pages (Ctrl+C in the thumbnails)')} />
                   <RB icon={ClipboardPaste} label={t('Paste pages')} onClick={() => void runPageOp({ kind: 'paste', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy || !hasPageClip} title={t('Paste copied pages after the selected pages (Ctrl+V in the thumbnails)')} />
-                  <RB icon={CopyPlus} label={t('Duplicate')} onClick={() => void runPageOp({ kind: 'duplicate' }, opPages)} disabled={!pages.length || busy} title={t('Insert copies of the selected pages after them')} />
+                  <RB icon={CopyPlus} label={t('Duplicate')} onClick={() => openPageDialog('duplicate')} disabled={!pages.length || busy} title={t('Insert copies of the selected pages after them')} />
                 </RStack>
-                <RB big icon={Replace} label={t('Replace')} onClick={() => void runPageOp({ kind: 'replace' }, opPages)} disabled={!pages.length || busy} title={t('Replace the selected pages with pages from another PDF')} />
+                <RB big icon={Replace} label={t('Replace')} onClick={() => openPageDialog('replace')} disabled={!pages.length || busy} title={t('Replace the selected pages with pages from another PDF')} />
               </RGroup>
               <RGroup label={t('Insert and extract')}>
-                <RB big icon={FilePlus2} label={t('Insert')} onClick={() => void runPageOp({ kind: 'insert', at: Math.max(...opPages) + 1 }, opPages)} disabled={!pages.length || busy} title={t('Insert pages from another PDF after the selected pages')} />
-                <RB big icon={FileOutput} label={t('Extract')} onClick={() => void runPageOp({ kind: 'extract' }, opPages)} disabled={!pages.length || busy} title={t('Save the selected pages as a new PDF')} />
+                <RB big icon={FilePlus2} label={t('Insert')} onClick={() => openPageDialog('insert')} disabled={!pages.length || busy} title={t('Insert pages from another PDF after the selected pages')} />
+                <RB big icon={FileOutput} label={t('Extract')} onClick={() => openPageDialog('extract')} disabled={!pages.length || busy} title={t('Save the selected pages as a new PDF')} />
               </RGroup>
               <RGroup label={t('Documents')}>
-                <RB big icon={Files} label={t('Merge')} onClick={mergeFiles} disabled={!pages.length || busy} title={t('Merge: add the pages of other PDFs to the end')} />
-                <RB big icon={Scissors} label={t('Split')} onClick={() => void runPageOp({ kind: 'split' }, opPages)} disabled={!pages.length || busy} title={t('Split into files of a set number of pages')} />
+                <RB big icon={Files} label={t('Merge')} onClick={() => openPageDialog('merge')} disabled={!pages.length || busy} title={t('Merge: add the pages of other PDFs to the end')} />
+                <RB big icon={Scissors} label={t('Split')} onClick={() => openPageDialog('split')} disabled={!pages.length || busy} title={t('Split into files of a set number of pages')} />
                 <RB big icon={GitCompare} label={t('Compare')} onClick={() => setCompareOpen(true)} disabled={!pages.length || busy} title={t('Compare this document with another PDF: the words, and how the pages look')} />
               </RGroup>
               <RGroup label={t('Optimise')}>
@@ -3582,80 +3532,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       )}
 
       {printDialog && (
-        <form
-          className="page-dialog print-dialog"
-          aria-label="Print"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void runPrint(printDialog)
-          }}
-        >
-          <span className="muted">Print</span>
-          <select
-            aria-label="Pages to print"
-            value={printDialog.range}
-            onChange={(e) => setPrintDialog({ ...printDialog, range: e.target.value as PrintChoice['range'] })}
-          >
-            <option value="all">All pages</option>
-            <option value="current">Current page ({currentPage + 1})</option>
-            <option value="custom">Pages…</option>
-          </select>
-          {printDialog.range === 'custom' && (
-            <input
-              autoFocus
-              aria-label="Page range, for example 1-3, 5"
-              title="For example 1-3, 5"
-              value={printDialog.custom}
-              onChange={(e) => setPrintDialog({ ...printDialog, custom: e.target.value })}
-            />
-          )}
-          <label>
-            Copies
-            <input
-              type="number"
-              min={1}
-              max={999}
-              className="copies"
-              value={printDialog.copies}
-              onChange={(e) => setPrintDialog({ ...printDialog, copies: Math.max(1, Math.min(999, Number(e.target.value) || 1)) })}
-            />
-          </label>
-          <select
-            aria-label="Pages per sheet"
-            value={String(printDialog.perSheet)}
-            onChange={(e) => {
-              const v = e.target.value
-              setPrintDialog({ ...printDialog, perSheet: v === 'booklet' ? 'booklet' : (Number(v) as PrintChoice['perSheet']) })
-            }}
-          >
-            <option value="1">1 page per sheet</option>
-            {[2, 4, 6, 9, 16].map((n) => (
-              <option key={n} value={n}>
-                {n} pages per sheet
-              </option>
-            ))}
-            <option value="booklet">Booklet (double-sided, fold)</option>
-          </select>
-          <select
-            aria-label="Page scaling"
-            disabled={printDialog.perSheet !== 1}
-            value={printDialog.fit ? 'fit' : 'actual'}
-            onChange={(e) => setPrintDialog({ ...printDialog, fit: e.target.value === 'fit' })}
-          >
-            <option value="fit">Fit to paper</option>
-            <option value="actual">Actual size</option>
-          </select>
-          <label title="Turn landscape pages so they fill portrait paper">
-            <input type="checkbox" disabled={printDialog.perSheet !== 1} checked={printDialog.autoRotate} onChange={(e) => setPrintDialog({ ...printDialog, autoRotate: e.target.checked })} />
-            Auto-rotate
-          </label>
-          <button className="primary" type="submit">
-            Print…
-          </button>
-          <button type="button" onClick={() => setPrintDialog(null)}>
-            Cancel
-          </button>
-        </form>
+        <PrintDialog
+          pageCount={pages.length}
+          sizes={pages}
+          currentPage={currentPage}
+          viewRange={printDialog.viewRange}
+          selected={pageSel}
+          prepare={preparePrint}
+          onPrint={(job) => void runPrint(job)}
+          onClose={() => setPrintDialog(null)}
+        />
       )}
 
       {printing && (
@@ -3669,60 +3555,29 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </div>
       )}
 
-      {pageDialog && (
-        <form
-          className="page-dialog"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void submitPageDialog()
-          }}
-        >
-          {pageDialog.kind === 'split' && (
-            <label>
-              Split
-              <select
-                aria-label="Split by"
-                value={pageDialog.mode}
-                onChange={(e) => {
-                  const mode = e.target.value as 'count' | 'bookmarks' | 'size'
-                  setPageDialog({ ...pageDialog, mode })
-                  setDialogText(mode === 'size' ? '5' : '1')
-                }}
-              >
-                <option value="count">Every N pages</option>
-                <option value="bookmarks" disabled={!outline?.length}>
-                  At each top-level bookmark
-                </option>
-                <option value="size">By file size</option>
-              </select>
-            </label>
-          )}
-          {!(pageDialog.kind === 'split' && pageDialog.mode === 'bookmarks') && (
-            <label>
-              {pageDialog.kind === 'extract'
-                ? 'Pages to extract (for example 1-3, 5)'
-                : pageDialog.kind === 'replace'
-                  ? 'Replace these pages'
-                  : pageDialog.mode === 'size'
-                    ? 'Largest file size (MB)'
-                    : 'Pages per file'}
-              <input autoFocus aria-label={pageDialog.kind === 'replace' ? 'Pages to replace' : undefined} value={dialogText} onChange={(e) => setDialogText(e.target.value)} />
-            </label>
-          )}
-          {pageDialog.kind === 'replace' && (
-            <label>
-              With pages of {pageDialog.other.name} (1-{pageDialog.otherCount})
-              <input aria-label="Replacement pages" value={pageDialog.theirs} onChange={(e) => setPageDialog({ ...pageDialog, theirs: e.target.value })} />
-            </label>
-          )}
-          <button className="primary" type="submit">
-            {pageDialog.kind === 'extract' ? 'Extract…' : pageDialog.kind === 'replace' ? 'Replace' : 'Split…'}
-          </button>
-          <button type="button" onClick={() => setPageDialog(null)}>
-            Cancel
-          </button>
-        </form>
-      )}
+      {pageDialog && (() => {
+        const common = { ctx: dialogCtx, name: baseName, onCancel: () => setPageDialog(null), onSubmit: (r: PageDialogResult) => void submitPageDialog(r) }
+        switch (pageDialog.kind) {
+          case 'insert':
+            return <InsertDialog {...common} initialPage={pageDialog.insertAfter ?? currentPage + 1} />
+          case 'extract':
+            return <ExtractDialog {...common} />
+          case 'delete':
+            return <DeleteDialog {...common} />
+          case 'rotate':
+            return <RotateDialog {...common} />
+          case 'replace':
+            return <ReplaceDialog {...common} />
+          case 'split':
+            return <SplitDialog {...common} bookmarks={outline ?? []} />
+          case 'merge':
+            return <MergeDialog {...common} />
+          case 'duplicate':
+            return <DuplicateDialog {...common} />
+          case 'move':
+            return <MoveDialog {...common} />
+        }
+      })()}
 
       <div className={paneSide === 'right' ? 'body pane-right' : 'body'}>
         {error ? (

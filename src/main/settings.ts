@@ -1,6 +1,7 @@
 import { app, nativeTheme, session } from 'electron'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isPaperId } from '../shared/printPlan'
 
 export type Theme = 'system' | 'dark' | 'light'
 
@@ -25,6 +26,9 @@ export interface Settings {
   updates: { check: boolean; feed: string }
   /** `system`, or a language code such as en-AU or fr. */
   language: string
+  /** The printer last used in the Print dialog (its system name), and the paper size last chosen there. */
+  printer: string
+  printPaper: string
 }
 
 /** Mirrors ToolStyle in the renderer's annotations.ts. */
@@ -73,7 +77,9 @@ const defaults = (): Settings => ({
   toolPresets: [],
   updates: { check: false, feed: '' },
   // Tests always start in Australian English, whatever the machine's language.
-  language: process.env.OPENPDF_E2E === '1' ? 'en-AU' : 'system'
+  language: process.env.OPENPDF_E2E === '1' ? 'en-AU' : 'system',
+  printer: '',
+  printPaper: 'A4'
 })
 
 let current: Settings | null = null
@@ -116,7 +122,9 @@ function sanitise(raw: Partial<Settings>): Settings {
       check: typeof raw.updates?.check === 'boolean' ? raw.updates.check : false,
       feed: typeof raw.updates?.feed === 'string' ? raw.updates.feed.trim().slice(0, 300) : ''
     },
-    language: typeof raw.language === 'string' && (raw.language === 'system' || /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(raw.language)) ? raw.language : 'system'
+    language: typeof raw.language === 'string' && (raw.language === 'system' || /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(raw.language)) ? raw.language : 'system',
+    printer: typeof raw.printer === 'string' ? raw.printer.slice(0, 300) : d.printer,
+    printPaper: isPaperId(raw.printPaper) ? raw.printPaper : d.printPaper
   }
 }
 

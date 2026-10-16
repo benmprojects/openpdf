@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { bookmarkRanges, deletePages, duplicatePages, extractPages, insertPagesFrom, movePages, parsePageRanges, replacePages, rotatePages, splitByRanges, splitBySize, splitEvery } from './pageOps'
+import { bookmarkRanges, deletePages, duplicatePages, extractPages, insertBlankPages, insertMany, insertPagesFrom, mergeDocuments, movePages, parsePageRanges, replacePages, rotatePages, splitByRanges, splitBySize, splitEvery } from './pageOps'
 
 /** A PDF whose page i has width 100 + i, so pages can be told apart after reordering. */
 async function makePdf(n: number): Promise<Uint8Array> {
@@ -97,5 +97,29 @@ describe('copy, replace and split', () => {
     expect(parts).toHaveLength(10)
     expect(parts.every((p) => p.bytes.length <= limit)).toBe(true)
     expect(parts.map((p) => p.last - p.first + 1).reduce((a, b) => a + b)).toBe(10)
+  })
+})
+
+describe('dialog helpers', () => {
+  it('duplicates with several copies, after each page, or at the end', async () => {
+    const src = await makePdf(4)
+    expect(await widths(await duplicatePages(src, [1, 2], 2))).toEqual([100, 101, 102, 101, 102, 101, 102, 103])
+    expect(await widths(await duplicatePages(src, [0, 2], 1, 'each'))).toEqual([100, 100, 101, 102, 102, 103])
+    expect(await widths(await duplicatePages(src, [0, 2], 2, 'each'))).toEqual([100, 100, 100, 101, 102, 102, 102, 103])
+    expect(await widths(await duplicatePages(src, [1], 2, 'end'))).toEqual([100, 101, 102, 103, 101, 101])
+  })
+  it('inserts blank pages of a given size', async () => {
+    const out = await PDFDocument.load(await insertBlankPages(await makePdf(3), 1, 2, { width: 595, height: 842 }))
+    expect(out.getPages().map((p) => [Math.round(p.getWidth()), Math.round(p.getHeight())])).toEqual([[100, 200], [595, 842], [595, 842], [101, 200], [102, 200]])
+  })
+  it('inserts several documents with their own page selections, in order', async () => {
+    const a = await makePdf(3) // 100..102
+    const r = await insertMany(await makePdf(2), 1, [{ data: a, pages: [2] }, { data: a, pages: null }])
+    expect(r.count).toBe(4)
+    expect(await widths(r.bytes)).toEqual([100, 102, 100, 101, 102, 101])
+  })
+  it('merges into a new document', async () => {
+    const r = await mergeDocuments([{ data: await makePdf(2) }, { data: await makePdf(1) }])
+    expect(await widths(r.bytes)).toEqual([100, 101, 100])
   })
 })

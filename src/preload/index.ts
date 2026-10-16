@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { RecoveryEntry, Settings } from '../main/settings'
 import type { EncryptionInfo, EncryptOptions } from '../shared/pdfSecurity'
-import type { PrintLayout } from '../shared/printLayout'
+import type { PrintRunOptions } from '../shared/printPlan'
 import type { ImageStamp } from '../main/stamps'
 import type { CertInfo, ChainResult, SignSource } from '../main/signing'
 import type { OcrResult } from '../main/ocr'
@@ -36,8 +36,8 @@ const api = {
   saveFileAs: (suggestedName: string, data: Uint8Array): Promise<{ name: string; path: string } | null> =>
     ipcRenderer.invoke('file:save-as', suggestedName, data),
   /** Asks for a folder and writes the files into it, never overwriting. Resolves null if cancelled. */
-  saveMany: (files: { name: string; data: Uint8Array }[]): Promise<{ dir: string; written: string[] } | null> =>
-    ipcRenderer.invoke('file:save-many', files),
+  saveMany: (files: { name: string; data: Uint8Array }[], into?: string | null): Promise<{ dir: string; written: string[] } | null> =>
+    ipcRenderer.invoke('file:save-many', files, into ?? null),
   /** Asks for a folder and writes files of any type into it, never overwriting. Resolves null if cancelled. */
   saveFiles: (files: { name: string; data: Uint8Array }[]): Promise<{ dir: string; written: string[] } | null> => ipcRenderer.invoke('file:save-files', files),
   /** Save dialog for a text file; resolves to the written path, or null if cancelled. */
@@ -134,11 +134,10 @@ const api = {
   printBegin: (): Promise<string> => ipcRenderer.invoke('print:begin'),
   printPage: (job: string, n: number, png: Uint8Array, w: number, h: number): Promise<void> =>
     ipcRenderer.invoke('print:page', job, n, png, w, h),
-  printRun: (
-    job: string,
-    opts: { copies: number; fit: boolean; count: number; layout?: PrintLayout }
-  ): Promise<{ ok: boolean; error?: string; pdfPath?: string }> =>
+  printRun: (job: string, opts: PrintRunOptions): Promise<{ ok: boolean; error?: string; pdfPath?: string }> =>
     ipcRenderer.invoke('print:run', job, opts),
+  /** The installed printers, for the Print dialog. */
+  printPrinters: (): Promise<{ name: string; displayName: string; isDefault: boolean }[]> => ipcRenderer.invoke('print:printers'),
   printCancel: (job: string): Promise<void> => ipcRenderer.invoke('print:cancel', job),
   /** Resolves null if the file is gone (it is then dropped from the recent list). */
   openRecent: (path: string): Promise<OpenedFile | null> => ipcRenderer.invoke('file:open-recent', path),
