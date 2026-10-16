@@ -27,6 +27,14 @@ jobs:
           $v = (Get-Content package.json | ConvertFrom-Json).version
           if ("v$v" -ne "${{ github.ref_name }}") { Write-Error "package.json says $v but the tag is ${{ github.ref_name }}"; exit 1 }
       - run: npm run build
+      # Create the release first: electron-builder uploads its files in parallel, and when none exists yet each
+      # upload can create its own copy of the release.
+      - name: Create the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # The installer is signed when a certificate is supplied as secrets (CSC_LINK, a base64 .pfx, and CSC_KEY_PASSWORD).
       - name: Build and publish the installer
         if: startsWith(github.ref, 'refs/tags/v')
