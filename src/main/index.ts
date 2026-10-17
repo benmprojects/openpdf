@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, net, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, net, session, shell } from 'electron'
 import { mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { lookup } from 'node:dns/promises'
 import { tmpdir } from 'node:os'
@@ -230,6 +230,13 @@ ipcMain.handle('settings:import', async (e): Promise<{ ok: true; settings: Setti
   const checked = parseSettingsImport(text)
   if (!checked.ok) return checked
   return { ok: true, settings: await updateSettings(checked.patch), applied: Object.keys(checked.patch).length, skipped: checked.skipped }
+})
+
+/** The Spelling pane: whether the dictionary is on, which languages, and adding a word to it. */
+ipcMain.handle('spell:status', () => ({ enabled: session.defaultSession.isSpellCheckerEnabled(), languages: session.defaultSession.getSpellCheckerLanguages() }))
+ipcMain.handle('spell:add', (_e, word: unknown) => {
+  if (typeof word !== 'string' || !word.trim() || word.length > 100) return false
+  return session.defaultSession.addWordToSpellCheckerDictionary(word.trim())
 })
 
 /** Send by e-mail: Windows gives a program no way to attach a file to a message without native mail code, so the saved file is shown in Explorer, or a message is started without it. */

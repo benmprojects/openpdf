@@ -27,7 +27,7 @@ export interface OptimiseResult {
 const name = (d: PDFDict, key: string) => d.lookupMaybe(PDFName.of(key), PDFName)?.decodeText()
 
 /** The single filter of an image, '' for none, or null for a chain we do not handle. */
-function filterOf(d: PDFDict): string | null {
+export function filterOf(d: PDFDict): string | null {
   const f = d.lookup(PDFName.of('Filter'))
   if (!f) return ''
   if (f instanceof PDFName) return f.decodeText()
@@ -46,7 +46,7 @@ function components(d: PDFDict): 1 | 3 | 0 {
   return 0
 }
 
-async function inflate(data: Uint8Array): Promise<Uint8Array> {
+export async function inflate(data: Uint8Array): Promise<Uint8Array> {
   const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate'))
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
@@ -84,7 +84,7 @@ export function unpredictPng(data: Uint8Array, columns: number, bpp: number): Ui
 }
 
 /** Decodes an image we can handle to something a canvas can draw, or null. */
-async function decode(stream: PDFRawStream, w: number, h: number): Promise<ImageBitmap | null> {
+export async function decode(stream: PDFRawStream, w: number, h: number): Promise<ImageBitmap | null> {
   const d = stream.dict
   const filter = filterOf(d)
   if (filter === 'DCTDecode') return createImageBitmap(new Blob([stream.contents as BlobPart], { type: 'image/jpeg' }))
@@ -121,7 +121,7 @@ async function toJpeg(bmp: ImageBitmap, w: number, h: number, quality: number): 
 }
 
 /** Re-encodes oversized images and drops thumbnails with pdf-lib. */
-export async function shrinkImages(bytes: Uint8Array, o: Pick<OptimiseOptions, 'maxDpi' | 'quality' | 'dropThumbnails'>): Promise<OptimiseResult> {
+export async function shrinkImages(bytes: Uint8Array, o: Pick<OptimiseOptions, 'maxDpi' | 'quality' | 'dropThumbnails'> & { recompressAll?: boolean }): Promise<OptimiseResult> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
   const ctx = doc.context
   let thumbnails = 0
@@ -132,9 +132,9 @@ export async function shrinkImages(bytes: Uint8Array, o: Pick<OptimiseOptions, '
       page.node.delete(PDFName.of('Thumb'))
       thumbnails++
     }
-    if (o.maxDpi === null) continue
+    if (o.maxDpi === null && !o.recompressAll) continue
     const { width, height } = page.getSize()
-    const px = (Math.max(width, height) / 72) * o.maxDpi
+    const px = o.maxDpi === null ? Infinity : (Math.max(width, height) / 72) * o.maxDpi
     const xobjects = page.node.Resources()?.lookupMaybe(PDFName.of('XObject'), PDFDict)
     for (const [, v] of xobjects?.entries() ?? []) {
       if (!(v instanceof PDFRef)) continue
@@ -153,8 +153,8 @@ export async function shrinkImages(bytes: Uint8Array, o: Pick<OptimiseOptions, '
     const bpc = d.lookupMaybe(PDFName.of('BitsPerComponent'), PDFNumber)?.asNumber()
     // Masks, decode arrays, colour-key masks and anything but 8-bit grey or RGB stay as they are.
     if (!w || !h || bpc !== 8 || !components(d) || d.has(PDFName.of('ImageMask')) || d.has(PDFName.of('Decode')) || d.has(PDFName.of('Mask'))) continue
-    const s = px / Math.max(w, h)
-    if (s > 0.8) continue
+    const s = Math.min(1, px / Math.max(w, h))
+    if (s > 0.8 && !o.recompressAll) continue
     const nw = Math.max(1, Math.round(w * s))
     const nh = Math.max(1, Math.round(h * s))
     let jpeg: Uint8Array
@@ -178,6 +178,15 @@ export async function shrinkImages(bytes: Uint8Array, o: Pick<OptimiseOptions, '
     images++
   }
   return { bytes: images || thumbnails ? await doc.save({ useObjectStreams: false }) : bytes, images, thumbnails }
+}
+
+/**
+ * Recompress pictures on their own: every 8-bit grey or RGB picture is re-encoded as JPEG at `quality` (and brought
+ * down to `maxDpi` when given); a picture is only replaced when the result is smaller. Nothing else in the file is
+ * changed. Repeated recompression of the same JPEG loses quality each time.
+ */
+export async function recompressPictures(bytes: Uint8Array, o: { quality: number; maxDpi: number | null }): Promise<OptimiseResult> {
+  return shrinkImages(bytes, { maxDpi: o.maxDpi, quality: o.quality, dropThumbnails: false, recompressAll: true })
 }
 
 /** The whole optimisation: images and thumbnails here, then qpdf. */

@@ -3,6 +3,7 @@ import type { PdfClient } from './pdfClient'
 import { groupBlocks, type TextBlock } from './textBlocks'
 import type { TextObject } from './pdfiumRaw'
 import type { PageFontInfo } from './embeddedFont'
+import { AlignCenter, AlignJustify, AlignLeft, AlignRight } from 'lucide-react'
 import { formatIsEmpty, weightAndSlant, type StandardFamily, type TextFormat } from './textEdit'
 import { msg, t } from './i18n'
 
@@ -39,6 +40,23 @@ export function TextEditLayer({
   const done = useRef(false)
   const bar = useRef<HTMLDivElement>(null)
   const [format, setFormat] = useState<TextFormat>({})
+  const omit = (f: TextFormat, key: keyof TextFormat): TextFormat => {
+    const rest = { ...f }
+    delete rest[key]
+    return rest
+  }
+  /** Sets or clears a number in the format from what was typed (empty clears it; anything that is not a number is ignored). */
+  const [spText, setSpText] = useState({ charSpacing: '', wordSpacing: '', horizontalScale: '' })
+  const setNumber = (key: 'charSpacing' | 'wordSpacing' | 'horizontalScale', text: string) => {
+    setSpText((o) => ({ ...o, [key]: text }))
+    setFormat((f) => {
+      if (text.trim() === '' || text === '-') return omit(f, key)
+      const v = Number(text)
+      if (!Number.isFinite(v)) return f
+      if (key === 'horizontalScale' && !(v >= 10 && v <= 400)) return f
+      return { ...f, [key]: v }
+    })
+  }
   const [fonts, setFonts] = useState<PageFontInfo[]>([])
   const [sizeText, setSizeText] = useState('')
 
@@ -55,6 +73,7 @@ export function TextEditLayer({
 
   useEffect(() => {
     setFormat({})
+    setSpText({ charSpacing: '', wordSpacing: '', horizontalScale: '' })
     setSizeText('')
     if (editing === null || !loadFonts) return
     let live = true
@@ -205,6 +224,32 @@ export function TextEditLayer({
                 <button type="button" aria-label={t('Italic')} aria-pressed={italic} disabled={noStyles} title={noStyles ? noStylesHint : t('Italic')} onClick={() => setFormat({ ...format, italic: !italic })}>
                   <i>I</i>
                 </button>
+                <span className="textedit-spacing" role="group" aria-label={t('Spacing and alignment')}>
+                  <label>
+                    <span>{t('Letter gap')}</span>
+                    <input aria-label={t('Character spacing (points)')} inputMode="decimal" size={3} placeholder="0" value={spText.charSpacing} onChange={(e) => setNumber('charSpacing', e.target.value)} />
+                  </label>
+                  <label>
+                    <span>{t('Word gap')}</span>
+                    <input aria-label={t('Word spacing (points)')} inputMode="decimal" size={3} placeholder="0" value={spText.wordSpacing} onChange={(e) => setNumber('wordSpacing', e.target.value)} />
+                  </label>
+                  <label>
+                    <span>{t('Width %')}</span>
+                    <input aria-label={t('Letter width (percent)')} inputMode="numeric" size={3} placeholder="100" value={spText.horizontalScale} onChange={(e) => setNumber('horizontalScale', e.target.value)} />
+                  </label>
+                  {(
+                    [
+                      ['left', AlignLeft, t('Align left')],
+                      ['centre', AlignCenter, t('Align centre')],
+                      ['right', AlignRight, t('Align right')],
+                      ['justify', AlignJustify, t('Justify')]
+                    ] as const
+                  ).map(([value, Icon, label]) => (
+                    <button key={value} type="button" aria-label={label} title={label} aria-pressed={(format.align ?? 'left') === value} onClick={() => setFormat((f) => (value === 'left' ? omit(f, 'align') : { ...f, align: value }))}>
+                      <Icon size={14} aria-hidden />
+                    </button>
+                  ))}
+                </span>
                 {picked?.subset && <p className="hint muted">{t('A subset font only holds the characters the file already uses. If the text needs others, the change is refused.')}</p>}
               </>
             )

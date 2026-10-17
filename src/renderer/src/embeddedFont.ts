@@ -124,6 +124,8 @@ export interface FontCodec {
   widthOf(text: string, size: number): number
   /** Codes for `text`. `known` lists characters that are certainly in the font (those of the text being replaced). */
   encode(text: string, known?: string): EncodeResult
+  /** The text the codes (bytes, one character per byte) stand for; characters with no known meaning come out as U+FFFD. */
+  decode(bytes: string): string
 }
 
 /** Why a font cannot be used to write new text, or null when it can. */
@@ -144,6 +146,9 @@ export function buildCodec(
   const win = new Map<string, number>()
   if (src.winAnsi) for (const [code, ch] of winAnsiMap()) win.set(ch, code)
   const codeWidth = src.bytesPerCode
+  const forward = new Map<number, string>()
+  if (src.winAnsi) for (const [code, ch] of winAnsiMap()) forward.set(code, ch)
+  if (src.toUnicode) for (const [code, ch] of parseToUnicode(src.toUnicode)) forward.set(code, ch)
   const widthOfText = (text: string, size: number) => {
     let w = 0
     for (const ch of text) {
@@ -155,6 +160,14 @@ export function buildCodec(
   return {
     info,
     widthOf: widthOfText,
+    decode(bytes) {
+      let out = ''
+      for (let i = 0; i < bytes.length; i += codeWidth) {
+        const code = codeWidth === 2 ? (bytes.charCodeAt(i) << 8) | (bytes.charCodeAt(i + 1) & 255) : bytes.charCodeAt(i)
+        out += forward.get(code) ?? '�'
+      }
+      return out
+    },
     encode(text, known = '') {
       let bytes = ''
       const missing: string[] = []
@@ -208,7 +221,11 @@ export function compositeWidths(w: PDFArray | undefined, dw: number): (code: num
  * with (a composite font with a named CMap, a simple font with an unknown encoding and no ToUnicode map).
  */
 export function openPageFont(page: PDFPage, resource: string): { codec: FontCodec } | { problem: FontProblem } {
-  const fonts = fontResources(page)
+  return openFont(fontResources(page), resource)
+}
+
+/** Like `openPageFont`, for any /Font resource dictionary (a page's or a form's). */
+export function openFont(fonts: PDFDict | undefined, resource: string): { codec: FontCodec } | { problem: FontProblem } {
   const font = fonts?.lookup(PDFName.of(resource))
   if (!(font instanceof PDFDict)) return { problem: 'That font is no longer on the page.' }
   const info = describe(resource, font)

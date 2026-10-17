@@ -27,6 +27,8 @@ export function ObjectBar({
   onDisplayChange,
   onDelete,
   onReplace,
+  onCropByDrag,
+  cropping,
   onAction
 }: {
   isPath: boolean
@@ -37,6 +39,9 @@ export function ObjectBar({
   onDisplayChange: (m: Matrix6) => void
   onDelete: () => void
   onReplace?: () => void
+  /** Turns on dragging the picture's edges to trim it. */
+  onCropByDrag?: () => void
+  cropping?: boolean
   onAction: (a: ObjectAction) => void
 }) {
   const [open, setOpen] = useState<'rotate' | 'crop' | 'opacity' | null>(null)
@@ -48,6 +53,11 @@ export function ObjectBar({
   const [stroke, setStroke] = useState(style?.stroke ?? '#000000')
   const [fill, setFill] = useState(style?.fill ?? '#000000')
   const [width, setWidth] = useState(() => (style ? String(Math.round(lineWidthInPoints(style.strokeWidth, obj.matrix) * 100) / 100) : '1'))
+  const [dash, setDash] = useState<'keep' | 'solid' | 'dashed' | 'dotted'>('keep')
+  const [grad, setGrad] = useState(false)
+  const [gradFrom, setGradFrom] = useState(style?.fill ?? '#ff0000')
+  const [gradTo, setGradTo] = useState('#0000ff')
+  const [gradAngle, setGradAngle] = useState('0')
   const cx = obj.rect.x + obj.rect.w / 2
   const cy = obj.rect.y + obj.rect.h / 2
   const toggle = (k: 'rotate' | 'crop' | 'opacity') => {
@@ -90,6 +100,11 @@ export function ObjectBar({
           <button type="button" aria-label={t('Crop…')} title={t('Hide the edges of the picture')} aria-expanded={open === 'crop'} onClick={() => toggle('crop')}>
             <Crop size={14} aria-hidden /> {t('Crop…')}
           </button>
+          {onCropByDrag && (
+            <button type="button" aria-label={t('Crop by dragging')} aria-pressed={!!cropping} title={t('Drag the edges or corners of the picture to trim it')} onClick={onCropByDrag}>
+              <Crop size={14} aria-hidden /> {t('Drag…')}
+            </button>
+          )}
           <button type="button" aria-label={t('Opacity…')} title={t('Make the picture see-through')} aria-expanded={open === 'opacity'} onClick={() => toggle('opacity')}>
             <Droplets size={14} aria-hidden /> {t('Opacity…')}
           </button>
@@ -121,11 +136,38 @@ export function ObjectBar({
             <span>{t('Opacity')}</span>
             <input aria-label={t('Opacity (percent)')} inputMode="numeric" size={4} value={opacity} onChange={(e) => setOpacity(e.target.value)} />
           </label>
+          <label title={style?.stroke ? undefined : t('This shape has no outline')}>
+            <span>{t('Dash')}</span>
+            <select aria-label={t('Line style')} value={dash} disabled={!style?.stroke} onChange={(e) => setDash(e.target.value as typeof dash)}>
+              <option value="keep">{t('As it is')}</option>
+              <option value="solid">{t('Solid')}</option>
+              <option value="dashed">{t('Dashed')}</option>
+              <option value="dotted">{t('Dotted')}</option>
+            </select>
+          </label>
+          <label title={style?.fill ? undefined : t('This shape has no fill')}>
+            <input type="checkbox" aria-label={t('Gradient fill')} checked={grad} disabled={!style?.fill} onChange={(e) => setGrad(e.target.checked)} />
+            <span>{t('Gradient')}</span>
+          </label>
+          {grad && (
+            <>
+              <input type="color" aria-label={t('Gradient start colour')} value={gradFrom} onChange={(e) => setGradFrom(e.target.value)} />
+              <input type="color" aria-label={t('Gradient end colour')} value={gradTo} onChange={(e) => setGradTo(e.target.value)} />
+              <select aria-label={t('Gradient direction')} value={gradAngle} onChange={(e) => setGradAngle(e.target.value)}>
+                <option value="0">{t('Left to right')}</option>
+                <option value="180">{t('Right to left')}</option>
+                <option value="270">{t('Top to bottom')}</option>
+                <option value="90">{t('Bottom to top')}</option>
+              </select>
+            </>
+          )}
           <button
             type="button"
             aria-label={t('Apply look')}
             onClick={() => {
               const change: PathRestyle = {}
+              if (dash !== 'keep') change.dash = dash === 'solid' ? 'solid' : dash === 'dashed' ? { on: 6, off: 3 } : { on: 1, off: 3 }
+              if (grad) change.gradient = { from: gradFrom, to: gradTo, angle: Number(gradAngle) }
               if (style?.stroke && stroke !== style.stroke) change.stroke = stroke
               if (style?.fill && fill !== style.fill) change.fill = fill
               if (style?.stroke) {

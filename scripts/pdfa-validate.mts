@@ -1,14 +1,18 @@
 /**
  * Converts every PDF in a folder to PDF/A-2b with the program's own converter and checks each result with veraPDF
  * (https://verapdf.org, a separate program: GPL/MPL, used here as a test tool only and never shipped or linked).
- *   npx tsx scripts/pdfa-validate.mts <folder of PDFs> <output folder> [path to verapdf.bat]
+ *   npx tsx scripts/pdfa-validate.mts [--part 1|2|3] <folder of PDFs> <output folder> [path to verapdf.bat]
+ * --part picks PDF/A-1b, 2b (the default) or 3b.
  * Without veraPDF the files are only converted. Exit code 1 when any converted file fails validation.
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { convertToPdfA } from '../src/renderer/src/pdfa'
 
-const [dir, out, vera = process.env.VERAPDF ?? 'verapdf'] = process.argv.slice(2)
+const args = process.argv.slice(2)
+const partAt = args.indexOf('--part')
+const part = (partAt >= 0 ? Number(args.splice(partAt, 2)[1]) : 2) as 1 | 2 | 3
+const [dir, out, vera = process.env.VERAPDF ?? 'verapdf'] = args
 if (!dir || !out) {
   console.error('usage: npx tsx scripts/pdfa-validate.mts <folder> <output folder> [verapdf.bat]')
   process.exit(2)
@@ -29,7 +33,7 @@ const SKIP = /encrypted|truncated|no-eof|no-xref|bad-startxref|junk/
 const made: string[] = []
 for (const f of readdirSync(dir).filter((x) => x.toLowerCase().endsWith('.pdf') && !SKIP.test(x))) {
   try {
-    const r = await convertToPdfA(new Uint8Array(readFileSync(`${dir}/${f}`)), async (family, bold, italic) => font(family, bold, italic))
+    const r = await convertToPdfA(new Uint8Array(readFileSync(`${dir}/${f}`)), async (family, bold, italic) => font(family, bold, italic), new Date(), part)
     writeFileSync(`${out}/${f}`, r.bytes)
     made.push(f)
     const left = r.report.remaining.filter((x) => !x.startsWith('Not checked'))
@@ -47,7 +51,7 @@ let failed = 0
 for (const f of made) {
   let text: string
   try {
-    text = execFileSync(vera, ['--flavour', '2b', '--format', 'text', `${out}/${f}`], { encoding: 'utf8', shell: true }).trim()
+    text = execFileSync(vera, ['--flavour', `${part}b`, '--format', 'text', `${out}/${f}`], { encoding: 'utf8', shell: true }).trim()
   } catch (e) {
     text = String((e as { stdout?: string }).stdout ?? '').trim() || 'FAIL (validator error)'
   }
@@ -55,5 +59,5 @@ for (const f of made) {
   if (!ok) failed++
   console.log(`${ok ? 'PASS' : 'FAIL'}    ${f}`)
 }
-console.log(`${made.length - failed} of ${made.length} validate as PDF/A-2b`)
+console.log(`${made.length - failed} of ${made.length} validate as PDF/A-${part}b`)
 process.exit(failed ? 1 : 0)

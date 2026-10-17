@@ -1,5 +1,5 @@
 import type { WorkerRequest, WorkerResponse } from './pdf.worker'
-import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject, ImageObject } from './pdfiumRaw'
+import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject, ImageObject, McidBox } from './pdfiumRaw'
 import type { PathGeometry } from './snap'
 
 export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject, ImageObject }
@@ -187,6 +187,13 @@ export class PdfClient {
   }
 
   /** The text objects a page draws itself, in content-stream order, and how many there are in all. */
+  /** Where the content marked with each MCID sits on a page (points from the top-left); for the Tags pane. */
+  async mcidBoxes(page: number): Promise<McidBox[]> {
+    const res = await this.call({ type: 'mcidBoxes', page })
+    if (res.ok && res.type === 'mcidBoxes') return res.boxes
+    throw new Error('Unexpected response')
+  }
+
   async textObjects(page: number): Promise<{ objects: TextObject[]; total: number; rotation: number }> {
     const res = await this.call({ type: 'textObjects', page })
     if (res.ok && res.type === 'textObjects') return { objects: res.objects, total: res.total, rotation: res.rotation }

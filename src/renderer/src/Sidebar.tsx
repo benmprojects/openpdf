@@ -10,6 +10,8 @@ import {
   Copy as CopyIcon,
   FileOutput,
   ListChecks,
+  ListTree,
+  SpellCheck,
   Link2,
   Printer,
   Scissors,
@@ -57,7 +59,7 @@ import type { AttachmentInfo, PageSize, PdfClient } from './pdfClient'
 
 const THUMB_WIDTH = 132
 
-export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media' | 'measure' | 'fields' | 'content' | 'destinations' | 'recovery'
+export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media' | 'measure' | 'fields' | 'content' | 'destinations' | 'recovery' | 'tags' | 'spelling'
 
 /** A page edit requested from the thumbnail pane. `move.before` is an index in the current order (page count = end). */
 export type PageOp =
@@ -119,6 +121,10 @@ interface Props {
   /** The Destinations and Recovery panes, rendered by the document view. */
   destinations?: React.ReactNode
   recovery?: React.ReactNode
+  /** The Tags and Spelling panes, and the file list of a portfolio, rendered by the document view. */
+  tags?: React.ReactNode
+  spelling?: React.ReactNode
+  portfolio?: React.ReactNode
   /** Saves an edited bookmark tree. */
   onEditOutline?: (tree: BookmarkNode[]) => void
   /** Makes bookmarks from headings or pages (opens a dialog). */
@@ -144,7 +150,9 @@ const TABS: [SidebarTab, string, LucideIcon][] = [
   ['fields', msg('Fields'), TextCursorInput],
   ['content', msg('Content'), Shapes],
   ['destinations', msg('Destinations'), Anchor],
-  ['recovery', msg('Recovery'), ArchiveRestore]
+  ['recovery', msg('Recovery'), ArchiveRestore],
+  ['tags', msg('Tags'), ListTree],
+  ['spelling', msg('Spelling'), SpellCheck]
 ]
 
 export function Sidebar(props: Props) {
@@ -240,6 +248,12 @@ export function Sidebar(props: Props) {
         props.destinations
       ) : tab === 'recovery' ? (
         props.recovery
+      ) : tab === 'tags' ? (
+        props.tags
+      ) : tab === 'spelling' ? (
+        props.spelling
+      ) : tab === 'attachments' && props.portfolio ? (
+        props.portfolio
       ) : tab === 'attachments' ? (
         <Attachments list={props.attachments} onSave={props.onSaveAttachment} onAdd={props.onAddAttachments} onRemove={props.onRemoveAttachment} onSaveAll={props.onSaveAllAttachments} openWith={props.attachmentOpen} />
       ) : tab === 'media' ? (

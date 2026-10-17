@@ -4,7 +4,7 @@
  * new text is drawn with pdf-lib in the same place, size and colour, in a standard font chosen to match.
  */
 import fontkit from '@pdf-lib/fontkit'
-import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib'
+import { PDFDocument, PDFName, StandardFonts, beginText, degrees, endText, popGraphicsState, pushGraphicsState, rgb, setCharacterSpacing, setCharacterSqueeze, setFillingRgbColor, setFontAndSize, setTextMatrix, setWordSpacing, showText } from 'pdf-lib'
 import { pageContent } from './pageContent'
 import { isShow, num, parseContent, showBytes, showOrigins, stringToBytes, hexString, type Op } from './content'
 import { missingGlyphMessage, openPageFont } from './embeddedFont'
@@ -77,10 +77,53 @@ export interface TextFormat {
   size?: number
   /** #rrggbb */
   color?: string
+  /** Extra space after every character, in points (Tc). */
+  charSpacing?: number
+  /** Extra space after every space character, in points (Tw). */
+  wordSpacing?: number
+  /** Width of the letters as a percentage of normal (Tz); 100 is normal. */
+  horizontalScale?: number
+  /** Where lines sit between the left and right edge of the text's original area. Needs upright text. */
+  align?: TextAlign
+}
+
+export type TextAlign = 'left' | 'centre' | 'right' | 'justify'
+
+/** The spacing and alignment of a format, with plain defaults. */
+export function spacingOf(f: TextFormat | null | undefined): { tc: number; tw: number; hs: number; align: TextAlign; custom: boolean } {
+  const tc = f?.charSpacing ?? 0
+  const tw = f?.wordSpacing ?? 0
+  const hs = f?.horizontalScale ?? 100
+  const align = f?.align ?? 'left'
+  return { tc, tw, hs, align, custom: tc !== 0 || tw !== 0 || hs !== 100 || align !== 'left' }
+}
+
+/** Width in points of a line drawn with spacing: (glyph widths + Tc per character + Tw per space) x Tz. */
+export function spacedWidth(glyphWidth: number, line: string, sp: { tc: number; tw: number; hs: number }): number {
+  const chars = [...line].length
+  const spaces = (line.match(/ /g) ?? []).length
+  return ((glyphWidth + sp.tc * chars + sp.tw * spaces) * sp.hs) / 100
+}
+
+/** Where a line starts along the baseline and the word spacing to use, for an alignment inside the area [x0, x0 + span]. */
+export function alignedStart(align: TextAlign, line: string, width: number, region: { x0: number; span: number }, firstLineX: number, last: boolean, sp: { tc: number; tw: number; hs: number }, glyphWidth: number): { x: number; tw: number } {
+  if (align === 'centre') return { x: region.x0 + (region.span - width) / 2, tw: sp.tw }
+  if (align === 'right') return { x: region.x0 + region.span - width, tw: sp.tw }
+  if (align === 'justify' && !last) {
+    const spaces = (line.match(/ /g) ?? []).length
+    if (spaces > 0) {
+      // Solve (glyph + Tc n + Tw s) x Tz = span for Tw.
+      const n = [...line].length
+      const tw = ((region.span * 100) / sp.hs - glyphWidth - sp.tc * n) / spaces
+      return { x: firstLineX, tw: Math.max(-2, Math.min(40, tw)) }
+    }
+  }
+  return { x: firstLineX, tw: sp.tw }
 }
 
 /** Whether the format asks for anything. */
-export const formatIsEmpty = (f: TextFormat | null | undefined): boolean => !f || (f.family === undefined && f.pageFont === undefined && f.bold === undefined && f.italic === undefined && f.size === undefined && f.color === undefined)
+export const formatIsEmpty = (f: TextFormat | null | undefined): boolean =>
+  !f || (f.family === undefined && f.pageFont === undefined && f.bold === undefined && f.italic === undefined && f.size === undefined && f.color === undefined && !spacingOf(f).custom)
 
 /** Text Render Mode in force just before operation `idx`, following q/Q. */
 function renderModeBefore(ops: Op[], idx: number): number {
@@ -257,15 +300,24 @@ export async function replaceBlock(
       x: layout && wrap ? (i === 0 ? layout.firstX : layout.restX) : style.matrix[4],
       y: (layout && wrap ? layout.baselineY : style.matrix[5]) - i * pitch
     })
+    const sp = spacingOf(format)
     const layoutLines = (widthOf: (s: string) => number) =>
       upright ? (wrap ? wrapText(text, widthOf, layout!.width - (layout!.firstX - layout!.restX), layout!.width) : text.split('\n')) : [text.replace(/\n/g, ' ')]
+    /** Start of line `i` along its baseline and its word spacing, for the chosen alignment (left when there is no area to align in or the text is turned). */
+    const lineStart = (i: number, count: number, line: string, glyphWidth: number): { x: number; y: number; tw: number } => {
+      const { x, y } = place(i)
+      if (!layout || !upright || sp.align === 'left') return { x, y, tw: sp.tw }
+      const region = { x0: wrap ? layout.restX : layout.firstX, span: layout.width }
+      const a = alignedStart(sp.align, line, spacedWidth(glyphWidth, line, sp), region, x, i === count - 1, sp, glyphWidth)
+      return { x: a.x, y, tw: a.tw }
+    }
 
     if (format?.pageFont) {
       // A font the file already holds: draw with its own character codes.
       const opened = openPageFont(page, format.pageFont)
       if ('problem' in opened) throw new Error(opened.problem)
       const codec = opened.codec
-      const lines = layoutLines((s) => codec.widthOf(s, size))
+      const lines = layoutLines((s) => spacedWidth(codec.widthOf(s, size), s, sp))
       const rgbc = hexToUnit(color) ?? [0, 0, 0]
       const known = originalText.replace(/\n/g, ' ')
       const missing: string[] = []
@@ -275,8 +327,9 @@ export async function replaceBlock(
         if (!line) return
         const enc = codec.encode(line, known)
         enc.missing.forEach((m) => !missing.includes(m) && missing.push(m))
-        const { x, y } = place(i)
-        parts.push(`BT /${format.pageFont} ${num(size)} Tf ${[Math.cos(rad), Math.sin(rad), -Math.sin(rad), Math.cos(rad), x, y].map(num).join(' ')} Tm ${hexString(enc.bytes)} Tj ET`)
+        const at = lineStart(i, lines.length, line, codec.widthOf(line, size))
+        const spacing = sp.custom ? `${num(sp.tc)} Tc ${num(at.tw)} Tw ${num(sp.hs)} Tz ` : ''
+        parts.push(`BT /${format.pageFont} ${num(size)} Tf ${spacing}${[Math.cos(rad), Math.sin(rad), -Math.sin(rad), Math.cos(rad), at.x, at.y].map(num).join(' ')} Tm ${hexString(enc.bytes)} Tj ET`)
       })
       if (missing.length) throw new Error(missingGlyphMessage(codec.info, missing))
       const ctx2 = doc.context
@@ -301,11 +354,31 @@ export async function replaceBlock(
         throw new Error('The replacement font cannot show some of those characters.')
       }
       const used = font
-      const lines = layoutLines((s) => used.widthOfTextAtSize(s, size))
+      const lines = layoutLines((s) => spacedWidth(used.widthOfTextAtSize(s, size), s, sp))
+      const fontKey = sp.custom ? page.node.newFontDictionary(used.name, used.ref) : null
+      const rgbc = hexToUnit(color) ?? [0, 0, 0]
+      const rad = (angle * Math.PI) / 180
       lines.forEach((line, i) => {
         if (!line) return
-        const { x, y } = place(i)
-        page.drawText(line, { x, y, font: used, size, color: hexRgb(color), rotate: degrees(angle) })
+        if (!sp.custom || !fontKey) {
+          const { x, y } = place(i)
+          page.drawText(line, { x, y, font: used, size, color: hexRgb(color), rotate: degrees(angle) })
+          return
+        }
+        const at = lineStart(i, lines.length, line, used.widthOfTextAtSize(line, size))
+        page.pushOperators(
+          pushGraphicsState(),
+          setFillingRgbColor(rgbc[0], rgbc[1], rgbc[2]),
+          beginText(),
+          setFontAndSize(fontKey, size),
+          setCharacterSpacing(sp.tc),
+          setWordSpacing(at.tw),
+          setCharacterSqueeze(sp.hs),
+          setTextMatrix(Math.cos(rad), Math.sin(rad), -Math.sin(rad), Math.cos(rad), at.x, at.y),
+          showText(used.encodeText(line)),
+          endText(),
+          popGraphicsState()
+        )
       })
     }
   }

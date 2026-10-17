@@ -74,13 +74,21 @@ import { PluginsDialog } from './PluginsDialog'
 import { normaliseResult } from '../../shared/plugins'
 import { runPluginScript } from './pluginSandbox'
 import { PortfolioDialog } from './PortfolioDialog'
+import { PortfolioPane } from './PortfolioPane'
+import { TagsPane } from './TagsPane'
+import { SpellPane } from './SpellPane'
+import { WordCountDialog } from './WordCountDialog'
+import { AccessibilityDialog } from './AccessibilityDialog'
+import { checkAccessibility, type A11yIssue, type A11yReport } from './a11yCheck'
+import { Accessibility as AccessibilityIcon, Hash as HashIcon, ListTree as ListTreeIcon, SpellCheck as SpellCheckIcon } from 'lucide-react'
 import { createPortfolio, embedFiles, isPortfolio, removeEmbedded } from './portfolio'
 import { CompareDocsDialog } from './CompareDocsDialog'
 import { CreateDialog, type CreateRequest } from './CreateDialog'
-import { imagesToPdf, textToPdf } from './createPdf'
+import { imagesToPdf, textFileToPdf } from './createPdf'
 import { ScanDialog, type ScanRequest } from './ScanDialog'
 import { OcrDialog, type OcrRequest } from './OcrDialog'
 import { ocrDocument } from './ocrLayer'
+import { describeHint as describeTableHint } from './tableHints'
 import { scannedPages } from './pageSources'
 import { ExportImagesDialog, type ExportImagesRequest } from './ExportDialog'
 import { bodySize, encodePage, pageFileName, scaleFor, structurePage, toHtml, type ExportBlock } from './exportDoc'
@@ -118,6 +126,9 @@ import { mergeOutlineStyles, outlineToCsv, outlineToText, parseOutline, readOutl
 import { GenerateBookmarksDialog } from './BookmarkDialogs'
 import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
+import { Batch5Dialog, type B5Kind, type Standard } from './Batch5Dialogs'
+import { addMedia, checkMediaFile } from './mediaAdd'
+import { expandForms } from './formExpand'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
 import { replaceBlock, weightAndSlant } from './textEdit'
 import { addImage, cropImage, replaceImage, setImageOpacity, transformImage } from './imageEdit'
@@ -202,6 +213,7 @@ import {
   GalleryVertical,
   ScanSearch,
   Palette,
+  Film,
   DraftingCompass,
   FileX,
   Bookmark,
@@ -647,6 +659,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [pageLabels, setPageLabels] = useState<string[] | null>(null)
   const [labelRanges, setLabelRanges] = useState<LabelRange[] | null>(null)
   const [optimising, setOptimising] = useState(false)
+  const [b5, setB5] = useState<{ kind: B5Kind; standard?: Standard } | null>(null)
   const [docProps, setDocProps] = useState<DocProps | null>(null)
   const [standards, setStandards] = useState<StandardsReport | null>(null)
   const [conversion, setConversion] = useState<PdfAReport | undefined>(undefined)
@@ -668,6 +681,37 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       setStandards(await checkStandards(annotsDirty ? await applyEdits(bytes) : bytes))
     } catch (e) {
       setNotice({ kind: 'error', text: `Could not check the document: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  // ---- Accessibility, tags and proofing ----
+  const [a11yReport, setA11yReport] = useState<A11yReport | null>(null)
+  const [wordCountOpen, setWordCountOpen] = useState(false)
+  const [tagFocus, setTagFocus] = useState<{ id: string; n: number } | null>(null)
+  const [portfolioDoc, setPortfolioDoc] = useState(false)
+  useEffect(() => {
+    if (!attachments.length) return setPortfolioDoc(false)
+    let live = true
+    isPortfolio(bytes).then(
+      (v) => live && setPortfolioDoc(v),
+      () => live && setPortfolioDoc(false)
+    )
+    return () => {
+      live = false
+    }
+  }, [bytes, attachments.length])
+  const openAccessibility = async () => {
+    try {
+      setA11yReport(await checkAccessibility(annotsDirty ? await applyEdits(bytes) : bytes))
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not check the document: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  const goToIssue = (i: A11yIssue) => {
+    setA11yReport(null)
+    if (i.page >= 0) viewer.current?.scrollToPage(i.page)
+    if (i.tag !== undefined) {
+      setSidebar('tags')
+      setTagFocus({ id: i.tag, n: Date.now() })
     }
   }
   const openDocProps = async () => {
@@ -1343,6 +1387,30 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     pendingImage.current = { data: d, kind }
     setTool('addimage')
     setNotice({ kind: 'info', text: 'Click the page where the picture should go.' })
+  }
+  /** Replaces forms drawn on the current page (or all pages) with their content, so the Edit tools can reach what is inside. */
+  const unpackForms = async (all: boolean) => {
+    const box: { text: string } = { text: '' }
+    await applyPageEdit(async (b) => {
+      const r = await expandForms(b, all ? {} : { pages: [currentPage] })
+      box.text = r.expanded
+        ? t('{n} forms unpacked on {pages}. Their text, pictures and shapes can now be edited like the rest of the page.', { n: String(r.expanded), pages: r.pages.length === 1 ? t('1 page') : t('{n} pages', { n: String(r.pages.length) }) })
+        : t('There were no forms to unpack{why}.', { why: r.skipped.length ? ` (${r.skipped.map((x) => x.reason).join('; ')})` : '' })
+      return r.expanded ? r.bytes : null
+    })
+    if (box.text) setNotice({ kind: 'info', text: box.text })
+  }
+  /** Add media: pick a video or sound file, then click the page (the Add image tool places it). */
+  const pendingMedia = useRef<{ name: string; data: Uint8Array } | null>(null)
+  const startAddMedia = async () => {
+    const file = await window.openpdf.pickFile({ name: 'Video and sound', ext: ['mp4', 'm4v', 'webm', 'ogv', 'mov', 'avi', 'wmv', 'mpg', 'mpeg', 'mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac'] })
+    if (!file) return
+    const check = checkMediaFile(file)
+    if (!check.ok) return setNotice({ kind: 'error', text: check.reason })
+    pendingMedia.current = file
+    pendingImage.current = null
+    setTool('addimage')
+    setNotice({ kind: 'info', text: t('Click the page where the {kind} should go.', { kind: check.kind === 'video' ? t('video') : t('sound') }) })
   }
 
   const stamps = useStamps({
@@ -2140,6 +2208,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const placeTool = useCallback(
     async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound' | 'addimage', page: number, x: number, y: number, box?: { w: number; h: number }) => {
       if (kind !== 'addimage') return place(kind, page, x, y, box)
+      const media = pendingMedia.current
+      if (media) {
+        pendingMedia.current = null
+        setTool('select')
+        await applyPageEdit((b) => addMedia(b, page, { x, y }, media), t('Media added. It plays when the page is clicked in a viewer that supports media; check it in the Media pane.'))
+        return
+      }
       const img = pendingImage.current
       pendingImage.current = null
       setTool('select')
@@ -2724,7 +2799,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     const files =
       kind === 'images'
         ? await window.openpdf.pickFiles({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tif', 'tiff'] })
-        : await window.openpdf.pickFiles({ name: 'Text files', ext: ['txt', 'md', 'csv', 'log'] })
+        : await window.openpdf.pickFiles({ name: 'Text files', ext: ['txt', 'md', 'markdown', 'csv', 'tsv', 'rtf', 'log'] })
     if (files.length) setCreateFrom({ kind, files: kind === 'text' ? files.slice(0, 1) : files })
   }
   const runCreate = (r: CreateRequest) => {
@@ -2733,10 +2808,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (!from) return
     void makeNew('Could not create the PDF', async () => {
       if (r.kind === 'images') return { name: `${stem(from.files[0].name)}.pdf`, data: await imagesToPdf(from.files, r.size) }
-      const text = new TextDecoder('utf-8').decode(from.files[0].data)
-      const wide = [...text].some((ch) => ch.charCodeAt(0) > 0xff)
-      const unicode = wide ? await window.openpdf.findFont('Arial', false, false).catch(() => null) : null
-      return { name: `${stem(from.files[0].name)}.pdf`, data: await textToPdf(text, { font: r.font, size: r.fontSize, unicode: unicode?.data }) }
+      const f = from.files[0]
+      return { name: `${stem(f.name)}.pdf`, data: await textFileToPdf(f.name, f.data, { font: r.font, size: r.fontSize }, async () => (await window.openpdf.findFont('Arial', false, false).catch(() => null))?.data) }
     })
   }
   const fromPicture = (label: string, get: () => Promise<Uint8Array | null>, name: string, empty: string) =>
@@ -2757,7 +2830,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       await applyPageEdit(async (b) => {
         const out = await ocrDocument(
           b,
-          { languages: r.languages, dpi: r.dpi, scope: r.scope === 'all' ? 'all' : 'blank', pages: r.scope === 'current' ? [currentPage] : undefined },
+          { languages: r.languages, dpi: r.dpi, scope: r.scope === 'all' ? 'all' : 'blank', pages: r.scope === 'current' ? [currentPage] : undefined, output: r.output },
           {
             client,
             pages,
@@ -2777,7 +2850,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     const out = result as Awaited<ReturnType<typeof ocrDocument>> | null
     if (!out) return
     if (out.nothingToDo) return setNotice({ kind: 'info', text: 'Every page already has text. Choose "All pages" to recognise them anyway.' })
-    setNotice({ kind: 'info', text: `Recognised ${out.words} word${out.words === 1 ? '' : 's'} on ${out.pagesDone} page${out.pagesDone === 1 ? '' : 's'} (average confidence ${Math.round(out.confidence)}%).${out.skipped ? ` ${out.skipped} word${out.skipped === 1 ? '' : 's'} could not be written with the available font.` : ''}` })
+    setNotice({ kind: 'info', text: `Recognised ${out.words} word${out.words === 1 ? '' : 's'} on ${out.pagesDone} page${out.pagesDone === 1 ? '' : 's'} (average confidence ${Math.round(out.confidence)}%).${out.skipped ? ` ${out.skipped} word${out.skipped === 1 ? '' : 's'} could not be written with the available font.` : ''}${out.imagesRemoved ? ` ${t('The scanned picture was taken out of {n} pages.', { n: String(out.imagesRemoved) })}` : ''}${out.tables.length ? ` ${out.tables.slice(0, 3).map(describeTableHint).join(' ')}${out.tables.length > 3 ? ' ' + t('and {n} more places that look like tables.', { n: String(out.tables.length - 3) }) : ''}` : ''}` })
   }
   const runScan = async (r: ScanRequest) => {
     setScanOpen(false)
@@ -2837,7 +2910,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       return void applyPageEdit((b) => cropImage(b, { page: pg, ordinal: o.ordinal, total, matrix: o.matrix }, corners), 'Picture cropped. The trimmed edges stay in the file, hidden.')
     }
     if (a.kind === 'opacity') return void applyPageEdit((b) => setImageOpacity(b, { page: pg, ordinal: o.ordinal, total, matrix: o.matrix }, a.value), 'Picture opacity changed')
-    const change = { ...a.change, lineWidth: a.change.lineWidth === undefined ? undefined : lineWidthForWrite(a.change.lineWidth, o.matrix) }
+    const dash = a.change.dash
+    const change = {
+      ...a.change,
+      lineWidth: a.change.lineWidth === undefined ? undefined : lineWidthForWrite(a.change.lineWidth, o.matrix),
+      dash: dash && typeof dash === 'object' ? { on: lineWidthForWrite(dash.on, o.matrix), off: lineWidthForWrite(dash.off, o.matrix) } : dash
+    }
     void applyPageEdit((b) => restylePath(b, { page: pg, ordinal: o.ordinal, total, pageBounds: o.pageBounds }, change), 'Shape updated')
   }
   const exportStem = () => stem(name) || 'document'
@@ -3963,6 +4041,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={BadgeCheck} label={t('Standards')} onClick={() => void openStandards()} disabled={!pages.length || busy} title={t('What the file declares about PDF/A and PDF/UA, with basic checks')} />
                 <RB big icon={Archive} label={t('Convert to PDF/A')} onClick={() => void makePdfA()} disabled={!pages.length || busy || locked} title={t('Make the file PDF/A-2b as far as this program can (best effort: check the result with a validator)')} />
               </RGroup>
+              <RGroup label={t('Proofing')}>
+                <RB big icon={AccessibilityIcon} label={t('Accessibility check')} onClick={() => void openAccessibility()} disabled={!pages.length || busy} title={t('Check the file against accessibility requirements, with a report you can save')} />
+                <RStack>
+                  <RB icon={ListTreeIcon} label={t('Tags pane')} onClick={() => setSidebar(sidebar === 'tags' ? null : 'tags')} pressed={sidebar === 'tags'} disabled={!pages.length} title={t('The structure tree: alternative text, tag types and reading order')} />
+                  <RB icon={SpellCheckIcon} label={t('Spelling')} onClick={() => setSidebar(sidebar === 'spelling' ? null : 'spelling')} pressed={sidebar === 'spelling'} disabled={!pages.length} title={t('Find misspelled words in the text of the document')} />
+                  <RB icon={HashIcon} label={t('Word count')} onClick={() => setWordCountOpen(true)} disabled={!pages.length || !client} title={t('Words, characters, lines and pages')} />
+                </RStack>
+              </RGroup>
               <RGroup label={t('Output')}>
                 <RB big icon={Printer} label={t('Print')} onClick={openPrint} disabled={!pages.length || !!printing || permissions?.print === 'none'} title={permissions?.print === 'none' ? 'The owner of this document does not allow printing' : 'Print (Ctrl+P)'} />
               </RGroup>
@@ -4034,15 +4120,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Type} label={t('Text box')} onClick={() => setTool(tool === 'textbox' ? 'select' : 'textbox')} disabled={!pages.length} pressed={tool === 'textbox'} title={t('Add a text box: click on the page')} />
                 <RStack>
                   <RB icon={Keyboard} label={t('Typewriter')} onClick={() => setTool(tool === 'typewriter' ? 'select' : 'typewriter')} disabled={!pages.length} pressed={tool === 'typewriter'} title={t('Type straight onto the page: click where the text starts')} />
+                  <RB icon={MessageSquareShare} label={t('Callout')} onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title={t('Callout: drag from the point to call out to where the text box goes')} />
                   <RB icon={Paperclip} label={t('Attach file')} onClick={() => setTool(tool === 'fileattach' ? 'select' : 'fileattach')} disabled={!pages.length} pressed={tool === 'fileattach'} title={t('Attach a file: click on the page, then choose the file')} />
+                </RStack>
+                <RStack>
                   <RB icon={Volume2} label={t('Sound')} onClick={() => setTool(tool === 'sound' ? 'select' : 'sound')} disabled={!pages.length} pressed={tool === 'sound'} title={t('Attach a sound: click on the page, then choose a WAV recording')} />
                 </RStack>
+              </RGroup>
+              <RGroup label={t('Links')}>
                 <RStack>
                   <RB icon={Link2} label={t('Link')} onClick={() => setTool(tool === 'link' ? 'select' : 'link')} disabled={!pages.length} pressed={tool === 'link'} title={t('Add a link: drag a box, then choose a web address or a page')} />
                   <RB icon={LinkIcon} label={t('Auto-link')} onClick={() => setLinkTool('auto')} disabled={!pages.length || busy || locked} title={t('Turn the web addresses in the text into links')} />
                   <RB icon={BatchLinkIcon} label={t('Link text')} onClick={() => setLinkTool('batch')} disabled={!pages.length || busy || locked} title={t('Link every place a word or phrase appears')} />
+                </RStack>
+                <RStack>
                   <RB icon={UnlinkIcon} label={t('Remove web links')} onClick={() => setLinkTool('remove')} disabled={!pages.length || busy || locked || !annots.some((a) => a.kind === 'link' && isWebLink(a))} title={t('Remove every web and e-mail link from the document')} />
-                  <RB icon={MessageSquareShare} label={t('Callout')} onClick={() => setTool(tool === 'callout' ? 'select' : 'callout')} disabled={!pages.length} pressed={tool === 'callout'} title={t('Callout: drag from the point to call out to where the text box goes')} />
                 </RStack>
               </RGroup>
               <RGroup label={t('Stamp')}>
@@ -4185,6 +4277,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
               <RGroup label={t('Optimise')}>
                 <RB big icon={Gauge} label={t('Optimise')} onClick={() => setOptimising(true)} disabled={!pages.length || busy || locked} title={t('Make the file smaller: reduce pictures, compress, remove unused objects, linearise')} />
+                <RB big icon={ImageIcon} label={t('Recompress pictures')} onClick={() => setB5({ kind: 'recompress' })} disabled={!pages.length || busy || locked} title={t('Re-encode the pictures only (JPEG quality and size), or turn text scans into black and white')} />
               </RGroup>
               <RGroup label={t('Numbering')}>
                 <RB big icon={Tags} label={t('Page labels')} onClick={() => void openPageLabels()} disabled={!pages.length || busy || locked} title={t('Set the page numbers readers show (i, ii, 1, 2 …)')} />
@@ -4230,6 +4323,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label={t('Shapes')}>
                 <RB big icon={Shapes} label={t('Content pane')} onClick={() => setSidebar(sidebar === 'content' ? null : 'content')} pressed={sidebar === 'content'} title={t('List the page\u2019s text, pictures, shapes and forms: select, hide, reorder or delete them')} />
                 <RB big icon={Shapes} label={t('Edit shape')} onClick={() => setTool(tool === 'editpath' ? 'select' : 'editpath')} pressed={tool === 'editpath'} disabled={!pages.length || busy || locked} title={t('Click a line, box or filled shape that is part of the page to move, resize or delete it')} />
+              </RGroup>
+              <RGroup label={t('Forms in content')}>
+                <RStack>
+                  <RB icon={Layers2} label={t('Unpack forms')} onClick={() => void unpackForms(false)} disabled={!pages.length || busy || locked} title={t('Replace the forms this page draws with their content, so their text, pictures and shapes can be edited')} />
+                  <RB icon={Layers2} label={t('Unpack all pages')} onClick={() => void unpackForms(true)} disabled={!pages.length || busy || locked} title={t('Do the same for every page')} />
+                </RStack>
+              </RGroup>
+              <RGroup label={t('Layers and media')}>
+                <RB big icon={Layers} label={t('Edit layers')} onClick={() => setB5({ kind: 'layers' })} disabled={!pages.length || busy || locked} title={t('Save the opening view, rename, add, delete, merge or flatten layers')} />
+                <RB big icon={Film} label={t('Add media')} onClick={() => void startAddMedia()} pressed={tool === 'addimage' && !!pendingMedia.current} disabled={!pages.length || busy || locked} title={t('Choose a video or sound file, then click the page to place it')} />
               </RGroup>
               <RGroup label={t('Images')}>
                 <RB big icon={QrCode} label={t('QR / barcode')} onClick={() => setBarcodeOpen(true)} disabled={!pages.length || busy || locked} title={t('Add a QR code or bar code (Code 128, Code 39, EAN-13) to the page, from typed text or a template with the file name, page and date')} />
@@ -4365,13 +4468,28 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             </RGroup>
             <RGroup label={t('Create PDF')}>
               <RB big icon={ImageIcon} label={t('From pictures')} onClick={() => void pickToCreate('images')} disabled={busy} title={t('Make a PDF from PNG, JPEG, GIF, BMP, WebP or TIFF pictures, one per page')} />
-              <RB big icon={FileText} label={t('From text')} onClick={() => void pickToCreate('text')} disabled={busy} title={t('Make a PDF from a plain text file')} />
+              <RB big icon={FileText} label={t('From text')} onClick={() => void pickToCreate('text')} disabled={busy} title={t('Make a PDF from a text, Rich Text (RTF), Markdown or CSV file (styling is not kept; CSV becomes a table)')} />
               <RB big icon={Globe} label={t('From web page')} onClick={() => void makeNew('Could not convert the web page', () => window.openpdf.htmlToPdf())} disabled={busy} title={t('Make a PDF from a saved .html file (scripts and network access are off)')} />
               <RB big icon={Paperclip} label={t('Portfolio')} onClick={() => void window.openpdf.pickFiles().then((f) => f.length && setPortfolioFiles(f))} disabled={busy} title={t('Package several files of any kind in one PDF portfolio')} />
               <RB big icon={FileInput} label={t('From Office file')} onClick={() => void makeNew('Could not convert the file', () => window.openpdf.officeToPdf())} disabled={busy} title={officeReady ? 'Make a PDF from a Word, Excel or PowerPoint file (uses LibreOffice)' : 'Needs LibreOffice, which is not installed'} />
               <RB big icon={ClipboardPaste} label={t('From clipboard')} onClick={() => void fromPicture('Could not create the PDF', () => window.openpdf.clipboardImage(), 'Clipboard.pdf', 'There is no picture on the clipboard.')} disabled={busy} title={t('Make a PDF from the picture on the clipboard')} />
               <RB big icon={Camera} label={t('Screenshot')} onClick={() => void fromPicture('Could not take the screenshot', () => window.openpdf.screenshot(), `Screenshot ${today()}.pdf`, 'The screen could not be captured.')} disabled={busy} title={t('Make a PDF from a picture of the whole screen')} />
             </RGroup>
+            </>
+          )}
+          {ribbon === 'convert' && (
+            <>
+              <RGroup label={t('Pages as pictures')}>
+                <RB big icon={ImageIcon} label={t('Rasterise')} onClick={() => setB5({ kind: 'rasterise' })} disabled={!pages.length || busy || locked} title={t('Turn pages into pictures: what is on them can no longer be searched or edited')} />
+                <RB big icon={ScanLine} label={t('Enhance scans')} onClick={() => setB5({ kind: 'enhance' })} disabled={!pages.length || busy || locked} title={t('Straighten, de-speckle and crop pages that are already scans, optionally as black and white')} />
+              </RGroup>
+              <RGroup label={t('Colour and fonts')}>
+                <RB big icon={Palette} label={t('Convert colours')} onClick={() => setB5({ kind: 'colours' })} disabled={!pages.length || busy || locked} title={t('Convert the whole document to greyscale, or approximately to CMYK or RGB')} />
+                <RB big icon={FileText} label={t('Fonts and text')} onClick={() => setB5({ kind: 'fonts' })} disabled={!pages.length || busy || locked} title={t('Replace a font everywhere it is used, or find and replace text across the document')} />
+              </RGroup>
+              <RGroup label={t('Standards')}>
+                <RB big icon={Archive} label={t('PDF/A and PDF/X')} onClick={() => setB5({ kind: 'convert' })} disabled={!pages.length || busy || locked} title={t('Convert towards PDF/A-1b, 2b or 3b, or PDF/X-1a or X-4 (best effort)')} />
+              </RGroup>
             </>
           )}
           {ribbon === 'sign' && (
@@ -4805,12 +4923,18 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       {ocrOpen && <OcrDialog pageCount={pages.length} currentPage={currentPage} onRun={(r) => void runOcr(r)} onClose={() => setOcrOpen(false)} />}
       {portfolioFiles && (
         <PortfolioDialog
-          files={portfolioFiles.map((f) => f.name)}
+          files={portfolioFiles}
           onClose={() => setPortfolioFiles(null)}
-          onCreate={(title, cover) => {
+          onCreate={(title, cover, choices) => {
             const files = portfolioFiles
             setPortfolioFiles(null)
-            void makeNew('Could not create the portfolio', async () => ({ name: `${title}.pdf`, data: await createPortfolio(files.map((f) => ({ name: f.name, data: f.data })), { title, cover }) }))
+            void makeNew('Could not create the portfolio', async () => ({
+              name: `${title}.pdf`,
+              data: await createPortfolio(
+                files.map((f) => ({ name: f.name, data: f.data, folder: choices.folders[f.name], thumb: choices.thumbs[f.name] })),
+                { title, cover, view: choices.view }
+              )
+            }))
           }}
         />
       )}
@@ -4993,6 +5117,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }}
         />
       )}
+      {a11yReport && <AccessibilityDialog report={a11yReport} docName={name} onGoTo={goToIssue} onRecheck={() => void openAccessibility()} onClose={() => setA11yReport(null)} />}
+      {wordCountOpen && client && <WordCountDialog client={client} pageCount={pages.length} labels={pageLabels} onClose={() => setWordCountOpen(false)} />}
       {mailDialog && <MailDialog name={mailDialog.name} path={mailDialog.path} onClose={() => setMailDialog(null)} />}
       {docProps && (
         <DocPropsDialog
@@ -5018,6 +5144,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       )}
 
       {optimising && <OptimiseDialog size={bytes.length} onApply={(o) => void runOptimise(o)} onClose={() => setOptimising(false)} />}
+      {b5 && (
+        <Batch5Dialog
+          kind={b5.kind}
+          standard={b5.standard}
+          env={{
+            bytes,
+            pages,
+            currentPage,
+            selected: pageSel,
+            applyPageEdit: (fn, done) => applyPageEdit(fn, done),
+            notify: setNotice,
+            findFont: async (family, bold, italic) => (await window.openpdf.findFont(family, bold, italic).catch(() => null))?.data ?? null,
+            hiddenLayers
+          }}
+          onClose={() => setB5(null)}
+        />
+      )}
 
       {labelRanges && (
         <PageLabelsDialog
@@ -5389,6 +5532,28 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onSaveMedia={(m) => void saveMedia(m)}
                 destinations={<DestinationsPane bytes={bytes} labels={pageLabels} readOnly={locked || busy} onGoTo={(d) => void goToDest(d)} onAdd={addDest} onRename={renameDest} onDelete={deleteDest} onSetHere={moveDest} />}
                 recovery={<RecoveryPane liveKeyPrefix={SESSION} onOpen={(e, data) => onOpenRecovered?.(e.name, e.path, data)} />}
+                tags={
+                  client ? (
+                    <TagsPane client={client} bytes={bytes} ready={clientBytes === viewBytes && !busy} readOnly={locked || busy} pageCount={pages.length} labels={pageLabels} run={(fn, done) => applyPageEdit(fn, done)} onGoToPage={(p) => viewer.current?.scrollToPage(p)} onHighlight={setContentHighlight} focus={tagFocus} />
+                  ) : null
+                }
+                spelling={client ? <SpellPane client={client} ready={clientBytes === viewBytes && !busy} pageCount={pages.length} labels={pageLabels} onGoToPage={(p) => viewer.current?.scrollToPage(p)} onHighlight={setContentHighlight} /> : null}
+                portfolio={
+                  portfolioDoc && attachments.length ? (
+                    <PortfolioPane
+                      list={attachments}
+                      bytes={bytes}
+                      readOnly={locked || busy}
+                      getData={(a) => clientRef.current!.attachmentData(a.index, a.page)}
+                      onSave={(a) => void saveAttachment(a)}
+                      onAdd={locked ? undefined : () => void addAttachments()}
+                      onRemove={locked ? undefined : removeAttachment}
+                      onSaveAll={() => void saveAllAttachments()}
+                      openWith={{ can: (n) => !!appFor(prefs.launchApps, n), run: (a) => void openAttachmentWith(a) }}
+                      run={(fn, done) => applyPageEdit(fn, done)}
+                    />
+                  ) : undefined
+                }
                 content={
                   client ? (
                     <ContentPane
@@ -5538,7 +5703,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   const bold = format?.bold ?? matched.bold
                   const italic = format?.italic ?? matched.italic
                   const installed = text && !format?.family && !format?.pageFont ? await window.openpdf.findFont(block.font, bold, italic).catch(() => null) : null
-                  const r = await replaceBlock(b, { page, ordinals: block.ordinals, total, origins: block.origins }, text, style, installed?.data, block.reflow ? block.layout : null, format, block.text)
+                  const r = await replaceBlock(b, { page, ordinals: block.ordinals, total, origins: block.origins }, text, style, installed?.data, block.reflow || (format?.align && format.align !== 'left') ? block.layout : null, format, block.text)
                   hidden = r.hiddenOriginal
                   return r.bytes
                 }, text ? (format && text === block.text ? 'Text formatted' : 'Text updated') : 'Text deleted').then(() => {

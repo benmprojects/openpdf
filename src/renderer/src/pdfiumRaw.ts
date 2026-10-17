@@ -1293,3 +1293,50 @@ export function readPageLinks(lib: PDFiumLibrary, doc: PDFiumDocument, page: PDF
   }
   return out
 }
+
+/** The area (points from the top-left of the page as drawn) that the page content marked with each MCID covers. */
+export interface McidBox {
+  mcid: number
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/** The boxes of the marked content of a page, found from its page objects (content drawn through forms is not seen). */
+export function readMcidBoxes(lib: PDFiumLibrary, page: PDFiumPage): McidBox[] {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
+  const GRID = 8
+  const sx = Math.round(w * GRID)
+  const sy = Math.round(h * GRID)
+  const scratch = m.wasmExports.malloc(64)
+  const byId = new Map<number, { x1: number; y1: number; x2: number; y2: number }>()
+  try {
+    const n = m._FPDFPage_CountObjects(p)
+    for (let i = 0; i < n; i++) {
+      const obj = m._FPDFPage_GetObject(p, i)
+      const mcid = m._FPDFPageObj_GetMarkedContentID(obj)
+      if (mcid < 0 || !m._FPDFPageObj_GetBounds(obj, scratch, scratch + 4, scratch + 8, scratch + 12)) continue
+      const f = new DataView(m.HEAPU8.buffer)
+      const l = f.getFloat32(scratch, true)
+      const b = f.getFloat32(scratch + 4, true)
+      const r = f.getFloat32(scratch + 8, true)
+      const t = f.getFloat32(scratch + 12, true)
+      m._FPDF_PageToDevice(p, 0, 0, sx, sy, 0, l, t, scratch + 32, scratch + 36)
+      m._FPDF_PageToDevice(p, 0, 0, sx, sy, 0, r, b, scratch + 40, scratch + 44)
+      const v = new DataView(m.HEAPU8.buffer)
+      const xa = v.getInt32(scratch + 32, true) / GRID
+      const ya = v.getInt32(scratch + 36, true) / GRID
+      const xb = v.getInt32(scratch + 40, true) / GRID
+      const yb = v.getInt32(scratch + 44, true) / GRID
+      const box = { x1: Math.min(xa, xb), y1: Math.min(ya, yb), x2: Math.max(xa, xb), y2: Math.max(ya, yb) }
+      const old = byId.get(mcid)
+      byId.set(mcid, old ? { x1: Math.min(old.x1, box.x1), y1: Math.min(old.y1, box.y1), x2: Math.max(old.x2, box.x2), y2: Math.max(old.y2, box.y2) } : box)
+    }
+  } finally {
+    m.wasmExports.free(scratch)
+  }
+  return [...byId].map(([mcid, b]) => ({ mcid, x: b.x1, y: b.y1, w: b.x2 - b.x1, h: b.y2 - b.y1 }))
+}

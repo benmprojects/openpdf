@@ -6,6 +6,7 @@ import fontkit from '@pdf-lib/fontkit'
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib'
 import UTIF from 'utif'
 import { embeddable } from './textEdit'
+import { csvToTable, markdownToText, rtfToText, textKindOf } from './textConvert'
 
 export type PageSizeChoice = 'image' | 'a4' | 'letter'
 
@@ -151,4 +152,31 @@ export async function textToPdf(text: string, o: TextOptions): Promise<Uint8Arra
     })
   }
   return doc.save()
+}
+
+/** Text of a file's bytes: UTF-8 (with or without a byte order mark) or UTF-16 with one. */
+export function decodeTextFile(data: Uint8Array): string {
+  if (data[0] === 0xff && data[1] === 0xfe) return new TextDecoder('utf-16le').decode(data.subarray(2))
+  if (data[0] === 0xfe && data[1] === 0xff) return new TextDecoder('utf-16be').decode(data.subarray(2))
+  return new TextDecoder('utf-8').decode(data)
+}
+
+/**
+ * A PDF from a text-like file: plain text as it is, RTF and Markdown read as plain text (styling is not carried
+ * over), CSV as an aligned table in Courier with the size reduced to fit the page width.
+ */
+export async function textFileToPdf(name: string, data: Uint8Array, o: TextOptions, findUnicode: () => Promise<Uint8Array | null | undefined> = async () => null): Promise<Uint8Array> {
+  const kind = textKindOf(name)
+  const raw = decodeTextFile(data)
+  let text = raw
+  let opts = o
+  if (kind === 'rtf') text = rtfToText(raw)
+  else if (kind === 'md') text = markdownToText(raw)
+  else if (kind === 'csv') {
+    const t = csvToTable(raw, { fitWidth: A4[0] - 2 * 56, size: o.size })
+    text = t.text
+    opts = { ...o, font: 'Courier', size: t.size }
+  }
+  const wide = [...text].some((ch) => ch.charCodeAt(0) > 0xff)
+  return textToPdf(text, { ...opts, unicode: wide ? await findUnicode() : null })
 }

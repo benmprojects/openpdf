@@ -136,7 +136,7 @@ test('the main screens have no missing names, labels or ids, and text meets WCAG
         await win.getByRole('tab', { name: t, exact: true }).click()
         all.push(...fmt(await audit(win)).map((m) => `[${scheme} / ${t}] ${m}`))
       }
-      for (const side of ['Pages', 'Bookmarks', 'Comments', 'Attachments', 'Layers', 'Media']) {
+      for (const side of ['Pages', 'Bookmarks', 'Comments', 'Attachments', 'Layers', 'Media', 'Tags', 'Spelling']) {
         await win.getByRole('tab', { name: side, exact: true }).click()
         all.push(...fmt(await audit(win)).map((m) => `[${scheme} / side ${side}] ${m}`))
       }
@@ -163,6 +163,8 @@ test('dialogs have names, take focus when they open, close with Escape, and give
       ['File', 'Plugins', 'Plugins'],
       ['File', 'Security', 'Security'],
       ['File', 'Standards', 'PDF standards'],
+      ['File', 'Accessibility check', 'Accessibility check'],
+      ['File', 'Word count', 'Word count'],
       ['Convert', 'OCR', 'Recognise text (OCR)'],
       ['Sign', 'Sign document', 'Sign document'],
       ['Redact', 'Hidden information', 'Remove hidden information'],

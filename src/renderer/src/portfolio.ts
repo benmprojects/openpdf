@@ -8,11 +8,21 @@ import { pruneUnreachable } from './redact'
 
 const N = PDFName.of
 
+/** A small picture of a file, as 8-bit RGB (no alpha), for portfolio viewers that show thumbnails. */
+export interface FileThumb {
+  width: number
+  height: number
+  rgb: Uint8Array
+}
+
 export interface EmbedFile {
   name: string
   data: Uint8Array
   description?: string
   modified?: Date
+  /** The folder it goes in inside a portfolio, as a path ("Drawings/Civil"); empty for the top level. */
+  folder?: string
+  thumb?: FileThumb
 }
 
 const MIME: Record<string, string> = {
@@ -99,17 +109,30 @@ function uniqueName(name: string, taken: Set<string>): string {
 /** Embeds files in the document (not on a page). A name that is already used gets a number. */
 export async function embedFiles(bytes: Uint8Array, files: EmbedFile[]): Promise<Uint8Array> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
-  addFiles(doc, files)
+  const names = addFiles(doc, files)
+  // In a portfolio that has folders, new files go in the folders they were given (or the top level).
+  if (doc.catalog.has(N('Collection'))) {
+    const state = readFolderState(doc)
+    files.forEach((f, i) => {
+      const folder = cleanFolderPath(f.folder ?? '')
+      if (folder) addPath(state.paths, folder)
+      state.assign.set(names[i], folder)
+    })
+    if (state.paths.size || [...state.assign.values()].some(Boolean)) writeFolderState(doc, state)
+  }
   return doc.save()
 }
 
-function addFiles(doc: PDFDocument, files: EmbedFile[]): void {
+/** Embeds the files in the name tree and returns the names they were stored under (a clash gets a number). */
+function addFiles(doc: PDFDocument, files: EmbedFile[]): string[] {
   const ctx = doc.context
   const list = pairs(doc.catalog.lookupMaybe(N('Names'), PDFDict)?.lookupMaybe(N('EmbeddedFiles'), PDFDict))
   const taken = new Set(list.map(([k]) => k))
+  const stored: string[] = []
   for (const f of files) {
     const name = uniqueName(f.name, taken)
     taken.add(name)
+    stored.push(name)
     const stream = ctx.register(
       ctx.flateStream(f.data, {
         Type: 'EmbeddedFile',
@@ -124,9 +147,14 @@ function addFiles(doc: PDFDocument, files: EmbedFile[]): void {
       EF: { F: stream }
     })
     if (f.description) spec.set(N('Desc'), PDFHexString.fromText(f.description))
+    if (f.thumb && f.thumb.rgb.length === f.thumb.width * f.thumb.height * 3) {
+      const img = ctx.flateStream(f.thumb.rgb, { Type: 'XObject', Subtype: 'Image', Width: f.thumb.width, Height: f.thumb.height, ColorSpace: 'DeviceRGB', BitsPerComponent: 8 })
+      spec.set(N('Thumb'), ctx.register(img))
+    }
     list.push([name, ctx.register(spec)])
   }
   writeTree(doc, list)
+  return stored
 }
 
 /** Takes the document-level embedded file at `index` (in name order, as the attachments list shows) out of the document. */
@@ -151,6 +179,8 @@ export interface PortfolioOptions {
   title: string
   /** Text on the cover page, for viewers that do not show portfolios. */
   cover: string
+  /** How a portfolio viewer first lists the files: details (the default) or tiles. */
+  view?: 'D' | 'T'
 }
 
 /**
@@ -178,13 +208,13 @@ export async function createPortfolio(files: EmbedFile[], o: PortfolioOptions): 
     y -= 14
     if (y < 60) break
   }
-  addFiles(doc, files)
+  const stored = addFiles(doc, files)
   const ctx = doc.context
   doc.catalog.set(
     N('Collection'),
     ctx.obj({
       Type: 'Collection',
-      View: 'D',
+      View: o.view ?? 'D',
       Schema: {
         Type: 'CollectionSchema',
         Name: { Type: 'CollectionField', Subtype: 'S', N: PDFString.of('Name'), O: 1 },
@@ -195,6 +225,13 @@ export async function createPortfolio(files: EmbedFile[], o: PortfolioOptions): 
       Sort: { Type: 'CollectionSort', S: 'Name', A: true }
     })
   )
+  const state: FolderState = { paths: new Set(), assign: new Map() }
+  files.forEach((f, i) => {
+    const folder = cleanFolderPath(f.folder ?? '')
+    if (folder) addPath(state.paths, folder)
+    state.assign.set(stored[i], folder)
+  })
+  if (state.paths.size) writeFolderState(doc, state)
   return doc.save()
 }
 
@@ -204,4 +241,195 @@ export async function isPortfolio(bytes: Uint8Array): Promise<boolean> {
   return doc.catalog.has(N('Collection'))
 }
 
-export type { PDFNumber }
+
+// ---- Folders --------------------------------------------------------------------------------------------------------------------
+//
+// A portfolio can group its files in folders (a /Folders tree of folder dictionaries under /Collection, each with an
+// integer ID; a file points at its folder with /Folder). Paths here are the folder names joined with "/", the top level
+// being the empty string.
+
+interface FolderState {
+  /** Every folder, as a path; the ancestors of a folder are in the set too. */
+  paths: Set<string>
+  /** File name (as stored in the name tree) to folder path. */
+  assign: Map<string, string>
+}
+
+const MAX_FOLDER_NAME = 100
+
+/** A folder name is a short piece of text without slashes or control characters; null when it is fine. */
+export function checkFolderName(name: string): string | null {
+  const t = name.trim()
+  if (!t) return 'Type a name for the folder.'
+  if (t.length > MAX_FOLDER_NAME) return `A folder name can be up to ${MAX_FOLDER_NAME} characters.`
+  // eslint-disable-next-line no-control-regex
+  if (/[/\\\u0000-\u001f]/.test(t)) return 'A folder name cannot hold a slash or a control character.'
+  return null
+}
+
+/** A folder path with stray spaces, empty parts and bad characters taken out. */
+export function cleanFolderPath(p: string): string {
+  return p
+    .split('/')
+    // eslint-disable-next-line no-control-regex
+    .map((x) => x.replace(/[\\\u0000-\u001f]/g, '').trim().slice(0, MAX_FOLDER_NAME))
+    .filter(Boolean)
+    .join('/')
+}
+
+/** Adds a path and every folder above it. */
+function addPath(set: Set<string>, path: string): void {
+  const parts = path.split('/')
+  for (let i = 1; i <= parts.length; i++) set.add(parts.slice(0, i).join('/'))
+}
+
+function readFolderState(doc: PDFDocument): FolderState {
+  const state: FolderState = { paths: new Set(), assign: new Map() }
+  const byId = new Map<number, string>()
+  const root = doc.catalog.lookupMaybe(N('Collection'), PDFDict)?.lookupMaybe(N('Folders'), PDFDict)
+  const seen = new Set<PDFDict>()
+  const walk = (f: PDFDict | undefined, parent: string, depth: number) => {
+    for (let cur = f, n = 0; cur && !seen.has(cur) && n < 5000; cur = cur.lookupMaybe(N('Next'), PDFDict), n++) {
+      seen.add(cur)
+      const isRoot = depth === 0
+      const name = nameOf(cur.lookup(N('Name')))
+      const path = isRoot ? '' : parent ? `${parent}/${name}` : name
+      const id = cur.lookupMaybe(N('ID'), PDFNumber)?.asNumber()
+      if (id !== undefined) byId.set(id, path)
+      if (!isRoot && path) state.paths.add(path)
+      if (depth < 32) walk(cur.lookupMaybe(N('Child'), PDFDict), path, depth + 1)
+      if (isRoot) break
+    }
+  }
+  walk(root, '', 0)
+  for (const [name, v] of pairs(doc.catalog.lookupMaybe(N('Names'), PDFDict)?.lookupMaybe(N('EmbeddedFiles'), PDFDict))) {
+    const spec = v instanceof PDFRef ? doc.context.lookup(v) : v
+    const id = spec instanceof PDFDict ? spec.lookupMaybe(N('Folder'), PDFNumber)?.asNumber() : undefined
+    state.assign.set(name, id !== undefined ? (byId.get(id) ?? '') : '')
+  }
+  return state
+}
+
+function writeFolderState(doc: PDFDocument, state: FolderState): void {
+  const ctx = doc.context
+  const all = new Set<string>()
+  for (const p of state.paths) addPath(all, p)
+  for (const p of state.assign.values()) if (p) addPath(all, p)
+  const col = doc.catalog.lookupMaybe(N('Collection'), PDFDict)
+  const files = pairs(doc.catalog.lookupMaybe(N('Names'), PDFDict)?.lookupMaybe(N('EmbeddedFiles'), PDFDict))
+  const setFolder = (v: PDFObject, id: number | null) => {
+    const spec = v instanceof PDFRef ? ctx.lookup(v) : v
+    if (!(spec instanceof PDFDict)) return
+    if (id === null) spec.delete(N('Folder'))
+    else spec.set(N('Folder'), ctx.obj(id))
+  }
+  if (!all.size) {
+    col?.delete(N('Folders'))
+    for (const [, v] of files) setFolder(v, null)
+    return
+  }
+  const sorted = [...all].sort((a, b) => a.localeCompare(b))
+  const ids = new Map<string, number>([['', 0]])
+  sorted.forEach((p, i) => ids.set(p, i + 1))
+  const refs = new Map<string, PDFRef>()
+  const dicts = new Map<string, PDFDict>()
+  for (const p of ['', ...sorted]) {
+    const d = ctx.obj({ Type: 'Folder', ID: ids.get(p)!, Name: PDFHexString.fromText(p === '' ? 'Root' : p.slice(p.lastIndexOf('/') + 1)) })
+    dicts.set(p, d)
+    refs.set(p, ctx.register(d))
+  }
+  const parentOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '')
+  const siblings = new Map<string, string[]>()
+  for (const p of sorted) siblings.set(parentOf(p), [...(siblings.get(parentOf(p)) ?? []), p])
+  for (const [parent, list] of siblings) {
+    dicts.get(parent)!.set(N('Child'), refs.get(list[0])!)
+    list.forEach((p, i) => {
+      dicts.get(p)!.set(N('Parent'), refs.get(parent)!)
+      if (i + 1 < list.length) dicts.get(p)!.set(N('Next'), refs.get(list[i + 1])!)
+    })
+  }
+  col?.set(N('Folders'), refs.get('')!)
+  for (const [name, v] of files) setFolder(v, ids.get(state.assign.get(name) ?? '') ?? 0)
+}
+
+export interface PortfolioInfo {
+  isPortfolio: boolean
+  /** How a portfolio viewer first lists the files. */
+  view: 'D' | 'T' | 'H'
+  /** Every folder, as a path, in order. */
+  folders: string[]
+  /** File name to the folder it is in ('' for the top level). */
+  assign: Record<string, string>
+}
+
+/** The portfolio details: whether it is one, its first view, its folders and where each file is. */
+export async function readPortfolio(bytes: Uint8Array): Promise<PortfolioInfo> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true })
+  const col = doc.catalog.lookupMaybe(N('Collection'), PDFDict)
+  if (!col) return { isPortfolio: false, view: 'D', folders: [], assign: {} }
+  const state = readFolderState(doc)
+  const view = (col.lookup(N('View')) as PDFName | undefined)?.decodeText()
+  return { isPortfolio: true, view: view === 'T' || view === 'H' ? view : 'D', folders: [...state.paths].sort((a, b) => a.localeCompare(b)), assign: Object.fromEntries(state.assign) }
+}
+
+async function editFolders(bytes: Uint8Array, change: (s: FolderState) => string | null): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  if (!doc.catalog.has(N('Collection'))) throw new Error('This document is not a portfolio.')
+  const state = readFolderState(doc)
+  const problem = change(state)
+  if (problem) throw new Error(problem)
+  writeFolderState(doc, state)
+  return doc.save()
+}
+
+/** Adds a folder (a path; the folders above it are added as needed). */
+export function addFolder(bytes: Uint8Array, path: string): Promise<Uint8Array> {
+  const clean = cleanFolderPath(path)
+  const bad = clean.split('/').map(checkFolderName).find(Boolean)
+  return editFolders(bytes, (s) => {
+    if (!clean) return 'Type a name for the folder.'
+    if (bad) return bad
+    if (s.paths.has(clean)) return 'There is a folder with that name already.'
+    addPath(s.paths, clean)
+    return null
+  })
+}
+
+/** Puts a file in a folder (the top level for an empty path), making the folder if it is new. */
+export function moveToFolder(bytes: Uint8Array, name: string, path: string): Promise<Uint8Array> {
+  const clean = cleanFolderPath(path)
+  return editFolders(bytes, (s) => {
+    if (!s.assign.has(name)) return 'That file is not in the portfolio.'
+    if (clean) addPath(s.paths, clean)
+    s.assign.set(name, clean)
+    return null
+  })
+}
+
+/** Removes a folder; what was in it (files and folders) moves up to the folder above. */
+export function removeFolder(bytes: Uint8Array, path: string): Promise<Uint8Array> {
+  return editFolders(bytes, (s) => {
+    if (!s.paths.has(path)) return 'That folder is not in the portfolio.'
+    const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    const lift = (p: string) => (p === path ? parent : p.startsWith(`${path}/`) ? (parent ? `${parent}/` : '') + p.slice(path.length + 1) : p)
+    s.paths = new Set([...s.paths].filter((p) => p !== path).map(lift))
+    for (const [k, v] of s.assign) s.assign.set(k, lift(v))
+    return null
+  })
+}
+
+/** Renames a folder (its last name), keeping what is in it. */
+export function renameFolder(bytes: Uint8Array, path: string, newName: string): Promise<Uint8Array> {
+  return editFolders(bytes, (s) => {
+    if (!s.paths.has(path)) return 'That folder is not in the portfolio.'
+    const bad = checkFolderName(newName)
+    if (bad) return bad
+    const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    const target = (parent ? `${parent}/` : '') + newName.trim()
+    if (target !== path && s.paths.has(target)) return 'There is a folder with that name already.'
+    const move = (p: string) => (p === path ? target : p.startsWith(`${path}/`) ? target + p.slice(path.length) : p)
+    s.paths = new Set([...s.paths].map(move))
+    for (const [k, v] of s.assign) s.assign.set(k, move(v))
+    return null
+  })
+}

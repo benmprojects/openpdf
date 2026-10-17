@@ -34,6 +34,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tesseract.js": "^7.0.0",
+    "ts-ccitt-g4-encoder": "1.0.0",
     "utif": "^3.1.0"
   },
   "devDependencies": {

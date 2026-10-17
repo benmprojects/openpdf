@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { RecoveryEntry, Settings } from '../main/settings'
 import type { EncryptionInfo, EncryptOptions } from '../shared/pdfSecurity'
 import type { PrintRunOptions } from '../shared/printPlan'
@@ -24,6 +24,9 @@ export interface OpenedFile {
   /** Set for a document handed to a new window that has no file yet (it opens as unsaved). */
   recovered?: boolean
 }
+
+/** End-to-end tests give the Spelling pane a small word list, because the real dictionary is downloaded and may be missing. */
+const testDictionary = process.env.OPENPDF_E2E === '1' && process.env.OPENPDF_E2E_SPELL_DICT !== undefined ? new Set(process.env.OPENPDF_E2E_SPELL_DICT.toLowerCase().split(',')) : null
 
 const api = {
   /** The Open dialog, starting in a folder when one is given. */
@@ -199,7 +202,18 @@ const api = {
   recoveryClear: (key: string): Promise<void> => ipcRenderer.invoke('recovery:clear', key),
   recoveryList: (): Promise<RecoveryEntry[]> => ipcRenderer.invoke('recovery:list'),
   recoveryRead: (key: string): Promise<Uint8Array> => ipcRenderer.invoke('recovery:read', key),
-  recoveryClearAll: (): Promise<void> => ipcRenderer.invoke('recovery:clear-all')
+  recoveryClearAll: (): Promise<void> => ipcRenderer.invoke('recovery:clear-all'),
+  /** The dictionary that checks spelling in text boxes, for the Spelling pane. */
+  spell: {
+    status: (): Promise<{ enabled: boolean; languages: string[] }> => ipcRenderer.invoke('spell:status'),
+    /** Whether a dictionary is loaded: it is downloaded the first time it is needed, so it can be missing (offline). */
+    ready: (): boolean => testDictionary !== null || webFrame.isWordMisspelled('qzxjkvwq'),
+    /** The words (of those given) that the dictionary does not know. */
+    misspelled: (words: string[]): string[] => words.filter((w) => (testDictionary ? !testDictionary.has(w.toLowerCase()) : webFrame.isWordMisspelled(w))),
+    suggest: (word: string): string[] => (testDictionary ? [...testDictionary].filter((w) => w[0] === word[0]?.toLowerCase()).slice(0, 5) : webFrame.getWordSuggestions(word).slice(0, 8)),
+    /** Adds a word to the user's dictionary. */
+    addWord: (word: string): Promise<boolean> => ipcRenderer.invoke('spell:add', word)
+  }
 }
 
 contextBridge.exposeInMainWorld('openpdf', api)

@@ -6,6 +6,8 @@ export interface OcrRequest {
   languages: string[]
   scope: 'blank' | 'all' | 'current'
   dpi: 200 | 300 | 400
+  /** Invisible text over the scan (searchable), or visible text with the scan taken out (replace). */
+  output: 'searchable' | 'replace'
 }
 
 /** Text recognition: languages, which pages, and resolution. */
@@ -16,6 +18,7 @@ export function OcrDialog({ pageCount, currentPage, onRun, onClose }: { pageCoun
   const [second, setSecond] = useState('')
   const [scope, setScope] = useState<OcrRequest['scope']>('blank')
   const [dpi, setDpi] = useState<OcrRequest['dpi']>(300)
+  const [output, setOutput] = useState<OcrRequest['output']>('searchable')
 
   useEffect(() => {
     let live = true
@@ -47,7 +50,7 @@ export function OcrDialog({ pageCount, currentPage, onRun, onClose }: { pageCoun
         className="marks-form props-form"
         onSubmit={(e) => {
           e.preventDefault()
-          onRun({ languages: chosen, scope, dpi })
+          onRun({ languages: chosen, scope, dpi, output })
         }}
       >
         <p className="muted">Finds the words in scanned pages and adds them as invisible text, so the pages can be searched and copied. The pages look the same afterwards.</p>
@@ -80,6 +83,14 @@ export function OcrDialog({ pageCount, currentPage, onRun, onClose }: { pageCoun
             <option value={400}>Small print (400 dpi)</option>
           </select>
         </label>
+        <label className="props-row">
+          <span>{t('Output')}</span>
+          <select aria-label={t('Output')} value={output} onChange={(e) => setOutput(e.target.value as OcrRequest['output'])}>
+            <option value="searchable">{t('Searchable image: keep the scan, add invisible text')}</option>
+            <option value="replace">{t('Replace the scan with the recognised text')}</option>
+          </select>
+        </label>
+        {output === 'replace' && <p className="muted">{t('The page picture is taken out and the recognised words are drawn as visible text in a standard font. The page is then only as good as the recognition: check it. You can undo this until you save.')}</p>}
         {needDownload.length > 0 && <p className="muted">The language data for {needDownload.map((l) => all.find(([c]) => c === l)?.[1] ?? l).join(' and ')} is downloaded once from the internet (a few megabytes) and kept on this computer.</p>}
         <div className="marks-actions">
           <span style={{ flex: 1 }} />

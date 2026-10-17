@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { matInverse, matMul, type Matrix6 } from './content'
 import { ObjectBar, type ObjectAction } from './ObjectBar'
 import type { ImageObject, PdfClient } from './pdfClient'
+import { t } from './i18n'
 import { deltaToPage, type Rotation } from './viewRotation'
+import type { Inset } from './objectOps'
 
 interface Drag {
   kind: 'move' | 'resize'
@@ -44,10 +46,15 @@ export function ObjectEditLayer({
   const [sel, setSel] = useState<number | null>(null)
   const [hover, setHover] = useState<number | null>(null)
   const [drag, setDrag] = useState<Drag | null>(null)
+  /** Dragging the edges of the selected picture to trim it. */
+  const [cropping, setCropping] = useState(false)
+  const [trim, setTrim] = useState<Inset | null>(null)
   const frame = useRef(0)
   const root = useRef<HTMLDivElement>(null)
   const isPath = kind === 'path'
   const noun = isPath ? 'Shape' : 'Image'
+
+  useEffect(() => setCropping(false), [sel])
 
   useEffect(() => {
     let cancelled = false
@@ -137,6 +144,39 @@ export function ObjectEditLayer({
     window.addEventListener('mouseup', up)
   }
 
+  /** Starts trimming one side or corner of a picture: the box follows the pointer, and the trim is applied on release. */
+  const beginCrop = (e: React.MouseEvent, o: ImageObject, sides: { left?: boolean; right?: boolean; top?: boolean; bottom?: boolean }) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const sx = e.clientX
+    const sy = e.clientY
+    const r = o.rect
+    const compute = (ev: MouseEvent): Inset => {
+      const d = deltaToPage(rotation, ev.clientX - sx, ev.clientY - sy)
+      const dx = d.dx / zoom
+      const dy = d.dy / zoom
+      const inset: Inset = { left: 0, top: 0, right: 0, bottom: 0 }
+      if (sides.left) inset.left = Math.min(Math.max(0, dx), r.w - 4)
+      if (sides.right) inset.right = Math.min(Math.max(0, -dx), r.w - 4)
+      if (sides.top) inset.top = Math.min(Math.max(0, dy), r.h - 4)
+      if (sides.bottom) inset.bottom = Math.min(Math.max(0, -dy), r.h - 4)
+      return inset
+    }
+    const move = (ev: MouseEvent) => setTrim(compute(ev))
+    const up = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+      setTrim(null)
+      const inset = compute(ev)
+      if (inset.left + inset.top + inset.right + inset.bottom < 1) return
+      setCropping(false)
+      onAction?.(page, data.total, data.toPage, { kind: 'crop', obj: o, inset })
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
+
   const shown = (o: ImageObject) => {
     const r = o.rect
     if (!drag || o.ordinal !== sel) return { x: r.x, y: r.y, w: r.w, h: r.h }
@@ -216,6 +256,30 @@ export function ObjectEditLayer({
           )
         })
       )}
+      {!isPath && obj && cropping && !drag && (
+        <div className="crop-overlay" aria-label={t('Crop handles')} style={{ left: obj.rect.x * zoom, top: obj.rect.y * zoom, width: obj.rect.w * zoom, height: obj.rect.h * zoom }}>
+          {trim && (
+            <div
+              className="crop-keep"
+              style={{ left: trim.left * zoom, top: trim.top * zoom, width: Math.max(2, (obj.rect.w - trim.left - trim.right) * zoom), height: Math.max(2, (obj.rect.h - trim.top - trim.bottom) * zoom) }}
+            />
+          )}
+          {(
+            [
+              ['nw', { left: true, top: true }, { left: 0, top: 0 }],
+              ['n', { top: true }, { left: '50%', top: 0 }],
+              ['ne', { right: true, top: true }, { left: '100%', top: 0 }],
+              ['e', { right: true }, { left: '100%', top: '50%' }],
+              ['se', { right: true, bottom: true }, { left: '100%', top: '100%' }],
+              ['s', { bottom: true }, { left: '50%', top: '100%' }],
+              ['sw', { left: true, bottom: true }, { left: 0, top: '100%' }],
+              ['w', { left: true }, { left: 0, top: '50%' }]
+            ] as const
+          ).map(([name, sides, at]) => (
+            <div key={name} className={`crop-handle crop-${name}`} role="button" aria-label={t('Crop from the {side}', { side: name })} style={at} onMouseDown={(e) => beginCrop(e, obj, sides)} />
+          ))}
+        </div>
+      )}
       {isPath && obj && (
         <div
           className="resize-handle"
@@ -237,6 +301,8 @@ export function ObjectEditLayer({
           }}
           onDelete={() => remove(obj)}
           onReplace={!isPath && onReplace ? () => onReplace(page, obj, data.total) : undefined}
+          onCropByDrag={!isPath ? () => setCropping((c) => !c) : undefined}
+          cropping={cropping}
           onAction={(a) => onAction?.(page, data.total, data.toPage, a)}
         />
       )}

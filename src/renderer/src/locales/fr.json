@@ -200,7 +200,7 @@
     "Link": "Lien",
     "List box": "Zone de liste",
     "Make a PDF from a picture of the whole screen": "Créer un PDF à partir d'une image de tout l'écran",
-    "Make a PDF from a plain text file": "Créer un PDF à partir d'un fichier texte brut",
+    "Make a PDF from a text, Rich Text (RTF), Markdown or CSV file (styling is not kept; CSV becomes a table)": "Créer un PDF à partir d'un fichier texte, RTF, Markdown ou CSV (la mise en forme n'est pas conservée ; un CSV devient un tableau)",
     "Make a PDF from a saved .html file (scripts and network access are off)": "Créer un PDF à partir d'un fichier .html enregistré (scripts et accès réseau désactivés)",
     "Make a PDF from PNG, JPEG, GIF, BMP, WebP or TIFF pictures, one per page": "Créer un PDF à partir d'images PNG, JPEG, GIF, BMP, WebP ou TIFF, une par page",
     "Make a PDF from the picture on the clipboard": "Créer un PDF à partir de l'image du presse-papiers",
