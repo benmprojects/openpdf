@@ -3,8 +3,9 @@
  * Form fields go through pdf-lib's own flatten (see forms.ts); annotations are drawn from their normal
  * appearance stream (ISO 32000-1 12.5.5) and then removed.
  */
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRef, PDFStream, concatTransformationMatrix, drawObject, popGraphicsState, pushGraphicsState } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFStream, PDFString, concatTransformationMatrix, drawObject, popGraphicsState, pushGraphicsState } from 'pdf-lib'
 import { flattenForm } from './forms'
+import { SIGNATURE_SUBJECT } from './signatureLogic'
 
 export type FlattenWhat = 'fields' | 'annots' | 'both'
 
@@ -41,7 +42,7 @@ export function appearanceMatrix(bbox: number[], matrix: number[], rect: number[
 }
 
 /** Draws every visible annotation (not links, form fields or pop-ups) on `pages` into its page and removes it. */
-export async function flattenAnnotations(bytes: Uint8Array, pages: number[]): Promise<{ bytes: Uint8Array; count: number }> {
+export async function flattenAnnotations(bytes: Uint8Array, pages: number[], only?: (dict: PDFDict, subtype: string | undefined) => boolean): Promise<{ bytes: Uint8Array; count: number }> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
   const list = doc.getPages()
   let count = 0
@@ -54,6 +55,7 @@ export async function flattenAnnotations(bytes: Uint8Array, pages: number[]): Pr
       if (!dict) continue
       const subtype = dict.lookupMaybe(PDFName.of('Subtype'), PDFName)?.decodeText()
       if (subtype === 'Link' || subtype === 'Widget') continue
+      if (only && !only(dict, subtype)) continue
       if (subtype === 'Popup') {
         annots.remove(i)
         continue
@@ -85,6 +87,17 @@ export async function flattenAnnotations(bytes: Uint8Array, pages: number[]): Pr
   }
   if (!count) return { bytes, count: 0 }
   return { bytes: await doc.save({ updateFieldAppearances: false }), count }
+}
+
+/** Makes the placed signature and initials pictures (see signatureLogic) part of their pages, on every page. */
+export async function flattenSignatures(bytes: Uint8Array): Promise<{ bytes: Uint8Array; count: number }> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  const pages = doc.getPageIndices()
+  return flattenAnnotations(bytes, pages, (dict, subtype) => {
+    if (subtype !== 'Stamp') return false
+    const subj = dict.get(PDFName.of('Subj'))
+    return subj instanceof PDFHexString || subj instanceof PDFString ? subj.decodeText() === SIGNATURE_SUBJECT : false
+  })
 }
 
 /** Flattens what was asked for on the given 0-based pages. */

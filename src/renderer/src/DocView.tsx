@@ -15,6 +15,13 @@ import {
   eraseFromPaths,
   canDash,
   canFill,
+  canBlend,
+  canCloud,
+  canLineEnds,
+  isLocked,
+  FLAG_LOCKED,
+  FLAG_PRINT,
+  withFlag,
   signature,
   type Reply,
   type ReviewState,
@@ -34,7 +41,7 @@ import type { DocContext, PageDialogKind, PageDialogResult } from './pageDialogL
 import { applyDialogEdit, buildExtractFiles, buildSplitFiles, doneMessage } from './pageDialogRun'
 import { CommentsDialog, ExportTextDialog, FlattenDialog, SaveAsDialog, type CommentFormat, type CommentsDialogResult, type SaveAsChoice } from './CommandDialogs'
 import { applyFilter, type CommentFilter } from './commentFilter'
-import { flattenDocument, type FlattenWhat } from './flatten'
+import { flattenDocument, flattenSignatures, type FlattenWhat } from './flatten'
 import { getPageClip, onPageClip, setPageClip } from './pageClipboard'
 import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
@@ -62,6 +69,7 @@ import { StandardsDialog } from './StandardsDialog'
 import { convertToPdfA, type PdfAReport } from './pdfa'
 import { checkStandards, type StandardsReport } from './standards'
 import { SignDialog, type SignRequest } from './SignDialog'
+import { CombineDialog } from './CombineDialog'
 import { SignaturesDialog, signatureState, type SignatureRow } from './SignaturesDialog'
 import { addTimestamp, buildTimestampRequest, prepareSignature, readSignatures, verifySignature } from './sign'
 import { sanitise, scanHidden, type HiddenInfo } from './sanitise'
@@ -101,10 +109,12 @@ import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
 import { ComparePanel } from './ComparePanel'
 import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
 import { CommentsPane } from './CommentsPane'
+import { applyStyle as applyStyleTo, cleanStyle, styleOf } from './commentStyle'
 import { commentsCsv, commentSummaryPdf } from './commentReport'
 import { fromFdf, fromNorms, fromXfdf, pageFrames, toFdf, toNorms, toXfdf } from './interchange'
 import { StampPicker } from './StampPicker'
 import { useStamps } from './useStamps'
+import { useSignatures } from './useSignatures'
 import { Reader, type ReaderState } from './readAloud'
 import type { MeasureKind } from './MeasureLayer'
 import { calibrate, formatArea, formatLength, pathLength, PAPER_MM, polygonArea, readViewports, resultLabel, scaleAt, type Scale, type Viewport } from './measure'
@@ -240,6 +250,7 @@ import {
   ScanLine,
   ScanText,
   FileSignature,
+  Combine,
   ShieldAlert,
   TextSelect,
   Underline,
@@ -362,6 +373,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [cmdDialog, setCmdDialog] = useState<
     { kind: 'flatten' } | { kind: 'export'; as: 'txt' | 'html' | 'docx' } | { kind: 'comments'; mode: 'import' | 'export'; format: CommentFormat } | { kind: 'saveas' } | null
   >(null)
+  /** The Combine files dialog (File and Organize tabs). */
+  const [combineOpen, setCombineOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [client, setClient] = useState<PdfClient | null>(null)
   /** The bytes the current client loaded: editing text needs the client to match the file, or its object numbers are stale. */
@@ -1076,7 +1089,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     return {
       ...(s.opacity !== undefined && s.opacity < 1 ? { opacity: s.opacity } : {}),
       ...(hasFont(kind) && s.fontFamily ? { fontFamily: s.fontFamily } : {}),
-      ...(hasFont(kind) && s.fontSize ? { fontSize: s.fontSize } : {})
+      ...(hasFont(kind) && s.fontSize ? { fontSize: s.fontSize } : {}),
+      ...(canLineEnds(kind) && s.lineStart ? { lineStart: s.lineStart } : {}),
+      ...(canLineEnds(kind) && s.lineEnd ? { lineEnd: s.lineEnd } : {}),
+      ...(canCloud(kind) && s.cloud !== undefined ? { cloud: s.cloud } : {}),
+      ...(canBlend(kind) && s.blend ? { blend: s.blend } : {})
     }
   }
 
@@ -1130,6 +1147,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   useEffect(() => {
     if (tool !== 'snapshot') stamps.cancelCapture()
   }, [tool]) // eslint-disable-line react-hooks/exhaustive-deps
+  /** Signature and initials library (Sign tab): pictures of a signature, not certificate signatures. */
+  const signatures = useSignatures(stamps, author, setNotice)
+  const flattenPlacedSignatures = () => {
+    let note = ''
+    void applyPageEdit(async (b) => {
+      const r = await flattenSignatures(b)
+      note = r.count ? `Flattened ${r.count} signature picture${r.count === 1 ? '' : 's'}: now part of the pages` : 'There are no signature pictures to flatten'
+      return r.count ? r.bytes : null
+    }).then(() => note && setNotice({ kind: 'info', text: note }))
+  }
 
   const place = useCallback(
     async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound', page: number, x: number, y: number, box?: { w: number; h: number }) => {
@@ -1200,7 +1227,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   /** Eraser: rub out ink on one page. One undo step for the whole stroke. */
   const eraseInk = useCallback(
     (page: number, trail: Pt[], radius: number) => {
-      const hits = annotsRef.current.filter((a) => a.page === page && a.kind === 'ink' && a.points && eraseFromPaths(a.points, trail, radius))
+      const hits = annotsRef.current.filter((a) => a.page === page && a.kind === 'ink' && !isLocked(a) && a.points && eraseFromPaths(a.points, trail, radius))
       if (!hits.length) return
       hits.forEach((a) => touch(a.id))
       history.commit((list) =>
@@ -1216,7 +1243,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const createShape = useCallback(
     (shape: Omit<Annot, 'id'>) => {
-      const a: Annot = {
+      const a: Annot = withBounds({
         author: authorRef.current || undefined,
         created: new Date().toISOString(),
         ...shape,
@@ -1224,7 +1251,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         ...(canFill(shape.kind) && fillsRef.current[shape.kind] ? { fill: fillsRef.current[shape.kind] } : {}),
         ...(canDash(shape.kind) && dashesRef.current[shape.kind] ? { dash: dashesRef.current[shape.kind] } : {}),
         ...extraStyle(shape.kind)
-      }
+      })
       history.commit((list) => [...list, a])
       setSelectedAnnot(a.id)
       // A new callout goes straight to typing its text.
@@ -1241,7 +1268,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       touch(id)
       history.commit((list) =>
         list.map((a) => {
-          if (a.id !== id || !a.points) return a
+          if (a.id !== id || !a.points || isLocked(a)) return a
           const size = pages[a.page]
           const first = a.points[0].map((p, i) =>
             i === index ? { x: Math.max(0, Math.min(size.width, p.x + dx)), y: Math.max(0, Math.min(size.height, p.y + dy)) } : p
@@ -1260,7 +1287,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       ids.forEach(touch)
       history.commit((list) =>
         list.map((a) => {
-          if (!ids.has(a.id)) return a
+          if (!ids.has(a.id) || isLocked(a)) return a
           const size = pages[a.page]
           const r = a.rects[0]
           const x = Math.max(0, Math.min(size.width - r.w, r.x + dx))
@@ -1277,7 +1304,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       touch(id)
       history.commit((list) =>
         list.map((a) => {
-          if (a.id !== id) return a
+          if (a.id !== id || isLocked(a)) return a
           const size = pages[a.page]
           const r = a.rects[0]
           return {
@@ -1293,6 +1320,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const removeAnnot = useCallback(
     (id: number) => {
+      // A locked comment cannot be deleted (untick Locked in the Properties panel first).
+      if (annotsRef.current.find((a) => a.id === id && isLocked(a))) return
       touch(id)
       history.commit((list) => list.filter((a) => a.id !== id))
       setSelectedAnnot((s) => (s === id ? null : s))
@@ -1303,6 +1332,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const removeMany = useCallback(
     (ids: ReadonlySet<number>) => {
+      // Locked comments stay.
+      ids = new Set([...ids].filter((id) => !annotsRef.current.some((a) => a.id === id && isLocked(a))))
       ids.forEach(touch)
       history.commit((list) => list.filter((a) => !ids.has(a.id)))
       setSelectedAnnot(null)
@@ -1352,6 +1383,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         })
         return
       }
+      if (id !== null && annotsRef.current.some((a) => a.id === id && isLocked(a))) return
       if (id !== null) touch(id)
       setEditingAnnot(id)
     },
@@ -1362,7 +1394,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     (id: number, text: string) => {
       setEditingAnnot(null)
       const existing = annotsRef.current.find((a) => a.id === id)
-      if (!existing) return
+      if (!existing || isLocked(existing)) return
       // A replace mark left empty becomes a plain strikeout.
       if (existing.replace && !text.trim()) {
         history.commit((list) => list.map((a) => (a.id === id ? { ...a, text: '', replace: false } : a)))
@@ -1396,14 +1428,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   const pickColor = (c: string) => {
     setColors((m) => ({ ...m, [swatchKind]: c }))
-    if (selected) touch(selected.id)
-    if (selected) history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, color: c } : a)))
+    if (selected && !isLocked(selected)) touch(selected.id)
+    if (selected && !isLocked(selected)) history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, color: c } : a)))
   }
 
   const pickWidth = (w: number) => {
     setDrawWidth(w)
     setStyleMap((m) => ({ ...m, [swatchKind]: { ...m[swatchKind], lineWidth: w } }))
-    if (selected && (isShapeKind(selected.kind) || selected.kind === 'stamp')) {
+    if (selected && !isLocked(selected) && (isShapeKind(selected.kind) || selected.kind === 'stamp')) {
       touch(selected.id)
       history.commit((list) => list.map((a) => (a.id === selected.id ? withBounds({ ...a, lineWidth: w }) : a)))
     }
@@ -1414,14 +1446,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const activeDash = selected ? selected.dash : dashes[swatchKind]
   const pickFill = (c: string | undefined) => {
     setFills((f) => ({ ...f, [swatchKind]: c }))
-    if (selected && canFill(selected.kind)) {
+    if (selected && !isLocked(selected) && canFill(selected.kind)) {
       touch(selected.id)
       history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, fill: c } : a)))
     }
   }
   const pickDash = (d: 'dashed' | 'dotted' | undefined) => {
     setDashes((x) => ({ ...x, [swatchKind]: d }))
-    if (selected && canDash(selected.kind)) {
+    if (selected && !isLocked(selected) && canDash(selected.kind)) {
       touch(selected.id)
       history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, dash: d } : a)))
     }
@@ -1430,19 +1462,15 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // ---- Properties panel and tool presets ------------------------------------------------------------
   const [propsOpen, setPropsOpen] = useState(false)
   const panelStyle: ToolStyle & { color: string } = selected
-    ? {
-        color: selected.color,
-        fill: selected.fill,
-        dash: selected.dash,
-        lineWidth: selected.lineWidth,
-        opacity: selected.opacity,
-        fontFamily: selected.fontFamily,
-        fontSize: selected.fontSize
-      }
+    ? { lineWidth: selected.lineWidth, fontSize: selected.fontSize, ...styleOf(selected) }
     : { ...(styleMap[swatchKind] ?? {}), color: colors[swatchKind], fill: fills[swatchKind], dash: dashes[swatchKind], lineWidth: styleMap[swatchKind]?.lineWidth ?? drawWidth }
   /** Applies a style change to the selected annotation, or to the current tool. */
   const applyStyle = (patch: ToolStyle) => {
     if (selected) {
+      if (isLocked(selected)) {
+        setNotice({ kind: 'info', text: 'This comment is locked. Untick Locked in the Properties panel to change it.' })
+        return
+      }
       touch(selected.id)
       history.commit((list) =>
         list.map((a) => {
@@ -1450,7 +1478,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           const next: Annot = { ...a, ...patch, ...(patch.opacity === 1 ? { opacity: undefined } : {}) }
           if ('fill' in patch && !canFill(a.kind)) delete next.fill
           if (a.kind === 'typewriter' && (patch.fontSize || patch.fontFamily)) next.rects = [typewriterRect(a.rects[0].x, a.rects[0].y, a.text, next.fontSize)]
-          return patch.lineWidth !== undefined ? withBounds(next) : next
+          return patch.lineWidth !== undefined || 'lineStart' in patch || 'lineEnd' in patch || 'cloud' in patch ? withBounds(next) : next
         })
       )
       return
@@ -1465,20 +1493,72 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (Object.keys(rest).length) setStyleMap((m) => ({ ...m, [swatchKind]: { ...m[swatchKind], ...rest } }))
   }
   const setAuthorOf = (author: string) => {
-    if (!selected) return
+    if (!selected || isLocked(selected)) return
     touch(selected.id)
     history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, author: author || undefined } : a)))
   }
   const makeDefault = () => {
-    const { color, fill, dash, lineWidth, opacity, fontFamily, fontSize } = panelStyle
-    const style: ToolStyle = { color, ...(fill ? { fill } : {}), ...(dash ? { dash } : {}), lineWidth, ...(opacity !== undefined ? { opacity } : {}), ...(fontFamily ? { fontFamily } : {}), ...(fontSize ? { fontSize } : {}) }
-    onSettings({ toolDefaults: { ...toolDefaults, [swatchKind]: style } })
+    onSettings({ toolDefaults: { ...toolDefaults, [swatchKind]: cleanStyle(panelStyle) } })
     setNotice({ kind: 'info', text: `New ${annotLabel(swatchKind).toLowerCase()} annotations will use this style` })
   }
   const savePreset = (presetName: string) => {
-    const { color, fill, dash, lineWidth, opacity, fontFamily, fontSize } = panelStyle
-    const style: ToolStyle = { color, ...(fill ? { fill } : {}), ...(dash ? { dash } : {}), lineWidth, ...(opacity !== undefined ? { opacity } : {}), ...(fontFamily ? { fontFamily } : {}), ...(fontSize ? { fontSize } : {}) }
-    onSettings({ toolPresets: [...toolPresets, { id: crypto.randomUUID(), name: presetName, kind: swatchKind, style }] })
+    onSettings({ toolPresets: [...toolPresets, { id: crypto.randomUUID(), name: presetName, kind: swatchKind, style: cleanStyle(panelStyle) }] })
+  }
+  /** A saved style becomes the default for its tool. */
+  const presetAsDefault = (p: ToolPreset) => {
+    onSettings({ toolDefaults: { ...toolDefaults, [p.kind]: p.style } })
+    setNotice({ kind: 'info', text: `New ${annotLabel(p.kind as AnnotKind).toLowerCase()} annotations will use the style "${p.name}"` })
+  }
+  /** Gives a saved style to every selected comment (locked ones are left alone). */
+  const applyPresetToSelected = (p: ToolPreset) => {
+    const ids = selIdsRef.current
+    const targets = annotsRef.current.filter((a) => ids.has(a.id) && !isLocked(a) && a.kind !== 'foreign' && a.kind !== 'link')
+    if (!targets.length) return
+    targets.forEach((a) => touch(a.id))
+    const set = new Set(targets.map((a) => a.id))
+    history.commit((list) => list.map((a) => (set.has(a.id) ? applyStyleTo(a, p.style) : a)))
+    setNotice({ kind: 'info', text: `Applied "${p.name}" to ${targets.length} comment${targets.length === 1 ? '' : 's'}` })
+  }
+  /** Printable and Locked flags of the selected comment (these work on a locked comment: that is how it is unlocked). */
+  const setFlags = (patch: { printable?: boolean; locked?: boolean }) => {
+    if (!selected) return
+    touch(selected.id)
+    history.commit((list) =>
+      list.map((a) => {
+        if (a.id !== selected.id) return a
+        let next = a
+        if (patch.printable !== undefined) next = withFlag(next, FLAG_PRINT, patch.printable)
+        if (patch.locked !== undefined) next = withFlag(next, FLAG_LOCKED, patch.locked)
+        return next
+      })
+    )
+  }
+
+  // ---- Comments list: show/hide on the page (the view only), bulk status, deleting, selecting ----
+  const [hiddenComments, setHiddenComments] = useState<ReadonlySet<number>>(() => new Set())
+  const setCommentsHidden = (ids: number[], hide: boolean) => {
+    // Annotations of other tools that we only keep as they are ("foreign") stay drawn by PDFium, so they cannot be hidden.
+    const foreign = new Set(annotsRef.current.filter((a) => a.kind === 'foreign').map((a) => a.id))
+    const target = ids.filter((id) => !foreign.has(id))
+    // An imported comment is drawn by PDFium until touched, so hiding one hands it to our overlay first.
+    if (hide) target.forEach(touch)
+    setHiddenComments((h) => {
+      const next = new Set(h)
+      for (const id of target) {
+        if (hide) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }
+  const setStatusMany = (ids: number[], state: ReviewState) => {
+    const reply = (): Reply => ({ id: nextAnnotId.current++, author: authorRef.current, text: '', date: new Date().toISOString(), state })
+    const set = new Set(ids)
+    history.commit((list) => list.map((a) => (set.has(a.id) ? { ...a, replies: [...(a.replies ?? []), reply()] } : a)))
+  }
+  const selectComments = (ids: number[]) => {
+    setSelectedAnnot(ids[0] ?? null)
+    setExtraSel(new Set(ids.slice(1)))
   }
   /** A preset arms its tool with its style. */
   const applyPreset = (p: ToolPreset) => {
@@ -1486,7 +1566,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (p.style.color) setColors((m) => ({ ...m, [k]: p.style.color! }))
     setFills((m) => ({ ...m, [k]: p.style.fill }))
     setDashes((m) => ({ ...m, [k]: p.style.dash }))
-    setStyleMap((m) => ({ ...m, [k]: { ...m[k], lineWidth: p.style.lineWidth, opacity: p.style.opacity, fontFamily: p.style.fontFamily, fontSize: p.style.fontSize } }))
+    setStyleMap((m) => ({
+      ...m,
+      [k]: { ...m[k], lineWidth: p.style.lineWidth, opacity: p.style.opacity, fontFamily: p.style.fontFamily, fontSize: p.style.fontSize, lineStart: p.style.lineStart, lineEnd: p.style.lineEnd, cloud: p.style.cloud, blend: p.style.blend }
+    }))
     setSelectedAnnot(null)
     if (!isMarkup(k)) setTool(k as Tool)
     else setLastMarkup(k)
@@ -2806,6 +2889,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={FolderOpen} label={t('Open')} onClick={onOpen} title={t('Open a PDF (Ctrl+O)')} />
                 <RB big icon={Save} label={t('Save')} badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
                 <RB big icon={SaveAll} label={t('Save as')} onClick={() => setCmdDialog({ kind: 'saveas' })} disabled={saving || !pages.length} title={t('Save a copy (Ctrl+Shift+S)')} />
+                <RB big icon={Combine} label={t('Combine files')} onClick={() => setCombineOpen(true)} title={t('Combine PDFs, pictures and Office files into one PDF')} />
                 <RB big icon={X} label={t('Close')} onClick={onCloseDoc} title={t('Close this document (Ctrl+W)')} />
               </RGroup>
               <RGroup label={t('Comments')}>
@@ -3010,6 +3094,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               </RGroup>
               <RGroup label={t('Documents')}>
                 <RB big icon={Files} label={t('Merge')} onClick={() => openPageDialog('merge')} disabled={!pages.length || busy} title={t('Merge: add the pages of other PDFs to the end')} />
+                <RB big icon={Combine} label={t('Combine files')} onClick={() => setCombineOpen(true)} title={t('Combine PDFs, pictures and Office files into one PDF')} />
                 <RB big icon={Scissors} label={t('Split')} onClick={() => openPageDialog('split')} disabled={!pages.length || busy} title={t('Split into files of a set number of pages')} />
                 <RB big icon={GitCompare} label={t('Compare')} onClick={() => setCompareOpen(true)} disabled={!pages.length || busy} title={t('Compare this document with another PDF: the words, and how the pages look')} />
               </RGroup>
@@ -3163,10 +3248,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             </>
           )}
           {ribbon === 'sign' && (
-            <RGroup label={t('Signatures')}>
-              <RB big icon={FileSignature} label={t('Sign document')} onClick={() => setSignOpen(true)} disabled={!pages.length || busy || locked} title={t('Sign with a certificate from Windows or a certificate file')} />
-              <RB big icon={ShieldCheck} label={t('Signatures')} onClick={() => setSigPanel(true)} disabled={!pages.length} title={t('Check who signed this document and whether it has changed since')} />
-            </RGroup>
+            <>
+              <RGroup label={t('Signatures')}>
+                <RB big icon={FileSignature} label={t('Sign document')} onClick={() => setSignOpen(true)} disabled={!pages.length || busy || locked} title={t('Sign with a certificate from Windows or a certificate file')} />
+                <RB big icon={ShieldCheck} label={t('Signatures')} onClick={() => setSigPanel(true)} disabled={!pages.length} title={t('Check who signed this document and whether it has changed since')} />
+              </RGroup>
+              <RGroup label={t('Signature pictures')}>
+                <RB big icon={PenLine} label={t('Add signature')} onClick={signatures.open} disabled={!pages.length} title={t('Draw, type or import a signature or initials, then place it on the page. This is a picture, not a certificate signature')} />
+                <RStack>
+                  <RB icon={FileSignature} label={t('Sign here')} onClick={() => signatures.placeholder('sign')} disabled={!pages.length} pressed={tool === 'stamp' && stamps.choice.id === 'builtin:sign-here'} title={t('Mark where someone should sign: click on the page')} />
+                  <RB icon={PenLine} label={t('Initial here')} onClick={() => signatures.placeholder('initial')} disabled={!pages.length} pressed={tool === 'stamp' && stamps.choice.id === 'builtin:initial-here'} title={t('Mark where someone should initial: click on the page')} />
+                  <RB icon={Layers2} label={t('Flatten signatures')} onClick={flattenPlacedSignatures} disabled={!pages.length || busy || locked} title={t('Make the placed signature pictures part of the pages so they can no longer be moved or deleted')} />
+                </RStack>
+              </RGroup>
+            </>
           )}
           {ribbon === 'layout' && (
             <>
@@ -3757,6 +3852,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       })()}
 
       {stamps.dialogs}
+      {signatures.dialogs}
+      {combineOpen && <CombineDialog onClose={() => setCombineOpen(false)} onNewDoc={onNewDoc} notify={setNotice} />}
 
       {pageDialog && (() => {
         const common = { ctx: dialogCtx, name: baseName, onCancel: () => setPageDialog(null), onSubmit: (r: PageDialogResult) => void submitPageDialog(r) }
@@ -3858,6 +3955,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                     onDeleteReply={deleteReply}
                     onSummarise={() => setCmdDialog({ kind: 'comments', mode: 'export', format: 'summary' })}
                     onExportCsv={() => setCmdDialog({ kind: 'comments', mode: 'export', format: 'csv' })}
+                    hiddenIds={hiddenComments}
+                    onSetHidden={setCommentsHidden}
+                    onStatusMany={setStatusMany}
+                    onDeleteMany={(ids) => removeMany(new Set(ids))}
+                    onSelectMany={selectComments}
                   />
                 }
               />
@@ -3945,7 +4047,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               }}
               onFollowLink={(l) => (l.page !== undefined ? goTo(l.page) : l.uri ? void window.openpdf.openLink(l.uri) : undefined)}
               tool={tool}
-              annots={annots}
+              annots={hiddenComments.size ? annots.filter((a) => !hiddenComments.has(a.id)) : annots}
               selectedAnnot={selectedAnnot}
               extraSelected={extraSel}
               onFieldRect={(page, rect) => setFieldDraft({ type: fieldKind, page, rect })}
@@ -4008,6 +4110,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onSavePreset={savePreset}
                 onUsePreset={applyPreset}
                 onDeletePreset={(id) => onSettings({ toolPresets: toolPresets.filter((p) => p.id !== id) })}
+                onApplyPreset={applyPresetToSelected}
+                selectedCount={selectedIds.size}
+                onPresetDefault={presetAsDefault}
+                onFlags={setFlags}
                 onClose={() => setPropsOpen(false)}
               />
             )}

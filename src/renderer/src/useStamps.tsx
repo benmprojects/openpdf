@@ -6,6 +6,7 @@ import type { DocContext } from './pageDialogLogic'
 import { PdfClient } from './pdfClient'
 import { encodeRotatedPng } from './print'
 import { ImageStampDialog, StampPagesDialog, TextStampDialog } from './StampDialogs'
+import { isSignatureCategory } from './signatureLogic'
 import { dataUrlBytes, trimTransparent, whiteToAlpha } from './stampImage'
 import {
   BUILTIN_STAMPS,
@@ -162,6 +163,7 @@ export function useStamps(deps: Deps) {
       a.lineWidth = 2
       if (def.kind === 'image' && def.image) a.image = def.image.dataUrl
       else a.color = def.color
+      if (def.kind === 'image' && isSignatureCategory(def.category)) a.signature = true
       if (info) a.stampInfo = info
       if (angle) a.angle = angle
       if (o.opacity < 1) a.opacity = clampOpacity(o.opacity)
@@ -406,7 +408,7 @@ export function useStamps(deps: Deps) {
                 ...targets.map((p) => {
                   const size = deps.pages[p]
                   const copy = deps.newAnnot('stamp', p, src.rects.map((r) => ({ ...r, x: size ? Math.max(0, Math.min(size.width - r.w, r.x)) : r.x, y: size ? Math.max(0, Math.min(size.height - r.h, r.y)) : r.y })), src.text)
-                  return { ...copy, color: src.color, lineWidth: src.lineWidth, stampInfo: src.stampInfo, image: src.image, angle: src.angle, opacity: src.opacity }
+                  return { ...copy, color: src.color, lineWidth: src.lineWidth, stampInfo: src.stampInfo, image: src.image, signature: src.signature, angle: src.angle, opacity: src.opacity }
                 })
               ])
               deps.notify({ kind: 'info', text: t('Stamp copied to {n} pages.', { n: targets.length }) })
@@ -438,6 +440,7 @@ export function useStamps(deps: Deps) {
       setDialog({ kind: 'arm', def })
     },
     copySelected,
+    refresh: refreshImages,
     captureSnapshot,
     cancelCapture,
     dialogs

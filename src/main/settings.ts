@@ -42,7 +42,17 @@ export interface ToolStyle {
   opacity?: number
   fontFamily?: 'Helvetica' | 'Times' | 'Courier'
   fontSize?: number
+  lineStart?: LineEnd
+  lineEnd?: LineEnd
+  cloud?: number
+  blend?: BlendMode
 }
+
+/** Mirrors LINE_ENDS and BLEND_MODES in the renderer (lineEnds.ts, annotations.ts). */
+type LineEnd = 'None' | 'OpenArrow' | 'ClosedArrow' | 'ROpenArrow' | 'RClosedArrow' | 'Circle' | 'Square' | 'Diamond' | 'Slash' | 'Butt'
+type BlendMode = 'Normal' | 'Multiply' | 'Screen' | 'Overlay' | 'Darken' | 'Lighten'
+const LINE_ENDS: string[] = ['None', 'OpenArrow', 'ClosedArrow', 'ROpenArrow', 'RClosedArrow', 'Circle', 'Square', 'Diamond', 'Slash', 'Butt']
+const BLEND_MODES: string[] = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten']
 
 /** Mirrors ScalePreset in the renderer's measureScale.ts. */
 export interface ScalePreset {
@@ -75,6 +85,10 @@ function cleanStyle(raw: unknown): ToolStyle {
   if (typeof r.opacity === 'number' && r.opacity >= 0.1 && r.opacity <= 1) out.opacity = r.opacity
   if (r.fontFamily === 'Helvetica' || r.fontFamily === 'Times' || r.fontFamily === 'Courier') out.fontFamily = r.fontFamily
   if (typeof r.fontSize === 'number' && r.fontSize >= 4 && r.fontSize <= 144) out.fontSize = r.fontSize
+  if (typeof r.lineStart === 'string' && LINE_ENDS.includes(r.lineStart)) out.lineStart = r.lineStart as LineEnd
+  if (typeof r.lineEnd === 'string' && LINE_ENDS.includes(r.lineEnd)) out.lineEnd = r.lineEnd as LineEnd
+  if (r.cloud === 0 || r.cloud === 1 || r.cloud === 2) out.cloud = r.cloud
+  if (typeof r.blend === 'string' && BLEND_MODES.includes(r.blend)) out.blend = r.blend as BlendMode
   return out
 }
 

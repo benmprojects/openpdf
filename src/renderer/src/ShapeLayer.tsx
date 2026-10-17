@@ -1,4 +1,27 @@
-import { arrowHeadPoints, cloudCurves, dashArray, isVertexKind, translated, withBounds, type Annot } from './annotations'
+import { blendCss, blendOf, cloudCurves, cloudLevel, cloudOutline, dashArray, isVertexKind, lineEndsOf, translated, withBounds, type Annot, type Pt } from './annotations'
+import { pathEnds } from './lineEnds'
+
+/** SVG path data for a scalloped border along `pts`. */
+function cloudPath(pts: Pt[], lw: number, level: number): string {
+  const { start, curves } = cloudCurves(pts, lw, level)
+  return `M${start.x} ${start.y} ` + curves.map(([c1, c2, p]) => `C${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p.x} ${p.y}`).join(' ') + ' Z'
+}
+
+/** The end markers (arrows, circles and so on) of a path, as SVG paths. */
+function endMarkers(a: Annot, pts: Pt[], col: string, lw: number, key: string) {
+  const ends = lineEndsOf(a)
+  return pathEnds(pts, ends.start, ends.end, lw).map((m, i) => (
+    <path
+      key={`${key}-end${i}`}
+      d={m.pts.map((p, k) => `${k ? 'L' : 'M'}${p.x} ${p.y}`).join(' ') + (m.closed ? ' Z' : '')}
+      fill={m.fill ? col : 'none'}
+      stroke={col}
+      strokeWidth={lw}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  ))
+}
 
 export type Gesture = { id: number; kind: 'move' | 'resize' | 'reshape'; dx: number; dy: number; index?: number }
 
@@ -62,20 +85,10 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
 
     if (a.kind === 'line' || a.kind === 'arrow') {
       const [p0, p1] = a.points![0]
-      const [l, tip, rr] = arrowHeadPoints(p0, p1, lw)
       body = (
         <>
           <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke={col} strokeWidth={lw} strokeLinecap="round" strokeDasharray={dash} />
-          {a.kind === 'arrow' && (
-            <polyline
-              points={`${l.x},${l.y} ${tip.x},${tip.y} ${rr.x},${rr.y}`}
-              fill="none"
-              stroke={col}
-              strokeWidth={lw}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          )}
+          {endMarkers(a, [p0, p1], col, lw, String(orig.id))}
           <line x1={p0.x} y1={p0.y} x2={p1.x} y2={p1.y} stroke="transparent" strokeWidth={fat(lw)} pointerEvents={hit} style={cursor} onMouseDown={down} />
         </>
       )
@@ -95,14 +108,14 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
     } else if (isVertexKind(a.kind)) {
       const pts = a.points![0]
       let d: string
-      if (a.kind === 'cloud') {
-        const { start, curves } = cloudCurves(pts, lw)
-        d = `M${start.x} ${start.y} ` + curves.map(([c1, c2, p]) => `C${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p.x} ${p.y}`).join(' ') + ' Z'
-      } else d = pts.map((p, k) => `${k ? 'L' : 'M'}${p.x} ${p.y}`).join(' ') + (a.kind === 'polygon' ? ' Z' : '')
+      const level = cloudLevel(a)
+      if (level) d = cloudPath(pts, lw, level)
+      else d = pts.map((p, k) => `${k ? 'L' : 'M'}${p.x} ${p.y}`).join(' ') + (a.kind !== 'polyline' ? ' Z' : '')
       const closed = a.kind !== 'polyline'
       body = (
         <>
           <path d={d} fill={closed ? fillCol : 'none'} stroke={col} strokeWidth={lw} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={dash} />
+          {!closed && endMarkers(a, pts, col, lw, String(orig.id))}
           <path d={d} fill={closed ? 'transparent' : 'none'} stroke="transparent" strokeWidth={fat(lw)} pointerEvents={interactive ? (closed ? 'all' : 'stroke') : 'none'} style={cursor} onMouseDown={down} />
         </>
       )
@@ -137,8 +150,11 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
       const inset = lw / 2
       const w = Math.max(1, r.w - lw)
       const h = Math.max(1, r.h - lw)
+      const outline = a.kind === 'rectangle' ? cloudOutline(a) : null
       const shape = (props: React.SVGProps<SVGElement>) =>
-        a.kind === 'rectangle' ? (
+        outline ? (
+          <path d={cloudPath(outline, lw, cloudLevel(a))} {...(props as object)} />
+        ) : a.kind === 'rectangle' ? (
           <rect x={r.x + inset} y={r.y + inset} width={w} height={h} {...(props as object)} />
         ) : (
           <ellipse cx={r.x + r.w / 2} cy={r.y + r.h / 2} rx={w / 2} ry={h / 2} {...(props as object)} />
@@ -228,7 +244,7 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
       )
     }
     return (
-      <g key={orig.id} opacity={a.opacity}>
+      <g key={orig.id} opacity={a.opacity} style={blendOf(a) !== 'Normal' ? { mixBlendMode: blendCss(blendOf(a)) as React.CSSProperties['mixBlendMode'] } : undefined}>
         {body}
         {label}
         {selected && (

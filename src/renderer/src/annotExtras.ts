@@ -4,6 +4,8 @@
  * annotations, so more of what other tools write can be edited faithfully.
  */
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib'
+import { BLEND_MODES, type BlendMode } from './annotations'
+import { isLineEnd, type LineEnd } from './lineEnds'
 
 const textOf = (o: unknown) => (o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : undefined)
 
@@ -108,6 +110,31 @@ export function arrowEnds(d: PDFDict | undefined): { start: boolean; end: boolea
   if (!le) return { start: false, end: false }
   const at = (i: number) => ARROWS.has(le.lookupMaybe(i, PDFName)?.decodeText() ?? '')
   return { start: at(0), end: at(1) }
+}
+
+/** The two /LE styles of a line or polyline, with a single name taken as the end style (as a callout's /LE is). */
+export function lineEndStyles(d: PDFDict | undefined): { start: LineEnd; end: LineEnd } {
+  const le = d?.lookup(PDFName.of('LE'))
+  const pick = (o: unknown): LineEnd => {
+    const v = o instanceof PDFName ? o.decodeText() : undefined
+    return isLineEnd(v) ? v : 'None'
+  }
+  if (le instanceof PDFArray) return { start: pick(le.lookup(0)), end: pick(le.lookup(1)) }
+  return { start: 'None', end: pick(le) }
+}
+
+/** The border effect (/BE): the cloud intensity 1 or 2 when it is a cloud, else null (no effect, or the plain style). */
+export function cloudIntensityOf(d: PDFDict | undefined): number | null {
+  const be = d?.lookupMaybe(PDFName.of('BE'), PDFDict)
+  if (!be || nameOf(be, 'S') !== 'C') return null
+  const i = be.lookupMaybe(PDFName.of('I'), PDFNumber)?.asNumber() ?? 0
+  return i >= 2 ? 2 : i >= 1 ? 1 : null
+}
+
+/** The blend mode named in /BM, when it is one we offer. */
+export function blendModeOf(d: PDFDict | undefined): BlendMode | undefined {
+  const v = nameOf(d, 'BM')
+  return v && (BLEND_MODES as string[]).includes(v) ? (v as BlendMode) : undefined
 }
 
 /** The line style from /BS (or the dash array of /Border): dotted when the dashes are no longer than the line is wide. */

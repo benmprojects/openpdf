@@ -10,6 +10,9 @@ import {
   LINE_WIDTH,
   annotLabel,
   arrowHeadPoints,
+  blendCss,
+  blendOf,
+  isLocked,
   FONT_CSS,
   calloutAttach,
   caretRectAfter,
@@ -75,6 +78,8 @@ export function AnnotLayer({
     if (additive) onSelect(a.id, true)
     else if (a.id !== selectedId && !extraSelected?.has(a.id)) onSelect(a.id)
     if (additive || (editingId === a.id && kind === 'move')) return
+    // A locked comment can be picked but not moved, resized or reshaped.
+    if (isLocked(a)) return
     const sx = e.clientX
     const sy = e.clientY
     let moved = false
@@ -111,9 +116,9 @@ export function AnnotLayer({
           return a.rects.map((r, i) => {
             const base = { left: r.x * zoom, width: r.w * zoom }
             return (
-              <div key={`${a.id}-${i}`} style={{ opacity: a.opacity }}>
+              <div key={`${a.id}-${i}`} style={{ opacity: a.opacity, mixBlendMode: a.kind !== 'highlight' && a.blend && a.blend !== 'Normal' ? (blendCss(a.blend) as React.CSSProperties['mixBlendMode']) : undefined }}>
                 {a.kind === 'highlight' && !ghost && (
-                  <div className="annot-highlight" style={{ ...base, top: r.y * zoom, height: r.h * zoom, background: a.color }} />
+                  <div className="annot-highlight" style={{ ...base, top: r.y * zoom, height: r.h * zoom, background: a.color, mixBlendMode: blendCss(blendOf(a)) as React.CSSProperties['mixBlendMode'] }} />
                 )}
                 {a.kind === 'squiggly' && !ghost && (
                   <svg className="annot-wave" style={{ left: r.x * zoom, top: r.y * zoom, width: r.w * zoom, height: r.h * zoom * 1.1 }} viewBox={`${r.x} ${r.y} ${r.w} ${r.h * 1.1}`} preserveAspectRatio="none">

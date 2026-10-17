@@ -1,4 +1,11 @@
 import type { Rect } from './textLogic'
+import type { LineEnd } from './lineEnds'
+
+export type { LineEnd } from './lineEnds'
+
+/** Blend modes offered for markup (ISO 32000 11.3.5: the separable ones that make sense on a page). */
+export type BlendMode = 'Normal' | 'Multiply' | 'Screen' | 'Overlay' | 'Darken' | 'Lighten'
+export const BLEND_MODES: BlendMode[] = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten']
 
 export type AnnotKind =
   | 'highlight'
@@ -79,6 +86,13 @@ export interface ToolStyle {
   opacity?: number
   fontFamily?: FontFamily
   fontSize?: number
+  /** Line, arrow and polyline: what is drawn at the first and last point (see `lineEndsOf`). */
+  lineStart?: LineEnd
+  lineEnd?: LineEnd
+  /** Cloud, polygon and rectangle: scallop size, 0 (none), 1 or 2 (see `cloudLevel`). */
+  cloud?: number
+  /** How the markup mixes with the page (see `blendOf`). */
+  blend?: BlendMode
 }
 
 export const REVIEW_STATES: ReviewState[] = ['None', 'Accepted', 'Rejected', 'Cancelled', 'Completed']
@@ -125,6 +139,15 @@ export interface Annot {
   opacity?: number
   /** Text box, typewriter and callout font. Helvetica when unset. */
   fontFamily?: FontFamily
+  /** Line, arrow and polyline: the end styles (/LE). Unset means none, except an arrow's last end (open arrow). */
+  lineStart?: LineEnd
+  lineEnd?: LineEnd
+  /** Cloud, polygon and rectangle: border effect intensity (/BE /I): 0 plain, 1 or 2. Unset: 1 for a cloud, otherwise 0. */
+  cloud?: number
+  /** Blend mode. Unset: Multiply for a highlight, Normal for everything else. */
+  blend?: BlendMode
+  /** The annotation flags (/F) as in the file; unset on a new one, which is printable (bit 3) and nothing else. */
+  flags?: number
   /** File attachment: the file. Sound: the WAV file it came from. */
   file?: { name: string; data: Uint8Array }
   /** Link target: a web or mail address. */
@@ -140,6 +163,8 @@ export interface Annot {
   replies?: Reply[]
   /** Image stamp: the picture as a data: URL (PNG or JPEG). */
   image?: string
+  /** Image stamp: a picture of the person's signature or initials (saved with the subject "Visual signature"). Not a certificate signature. */
+  signature?: boolean
   /** Text stamp: a second, smaller line, such as who stamped it and when. */
   stampInfo?: string
   /** Stamp: degrees clockwise the stamp is turned about the centre of its box; upright when unset. */
@@ -187,7 +212,7 @@ export function formatWhen(iso?: string): string {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.angle ?? 0, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.file ? a.file.name : null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.angle ?? 0, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.file ? a.file.name : null, a.lineStart ?? null, a.lineEnd ?? null, a.cloud ?? null, a.blend ?? null, a.flags ?? null])
 }
 
 export const NOTE_SIZE = 22
@@ -229,14 +254,55 @@ export function dashArray(dash: Annot['dash'], lineWidth: number): number[] | nu
   return null
 }
 
-/** Size of one cloud scallop for a line width. */
-export const cloudBump = (lineWidth: number) => Math.max(8, lineWidth * 4 + 4)
+/** Size of one cloud scallop for a line width; intensity 2 gives larger scallops. */
+export const cloudBump = (lineWidth: number, intensity = 1) => Math.max(8, lineWidth * 4 + 4) * (intensity >= 2 ? 1.7 : 1)
+
+/** Kinds that can have a scalloped border. */
+export const canCloud = (k: AnnotKind) => k === 'cloud' || k === 'polygon' || k === 'rectangle'
+/** Kinds that can have line end styles. */
+export const canLineEnds = (k: AnnotKind) => k === 'line' || k === 'arrow' || k === 'polyline'
+/** Kinds whose blend mode can be chosen. */
+export const canBlend = (k: AnnotKind) => isMarkup(k) || isShapeKind(k) || k === 'stamp'
+
+/** The border-effect intensity in force: 0 (plain), 1 or 2. A cloud is intensity 1 unless set. */
+export function cloudLevel(a: Pick<Annot, 'kind' | 'cloud'>): number {
+  if (!canCloud(a.kind)) return 0
+  const v = a.cloud ?? (a.kind === 'cloud' ? 1 : 0)
+  return v >= 2 ? 2 : v >= 1 ? 1 : 0
+}
+
+/** The two end styles of a line, arrow or polyline: an arrow ends in an open arrow unless set otherwise. */
+export function lineEndsOf(a: Pick<Annot, 'kind' | 'lineStart' | 'lineEnd'>): { start: LineEnd; end: LineEnd } {
+  if (!canLineEnds(a.kind)) return { start: 'None', end: 'None' }
+  return { start: a.lineStart ?? 'None', end: a.lineEnd ?? (a.kind === 'arrow' ? 'OpenArrow' : 'None') }
+}
+
+/** The blend mode in force: a highlight multiplies unless set otherwise. */
+export function blendOf(a: Pick<Annot, 'kind' | 'blend'>): BlendMode {
+  return a.blend ?? (a.kind === 'highlight' ? 'Multiply' : 'Normal')
+}
+/** CSS mix-blend-mode for a blend mode. */
+export const blendCss = (b: BlendMode) => b.toLowerCase()
+
+// ---- Annotation flags (ISO 32000 12.5.3, Table 167) ----
+export const FLAG_PRINT = 4
+export const FLAG_LOCKED = 128
+export const annotFlags = (a: Pick<Annot, 'flags'>) => a.flags ?? FLAG_PRINT
+/** Whether the annotation prints. */
+export const isPrintable = (a: Pick<Annot, 'flags'>) => (annotFlags(a) & FLAG_PRINT) !== 0
+/** Whether the annotation is locked: it cannot be moved, resized, restyled, edited or deleted. */
+export const isLocked = (a: Pick<Annot, 'flags'>) => (annotFlags(a) & FLAG_LOCKED) !== 0
+/** The same annotation with a flag bit switched on or off. */
+export function withFlag<T extends Pick<Annot, 'flags'>>(a: T, bit: number, on: boolean): T {
+  const f = annotFlags(a)
+  return { ...a, flags: on ? f | bit : f & ~bit }
+}
 
 /**
  * The scalloped border of a cloud, as cubic Bézier segments from `start`: each edge is split into bumps that bulge
  * outwards, each a half circle (approximated with control points 4/3 of the radius out).
  */
-export function cloudCurves(pts: Pt[], lineWidth: number): { start: Pt; curves: [Pt, Pt, Pt][] } {
+export function cloudCurves(pts: Pt[], lineWidth: number, intensity = 1): { start: Pt; curves: [Pt, Pt, Pt][] } {
   let area = 0
   for (let i = 0; i < pts.length; i++) {
     const a = pts[i]
@@ -250,7 +316,7 @@ export function cloudCurves(pts: Pt[], lineWidth: number): { start: Pt; curves: 
     const b = pts[(i + 1) % pts.length]
     const len = Math.hypot(b.x - a.x, b.y - a.y)
     if (len < 0.01) continue
-    const k = Math.max(1, Math.round(len / cloudBump(lineWidth)))
+    const k = Math.max(1, Math.round(len / cloudBump(lineWidth, intensity)))
     const ux = (b.x - a.x) / len
     const uy = (b.y - a.y) / len
     const nx = uy * out
@@ -264,6 +330,29 @@ export function cloudCurves(pts: Pt[], lineWidth: number): { start: Pt; curves: 
     }
   }
   return { start: pts[0], curves }
+}
+/** The corners a cloudy rectangle's scallops run along: the box pulled in so the bulges stay inside it. Null when too small. */
+export function cloudRectPoints(r: Rect, lineWidth: number, intensity: number): Pt[] | null {
+  const inset = cloudBump(lineWidth, intensity) * 0.75 + lineWidth / 2
+  if (r.w < inset * 2 + 4 || r.h < inset * 2 + 4) return null
+  const x0 = r.x + inset
+  const y0 = r.y + inset
+  const x1 = r.x + r.w - inset
+  const y1 = r.y + r.h - inset
+  return [
+    { x: x0, y: y0 },
+    { x: x1, y: y0 },
+    { x: x1, y: y1 },
+    { x: x0, y: y1 }
+  ]
+}
+
+/** The points a cloud-bordered shape is drawn along, or null when it has no cloud border. */
+export function cloudOutline(a: Annot): Pt[] | null {
+  const level = cloudLevel(a)
+  if (!level) return null
+  if (a.kind === 'rectangle') return cloudRectPoints(a.rects[0], a.lineWidth, level)
+  return a.points?.[0] ?? null
 }
 /** Kinds whose size can be changed with the corner handle. */
 export const isResizable = (k: AnnotKind) => k === 'textbox' || k === 'rectangle' || k === 'ellipse' || k === 'stamp' || k === 'foreign'
@@ -351,19 +440,22 @@ export function pointsBounds(paths: Pt[][], pad: number): Rect {
 }
 
 /** Line, arrow and ink keep their geometry in `points`; `rects[0]` is the box around them. */
-export function pathBounds(kind: AnnotKind, lineWidth: number, points: Pt[][]): Rect {
+export function pathBounds(kind: AnnotKind, lineWidth: number, points: Pt[][], extra?: Pick<Annot, 'lineStart' | 'lineEnd' | 'cloud'>): Rect {
+  const ends = extra ? lineEndsOf({ kind, ...extra }) : null
+  const endPad = ends && (ends.start !== 'None' || ends.end !== 'None') ? Math.max(lineWidth / 2, arrowHeadLength(lineWidth) * 0.6) : 0
+  const level = cloudLevel({ kind, cloud: extra?.cloud })
   const pad =
     kind === 'arrow'
       ? Math.max(lineWidth / 2, arrowHeadLength(lineWidth) * 0.6)
-      : kind === 'cloud'
-        ? lineWidth / 2 + cloudBump(lineWidth) * 0.7
-        : lineWidth / 2
+      : level
+        ? lineWidth / 2 + cloudBump(lineWidth, level) * 0.7
+        : Math.max(lineWidth / 2, endPad)
   return pointsBounds(points, pad)
 }
 
 export function withBounds(a: Annot): Annot {
   if (!a.points || !isPathKind(a.kind)) return a
-  return { ...a, rects: [pathBounds(a.kind, a.lineWidth, a.points)] }
+  return { ...a, rects: [pathBounds(a.kind, a.lineWidth, a.points, a)] }
 }
 
 export function translated(a: Annot, dx: number, dy: number): Annot {

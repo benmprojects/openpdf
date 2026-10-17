@@ -17,7 +17,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | Open | Local, recent, restore previous session, cloud accounts, open from URL | PARTIAL | Recent list, tabs, drag and drop, Places (synced OneDrive/SharePoint/Dropbox/Google Drive folders) exist. Missing: open from URL, restore previous session, direct cloud API sign-in |
 | Save / Save As | Save options, save copy | DONE | Atomic write, Save As dialog |
 | New document | Blank, from text, RTF, images, scanner, combine files | PARTIAL | Convert tab has images, text, web page, clipboard, screenshot, Office (via LibreOffice), scan. Missing: blank document, RTF, Markdown, CSV, XPS, WMF |
-| Print | Printer, ranges, copies, scaling, booklet, N-up, comments, preview | PARTIAL | Printer choice, range, odd/even, copies, fit/actual/custom scale, orientation, N-up, booklet, preview, 300 dpi. Missing: print comments/stamps toggle, print as image, print with layers choice, output is raster (no selectable text in print-to-PDF), poster/tile printing, advanced printer properties |
+| Print | Printer, ranges, copies, scaling, booklet, N-up, comments, preview | PARTIAL | Printer choice, range, odd/even, copies, fit/actual/custom scale, orientation, N-up, booklet, preview, 300 dpi. Print what: document, document and comments, comments only; comments with the Printable flag off are left out. Pages always print as 300 dpi pictures, so "print as image" is how every job already works. Missing: print with layers choice, output is raster (no selectable text in print-to-PDF), poster/tile printing, advanced printer properties |
 | Export | Images, Word, Excel, PowerPoint | PARTIAL | Images (PNG/JPEG/TIFF), text, HTML, Word (best effort). Missing: Excel, PowerPoint; Word has no pictures, tables or columns |
 | Share / e-mail | Send by e-mail, SharePoint check in/out | MISSING | No send-by-email, no check in/out |
 | Revert | Discard unsaved changes | PARTIAL | Undo/redo and recovery snapshots exist; no one-click "Revert to saved" found |
@@ -55,19 +55,19 @@ Prepared 17/10/2026 for planning the remaining work.
 | Highlight, Underline, Strikeout, Squiggly | From text selection | DONE | |
 | Insert text, Replace text (carets) | Caret annotations | DONE | |
 | Text correction | Review-style correction tool | MISSING | Replace text covers part of this |
-| Line, Arrow, Rectangle, Oval, Polygon, Polyline, Cloud | Fill, dashes, line endings, opacity | PARTIAL | Fill, dash, opacity done. Missing: line end style choice (open/closed/diamond/etc.), blend mode (multiply for highlights), cloud intensity |
+| Line, Arrow, Rectangle, Oval, Polygon, Polyline, Cloud | Fill, dashes, line endings, opacity | DONE | Fill, dash, opacity, line end styles (open/closed/reversed arrows, circle, square, diamond, slash, butt) on lines, arrows and polylines, cloud intensity (none, small, large) on clouds, polygons and rectangles, blend mode (Normal, Multiply, Screen, Overlay, Darken, Lighten) |
 | Pencil / Eraser | Freehand, erase | DONE | |
 | Stamp tool | Palette with categories, custom stamps from file/selection/document/clipboard, dynamic stamps with JavaScript (Plus), import/export | PARTIAL | 7 text stamps, dated stamps, image stamps from PNG/JPEG library. Missing: stamp categories and palette pane, custom stamps from PDF/selection/clipboard (vector), dynamic stamps with fields (date, sequential number, user name), stamp import/export, favourites, a construction-style set (e.g. "Approved", "Rev A", "Issued for Construction", "As Constructed") |
 | Measure: distance, perimeter, area | Scales, calibrate, snap, labels, export to CSV | PARTIAL | See section 7 |
 | Media: video, sound, 3D | Add/edit | MISSING | Playback of existing media only (Media pane); cannot add video or 3D |
 | Summarise comments | Summary PDF | DONE | Summary PDF and CSV |
 | Import / export comments | FDF, XFDF | DONE | |
-| Show (filter visibility) | By type, author, status, checked | PARTIAL | List filters by type, author, status. Missing: hide/show on the page from the filter, "checked" flag, group by colour/subject/date |
+| Show (filter visibility) | By type, author, status, checked | PARTIAL | List filters by type, author, status, colour; group by page, author, type, colour, date, status; hide and show comments on the page (the view only) from the list. Missing: a "checked" flag saved in the file, group by subject; annotations from other tools ("foreign") cannot be hidden |
 | Flatten comments | Selected or range | DONE | Forms tab > Flatten (with options) |
-| Delete comments | Selected, visible, all | PARTIAL | Delete selected; no "delete visible" or "delete all" command found |
-| Comments list / pane | Group, filter, replies, lock, printable flag, layer | PARTIAL | Sort, filter, replies, status. Missing: lock comment, printable flag, group-by options, reset pop-up positions |
-| Comment styles palette | Save and reuse formatting, set as default | PARTIAL | Tool presets and defaults exist (Settings and Properties panel). Missing: a style palette pane to apply style to existing comments, import/export of styles |
-| Properties panel / dialog | Appearance, General, Review history, Actions, Locking | PARTIAL | Colour, fill, opacity, width, style, font, size, author. Missing: subject, layer, lock, review history list, blend mode, flags (print, no zoom) |
+| Delete comments | Selected, visible, all | DONE | Delete selected, delete visible, delete all, each with a confirmation; locked comments are kept |
+| Comments list / pane | Group, filter, replies, lock, printable flag, layer | PARTIAL | Sort, group, filter, replies, status (one comment or several at once), select all, next/previous comment (buttons and arrow keys in the list), lock and printable flags (Properties panel). Missing: layer, reset pop-up positions, a window-wide shortcut for next/previous comment |
+| Comment styles palette | Save and reuse formatting, set as default | PARTIAL | Named styles (presets) saved from the Properties panel, applied to the selected comments, set as a tool's default; they carry line ends, cloud intensity and blend mode too. Missing: import/export of styles, a separate docked styles pane |
+| Properties panel / dialog | Appearance, General, Review history, Actions, Locking | PARTIAL | Colour, fill, opacity, width, style, line ends, cloud border, blend mode, font, size, author, Printable and Locked flags. Missing: subject, layer, review history list, other flags (no zoom) |
 | Review status and threads | Replies, status | DONE | |
 
 ## 4. Organize tab
@@ -99,7 +99,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
 | Scan | Scanner presets, colour mode, dpi, paper size, source, duplex | PARTIAL | WIA only: scanner's own window, glass, feeder, colour mode, dpi. Missing: TWAIN, named presets, duplex and paper size controls, scan straight into an open document (inserts as new document) |
-| Combine files into one PDF | Mixed formats | PARTIAL | Merge of PDFs, portfolio. Missing: one dialog accepting mixed images/Office/PDF with ordering |
+| Combine files into one PDF | Mixed formats | DONE | File and Organise tabs: PDFs, pictures and Office files (LibreOffice) with page ranges, drag/arrow ordering, sort, add folder, bookmarks, new tab or save |
 | Create from text / RTF / images / blank | | PARTIAL | Images and text only (see File) |
 | Rasterise pages | Flatten vector to image | MISSING | |
 | Recompress images | | PARTIAL | In Optimise (JPEG reduction), not a standalone tool; no JBIG2/CCITT |
@@ -155,7 +155,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | JavaScript console, document JS, document actions | | PARTIAL | Field scripts only. No console, document-level or open/close/save/print scripts, submit action |
 | Tab order | | DONE | |
 | Fill and save | Fill, flatten | DONE | |
-| Placeholder tool (Plus) | Mark where signature/initials go | MISSING | |
+| Placeholder tool (Plus) | Mark where signature/initials go | DONE | Sign tab: Sign here and Initial here markers (stamps) |
 
 ## 9. Protect tab
 
@@ -164,7 +164,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | Sign document, place signature | Certificate store or file, appearance | DONE | Visible and invisible, time-stamp |
 | Certify | Visible or invisible, change permissions | DONE | |
 | Timestamp, validate all, clear all | | PARTIAL | Time-stamp and validate in panel. Missing: "clear all signatures" command, LTV |
-| Signature and initials library | Drawn/typed/image signatures stored, place and apply all | MISSING | No library of drawn or typed signatures or initials (FreeSign-style) |
+| Signature and initials library | Drawn/typed/image signatures stored, place and apply all | DONE | Sign tab: draw (smoothed), type (installed script fonts) or import a picture (white to transparent, trim); library with rename/delete; click or drag to place; several pages; flatten. Visual only, not a certificate signature |
 | Mark for redaction, apply, find and redact | Patterns: phone, card numbers, SSN, emails, dates | PARTIAL | Area, selected text, search results; apply selected vs all not offered. Missing: pattern presets, redaction code/overlay text, redaction styling, apply to a selected mark only |
 | Sanitise | Metadata etc. | DONE | |
 | Security properties, policies | Passwords, permissions, certificate security | PARTIAL | AES-256/128 passwords and permissions. Missing: security policies (saved), certificate encryption |
@@ -178,7 +178,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | SharePoint check in/out | | MISSING | Files in synced folders open normally |
 | Proofing: spell check, word count, text correction | | PARTIAL | As-you-type spell check only |
 | Compare documents | | DONE | |
-| Comments review (add, next/previous, show, flatten) | | PARTIAL | Next/previous comment navigation not found |
+| Comments review (add, next/previous, show, flatten) | | PARTIAL | Next/previous comment buttons and arrow keys in the Comments pane |
 | Accessibility: reading order, tags pane, alt text, checker, report | | PARTIAL | Standards dialog reads tagging, language, alt text counts. Missing: tags pane, reading order editing, alt text editing, full checker report |
 | Bookmarks editing | New, delete, rename, destinations, style (colour/bold/italic), import/export, generate from text, nth-page, case change, sort, validate | PARTIAL | Insert, rename, delete, move, indent, outdent. Missing: colour/bold/italic, actions, set destination from selection, import/export, auto-generate from headings, cut/copy/paste, extract/print pages by bookmark |
 | Portfolio | Create, navigator, edit | PARTIAL | Create, list, add, save, remove. Missing: layout views, custom folders, thumbnails |
@@ -234,7 +234,7 @@ Ordered by everyday usefulness (marking up drawings, measuring, stamping, combin
 1. Named measurement scales and presets (1:20, 1:50, 1:100, 1:200, 1:500 on A1/A3/A4) with per-page scales, plus precision control; calibrating each sheet by hand is slow.
 2. Measurement results as a labelled, exportable list (CSV or Excel) with page, type, length/area and a user label, and "count" markers for items such as pits, trees or signs.
 3. Object snapping when measuring on vector drawings (endpoints, intersections, line ends), so quantities are accurate.
-4. A proper stamp palette: categories, custom stamps from a PDF, selection or clipboard (vector, so they stay sharp), import/export and sharing of stamp sets, and a construction set (Approved, Issued for Construction, Rev, As Constructed). Epoca would supply the wording.
+4. A proper stamp palette: categories, custom stamps from a PDF, selection or clipboard (vector, so they stay sharp), import/export and sharing of stamp sets, and a construction set (Approved, Issued for Construction, Rev, As Constructed).
 5. Dynamic stamps and fields: current date, user name, sequential number filled when the stamp is placed.
 6. Signature and initials library: draw, type or import once, then place on any page, with Place and Apply All (and a Placeholder tool to mark where others should sign).
 7. Combine-files dialog: mixed PDFs, images and Office files in one list with ordering, then one output (the merge today is PDFs only).

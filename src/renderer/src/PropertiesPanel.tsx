@@ -1,19 +1,32 @@
-import { Bookmark, Save, Trash2, X } from 'lucide-react'
+import { Bookmark, Paintbrush, Pin, Save, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import {
   annotLabel,
+  BLEND_MODES,
+  blendOf,
+  canBlend,
+  canCloud,
   canDash,
   canFill,
+  canLineEnds,
+  cloudLevel,
   colorChoices,
   FONT_FAMILIES,
   formatWhen,
   hasFont,
+  isLocked,
+  isPrintable,
   isShapeKind,
+  lineEndsOf,
   LINE_WIDTHS,
   type Annot,
   type AnnotKind,
+  type BlendMode,
+  type LineEnd,
   type ToolStyle
 } from './annotations'
+import { t } from './i18n'
+import { LINE_ENDS } from './lineEnds'
 
 export interface ToolPreset {
   id: string
@@ -35,13 +48,27 @@ interface Props {
   onSavePreset: (name: string) => void
   onUsePreset: (p: ToolPreset) => void
   onDeletePreset: (id: string) => void
+  /** Gives a saved style to the selected comments (hidden when nothing is selected). */
+  onApplyPreset?: (p: ToolPreset) => void
+  /** How many comments are selected, for the label of that button. */
+  selectedCount?: number
+  /** Makes a saved style the default for its tool. */
+  onPresetDefault?: (p: ToolPreset) => void
+  /** Switches the Print and Locked flags of the selected annotation. */
+  onFlags?: (patch: { printable?: boolean; locked?: boolean }) => void
   onClose: () => void
 }
 
+const endLabel = (e: LineEnd) =>
+  ({ None: t('None'), OpenArrow: t('Open arrow'), ClosedArrow: t('Closed arrow'), ROpenArrow: t('Reversed open arrow'), RClosedArrow: t('Reversed closed arrow'), Circle: t('Circle'), Square: t('Square'), Diamond: t('Diamond'), Slash: t('Slash'), Butt: t('Butt') })[e]
+
 /** Every property of the selected annotation (or the current tool), with tool defaults and saved presets. */
-export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeDefault, presets, onSavePreset, onUsePreset, onDeletePreset, onClose }: Props) {
+export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeDefault, presets, onSavePreset, onUsePreset, onDeletePreset, onApplyPreset, selectedCount = 0, onPresetDefault, onFlags, onClose }: Props) {
   const [presetName, setPresetName] = useState('')
   const shape = isShapeKind(kind) || kind === 'stamp' || kind === 'callout'
+  const locked = !!annot && isLocked(annot)
+  const ends = lineEndsOf({ kind, lineStart: style.lineStart, lineEnd: style.lineEnd })
+  const blendLabels: Record<BlendMode, string> = { Normal: t('Normal'), Multiply: t('Multiply'), Screen: t('Screen'), Overlay: t('Overlay'), Darken: t('Darken'), Lighten: t('Lighten') }
   return (
     <aside className="props-panel" aria-label="Properties">
       <div className="search-panel-head">
@@ -52,6 +79,8 @@ export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeD
       </div>
       <div className="props-body">
         {!annot && <p className="muted small">Nothing selected: these settings apply to new {annotLabel(kind).toLowerCase()} annotations.</p>}
+        {locked && <p className="muted small">{t('This comment is locked. Untick Locked below to change it.')}</p>}
+        <fieldset className="props-set" disabled={locked}>
         <div className="props-grid">
           <label htmlFor="prop-color">Colour</label>
           <div className="props-colour">
@@ -106,6 +135,48 @@ export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeD
               </select>
             </>
           )}
+          {canLineEnds(kind) && (
+            <>
+              <label htmlFor="prop-lstart">{t('Line start')}</label>
+              <select id="prop-lstart" value={ends.start} onChange={(e) => onStyle({ lineStart: e.target.value as LineEnd })}>
+                {LINE_ENDS.map((v) => (
+                  <option key={v} value={v}>
+                    {endLabel(v)}
+                  </option>
+                ))}
+              </select>
+              <label htmlFor="prop-lend">{t('Line end')}</label>
+              <select id="prop-lend" value={ends.end} onChange={(e) => onStyle({ lineEnd: e.target.value as LineEnd })}>
+                {LINE_ENDS.map((v) => (
+                  <option key={v} value={v}>
+                    {endLabel(v)}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          {canCloud(kind) && (
+            <>
+              <label htmlFor="prop-cloud">{t('Cloud border')}</label>
+              <select id="prop-cloud" value={cloudLevel({ kind, cloud: style.cloud })} onChange={(e) => onStyle({ cloud: Number(e.target.value) })}>
+                <option value={0}>{t('None (plain line)')}</option>
+                <option value={1}>{t('Small scallops')}</option>
+                <option value={2}>{t('Large scallops')}</option>
+              </select>
+            </>
+          )}
+          {canBlend(kind) && (
+            <>
+              <label htmlFor="prop-blend">{t('Blend mode')}</label>
+              <select id="prop-blend" value={blendOf({ kind, blend: style.blend })} onChange={(e) => onStyle({ blend: e.target.value as BlendMode })}>
+                {BLEND_MODES.map((b) => (
+                  <option key={b} value={b}>
+                    {blendLabels[b]}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           {hasFont(kind) && (
             <>
               <label htmlFor="prop-font">Font</label>
@@ -137,6 +208,19 @@ export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeD
             </>
           )}
         </div>
+        </fieldset>
+        {annot && onFlags && (
+          <div className="props-flags" role="group" aria-label={t('Comment flags')}>
+            <label title={t('Untick to leave this comment off the printout')}>
+              <input type="checkbox" checked={isPrintable(annot)} onChange={(e) => onFlags({ printable: e.target.checked })} />
+              {t('Printable')}
+            </label>
+            <label title={t('A locked comment cannot be moved, edited, restyled or deleted')}>
+              <input type="checkbox" checked={isLocked(annot)} onChange={(e) => onFlags({ locked: e.target.checked })} />
+              {t('Locked')}
+            </label>
+          </div>
+        )}
         <div className="props-actions">
           <button className="btn" onClick={onMakeDefault} title={`New ${annotLabel(kind).toLowerCase()} annotations will use this style, in every document`}>
             <Save size={14} aria-hidden /> Make default for {annotLabel(kind)}
@@ -165,6 +249,16 @@ export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeD
                 <span>{p.name}</span>
                 <span className="muted small">{annotLabel(p.kind as AnnotKind)}</span>
               </button>
+              {onApplyPreset && selectedCount > 0 && (
+                <button className="icon-btn tiny" onClick={() => onApplyPreset(p)} aria-label={t('Apply {name} to the selected comments', { name: p.name })} title={t('Apply to {n} selected', { n: selectedCount })}>
+                  <Paintbrush size={12} aria-hidden />
+                </button>
+              )}
+              {onPresetDefault && (
+                <button className="icon-btn tiny" onClick={() => onPresetDefault(p)} aria-label={t('Make {name} the default for {tool}', { name: p.name, tool: annotLabel(p.kind as AnnotKind) })} title={t('Make this the default for the {tool} tool', { tool: annotLabel(p.kind as AnnotKind) })}>
+                  <Pin size={12} aria-hidden />
+                </button>
+              )}
               <button className="icon-btn tiny" onClick={() => onDeletePreset(p.id)} aria-label={`Delete preset ${p.name}`}>
                 <Trash2 size={12} aria-hidden />
               </button>

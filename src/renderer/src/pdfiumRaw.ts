@@ -5,8 +5,9 @@
  */
 import type { PDFiumDocument, PDFiumLibrary, PDFiumPage } from '@hyzyla/pdfium'
 import type { PDFDict } from 'pdf-lib'
-import { arrowEnds, dashStyle, measureOf, nameOf, numbers, linkTargetOf } from './annotExtras'
-import { pathBounds, type AnnotKind, type MeasureInfo, type Pt } from './annotations'
+import { arrowEnds, blendModeOf, cloudIntensityOf, dashStyle, lineEndStyles, measureOf, nameOf, numbers, linkTargetOf } from './annotExtras'
+import { pathBounds, type AnnotKind, type BlendMode, type MeasureInfo, type Pt } from './annotations'
+import type { LineEnd } from './lineEnds'
 import type { PathGeometry } from './snap'
 import type { Rect } from './textLogic'
 
@@ -173,6 +174,12 @@ export interface ImportedAnnot {
   /** Link target (kind 'link'). */
   linkUri?: string
   linkPage?: number
+  /** Line and polyline end styles (/LE), cloud intensity (/BE), blend mode (/BM) and the annotation flags (/F). */
+  lineStart?: LineEnd
+  lineEnd?: LineEnd
+  cloud?: number
+  blend?: BlendMode
+  flags: number
 }
 
 /** A reply or review-state change: a Text annotation with /IRT pointing at another annotation on the page. */
@@ -308,7 +315,8 @@ export function readPageAnnots(
         const link = subtype === 2 ? linkTargetOf(dict) : undefined
         let kind = link ? 'link' : (ANNOT_KINDS[subtype] ?? (subtype === 2 || subtype === 16 || subtype === 20 ? undefined : 'foreign'))
         if (!kind) continue
-        if (m._FPDFAnnot_GetFlags(annot) & (FLAG_HIDDEN | FLAG_NO_VIEW)) continue
+        const flags = m._FPDFAnnot_GetFlags(annot)
+        if (flags & (FLAG_HIDDEN | FLAG_NO_VIEW)) continue
         // Measurements: editable when their /Measure can be read (pdf-lib); otherwise left to PDFium.
         let measure: ImportedAnnot['measure']
         if (m._FPDFAnnot_HasKey(annot, keyMeasure)) {
@@ -333,6 +341,9 @@ export function readPageAnnots(
         // Shapes are only taken on when re-drawing them as a plain stroke is faithful: lines and arrows that
         // we or Acrobat-style tools labelled, unfilled rectangles and ellipses, ink, and our own stamps.
         let points: Pt[][] | undefined
+        let lineStart: LineEnd | undefined
+        let lineEnd: LineEnd | undefined
+        let cloud: number | undefined
         let label = ''
         let lineWidth = 1
         let calloutBox: Rect | null = null
@@ -343,10 +354,20 @@ export function readPageAnnots(
           points = [[toDisplay(g.getFloat32(scratch + 16, true), g.getFloat32(scratch + 20, true)), toDisplay(g.getFloat32(scratch + 24, true), g.getFloat32(scratch + 28, true))].map(([x, y]) => ({ x, y }))]
           // An arrow by our own label, or by its line endings (/LE) whoever wrote it. A start-only arrow is turned round.
           const ends = arrowEnds(dict)
-          if (!measure && !ends.end && ends.start) points = [[points[0][1], points[0][0]]]
+          const le = lineEndStyles(dict)
+          let swapped = false
+          if (!measure && !ends.end && ends.start) {
+            points = [[points[0][1], points[0][0]]]
+            swapped = true
+          }
           kind = measure ? 'line' : subj === 'Arrow' || ends.end || ends.start ? 'arrow' : 'line'
+          const [s0, e0] = swapped ? [le.end, le.start] : [le.start, le.end]
+          if (s0 !== 'None') lineStart = s0
+          // An arrow with no end style named is the open arrow the Arrow tool draws.
+          if (e0 !== 'None') lineEnd = e0
         } else if (kind === 'rectangle' || kind === 'ellipse') {
           // Filled shapes are taken on too; the interior colour is read below.
+          if (kind === 'rectangle') cloud = cloudIntensityOf(dict) ?? undefined
         } else if (kind === 'polygon' || kind === 'polyline') {
           const count = m._FPDFAnnot_GetVertices(annot, 0, 0)
           if (count < 2) continue
@@ -363,8 +384,16 @@ export function readPageAnnots(
           } finally {
             m.wasmExports.free(buf)
           }
-          // A polygon with a border effect is a cloud.
-          if (kind === 'polygon' && m._FPDFAnnot_HasKey(annot, keyBE)) kind = 'cloud'
+          // A polygon with a border effect is a cloud (and a polygon with the plain style stays a polygon).
+          if (kind === 'polygon' && (dict ? cloudIntensityOf(dict) !== null : m._FPDFAnnot_HasKey(annot, keyBE))) {
+            kind = 'cloud'
+            cloud = (dict ? cloudIntensityOf(dict) : null) ?? 1
+          }
+          if (kind === 'polyline') {
+            const le = lineEndStyles(dict)
+            if (le.start !== 'None') lineStart = le.start
+            if (le.end !== 'None') lineEnd = le.end
+          }
         } else if (kind === 'stamp') {
           label = readString(annot, keyLabel)
           // Other tools' stamps keep their own picture.
@@ -429,7 +458,7 @@ export function readPageAnnots(
             if (r.w > 0 && r.h > 0) rects.push(r)
           }
         }
-        if (points && kind !== 'callout') rects = [pathBounds(kind, lineWidth, points)]
+        if (points && kind !== 'callout') rects = [pathBounds(kind, lineWidth, points, { lineStart, lineEnd, cloud })]
         if (calloutBox) rects = [calloutBox]
         if (!rects.length) rects = [bboxOf([toDisplay(rect[0], rect[3]), toDisplay(rect[2], rect[1])])]
         if (kind === 'note') rects = [{ x: rects[0].x, y: rects[0].y, w: rects[0].w >= 4 ? rects[0].w : 22, h: rects[0].h >= 4 ? rects[0].h : 22 }]
@@ -500,7 +529,12 @@ export function readPageAnnots(
           created: readString(annot, keyCreated) || undefined,
           modified: readString(annot, keyM) || undefined,
           linkUri: link?.uri,
-          linkPage: link?.page
+          linkPage: link?.page,
+          lineStart,
+          lineEnd,
+          cloud,
+          blend: kind === 'foreign' || kind === 'link' ? undefined : blendModeOf(dict),
+          flags
         })
       } finally {
         m._FPDFPage_CloseAnnot(annot)

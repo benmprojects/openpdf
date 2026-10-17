@@ -22,10 +22,13 @@ import {
   type PDFPage
 } from 'pdf-lib'
 import {
-  arrowHeadPoints,
   calloutAttach,
   parseWav,
   cloudCurves,
+  cloudLevel,
+  cloudRectPoints,
+  lineEndsOf,
+  arrowHeadPoints,
   dashArray,
   caretRectAfter,
   hexToRgb,
@@ -37,7 +40,9 @@ import {
   UNDERLINE_AT,
   type Annot
 } from './annotations'
+import { pathEnds, type EndPath } from './lineEnds'
 import { pdfUnit } from './measureScale'
+import { SIGNATURE_SUBJECT } from './signatureLogic'
 import { normAngle, rotatedBounds } from './stampLogic'
 import type { Rect } from './textLogic'
 
@@ -98,6 +103,18 @@ const stroke = (a: Annot) => {
   const d = dashArray(a.dash, a.lineWidth)
   return `${rgb(a.color)} RG ${n(a.lineWidth)} w 1 J 1 j${d ? ` [${d.map(n).join(' ')}] 0 d` : ''}`
 }
+/** Content stream operators for line end markers: closed arrows are filled with the line colour; no dash pattern. */
+const endOps = (ends: EndPath[], a: Annot) =>
+  ends.length
+    ? `q [] 0 d ` +
+      ends
+        .map((p) => {
+          const path = p.pts.map((q, i) => `${n(q.x)} ${n(q.y)} ${i ? 'l' : 'm'}`).join(' ') + (p.closed ? ' h' : '')
+          return p.fill ? `${rgb(a.color)} rg ${path} B` : `${path} S`
+        })
+        .join(' ') +
+      ' Q'
+    : ''
 /** Fill colour operator and the path-painting operator: fill and stroke, or stroke only. */
 const paint = (a: Annot) => (a.fill ? { pre: `${rgb(a.fill)} rg `, op: 'B' } : { pre: '', op: 'S' })
 /** /BS with the line style, and /IC for the fill, shared by the shape kinds. */
@@ -344,7 +361,7 @@ export async function writeAnnotations(
       Type: 'Annot',
       Rect: bounds,
       C: hexToRgb(a.color),
-      F: 4,
+      F: a.flags ?? 4, // Print unless set otherwise; an annotation from the file keeps the flags it had
       M: now,
       ...(a.author ? { T: PDFHexString.fromText(a.author) } : {}),
       ...(a.created && !a.origin ? { CreationDate: PDFString.fromDate(new Date(a.created)) } : {})
@@ -403,7 +420,7 @@ export async function writeAnnotations(
       else dict.A = { S: 'URI', URI: PDFString.of(a.linkUri ?? '') }
     } else if (a.kind === 'foreign') {
       if (!a.origin) continue
-      dict = { Rect: bounds, M: now, Contents: PDFHexString.fromText(a.text), ...(a.author ? { T: PDFHexString.fromText(a.author) } : {}) }
+      dict = { Rect: bounds, M: now, Contents: PDFHexString.fromText(a.text), ...(a.flags !== undefined ? { F: a.flags } : {}), ...(a.author ? { T: PDFHexString.fromText(a.author) } : {}) }
     } else if (a.kind === 'caret') {
       const { bb, ap } = caretAp(a.rects[0], a.color)
       dict = {
@@ -436,7 +453,7 @@ export async function writeAnnotations(
           a.rects.map((r) => squigglePoints(r).map((p, i) => `${n(p.x)} ${n(p.y)} ${i ? 'l' : 'm'}`).join(' ') + ' S').join(' ')
       } else if (a.kind === 'highlight') {
         body = `/GS gs ${rgb(a.color)} rg ` + a.rects.map((r) => `${n(r.x)} ${n(r.y)} ${n(r.w)} ${n(r.h)} re f`).join(' ')
-        resources = { ExtGState: { GS: { Type: 'ExtGState', BM: 'Multiply', CA: a.opacity ?? 1, ca: a.opacity ?? 1 } } }
+        resources = { ExtGState: { GS: { Type: 'ExtGState', BM: a.blend ?? 'Multiply', CA: a.opacity ?? 1, ca: a.opacity ?? 1 } } }
       } else {
         const at = a.kind === 'underline' ? UNDERLINE_AT : STRIKEOUT_AT
         body =
@@ -479,23 +496,20 @@ export async function writeAnnotations(
         Subtype: 'Text',
         Name: 'Comment',
         Open: false,
-        F: 4, // Print. NoZoom/NoRotate would make viewers re-anchor the icon on rotated pages
+        // (NoZoom/NoRotate would make viewers re-anchor the icon on rotated pages, so the flags are only Print and Locked.)
         Contents: PDFHexString.fromText(a.text),
         AP: { N: ap }
       }
     } else if (a.kind === 'line' || a.kind === 'arrow') {
       const [p0, p1] = a.points![0]
-      let body = `${stroke(a)} ${n(p0.x)} ${n(p0.y)} m ${n(p1.x)} ${n(p1.y)} l S`
-      if (a.kind === 'arrow') {
-        const [l, tip, r] = arrowHeadPoints(p0, p1, a.lineWidth)
-        body += ` ${n(l.x)} ${n(l.y)} m ${n(tip.x)} ${n(tip.y)} l ${n(r.x)} ${n(r.y)} l S`
-      }
+      const ends = lineEndsOf(a)
+      const body = `${stroke(a)} ${n(p0.x)} ${n(p0.y)} m ${n(p1.x)} ${n(p1.y)} l S ${endOps(pathEnds([p0, p1], ends.start, ends.end, a.lineWidth), a)}`
       const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
       dict = {
         ...base,
         Subtype: 'Line',
         L: [...toUser(f, p0.x, p0.y), ...toUser(f, p1.x, p1.y)],
-        LE: ['None', a.kind === 'arrow' ? 'OpenArrow' : 'None'],
+        LE: [ends.start, ends.end],
         ...border(a),
         Subj: PDFHexString.fromText(a.kind === 'arrow' ? 'Arrow' : 'Line'),
         AP: { N: ap }
@@ -504,11 +518,20 @@ export async function writeAnnotations(
       const r = a.rects[0]
       const i = a.lineWidth / 2
       const pt = paint(a)
-      const body = `${stroke(a)} ${pt.pre}${n(r.x + i)} ${n(r.y + i)} ${n(r.w - a.lineWidth)} ${n(r.h - a.lineWidth)} re ${pt.op}`
+      // A cloudy rectangle: scallops along the box pulled in so they stay inside /Rect.
+      const level = cloudLevel(a)
+      const outline = level ? cloudRectPoints(r, a.lineWidth, level) : null
+      let shape = `${n(r.x + i)} ${n(r.y + i)} ${n(r.w - a.lineWidth)} ${n(r.h - a.lineWidth)} re`
+      if (outline) {
+        const { start, curves } = cloudCurves(outline, a.lineWidth, level)
+        shape = `${n(start.x)} ${n(start.y)} m ` + curves.map(([c1, c2, p]) => `${n(c1.x)} ${n(c1.y)} ${n(c2.x)} ${n(c2.y)} ${n(p.x)} ${n(p.y)} c`).join(' ') + ' h'
+      }
+      const body = `${stroke(a)} ${pt.pre}${shape} ${pt.op}`
       const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
       dict = {
         ...base,
         Subtype: 'Square',
+        ...(outline ? { BE: { S: 'C', I: level } } : {}),
         ...border(a),
         Subj: PDFHexString.fromText('Rectangle'),
         AP: { N: ap }
@@ -555,19 +578,23 @@ export async function writeAnnotations(
       const closed = a.kind !== 'polyline'
       const pt = closed ? paint(a) : { pre: '', op: 'S' }
       let path: string
-      if (a.kind === 'cloud') {
-        const { start, curves } = cloudCurves(pts, a.lineWidth)
+      const level = closed ? cloudLevel(a) : 0
+      if (level) {
+        const { start, curves } = cloudCurves(pts, a.lineWidth, level)
         path = `${n(start.x)} ${n(start.y)} m ` + curves.map(([c1, c2, p]) => `${n(c1.x)} ${n(c1.y)} ${n(c2.x)} ${n(c2.y)} ${n(p.x)} ${n(p.y)} c`).join(' ') + ' h'
       } else {
         path = pts.map((p, i) => `${n(p.x)} ${n(p.y)} ${i ? 'l' : 'm'}`).join(' ') + (closed ? ' h' : '')
       }
-      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${stroke(a)} ${pt.pre}${path} ${pt.op} Q`)
+      const ends = lineEndsOf(a)
+      const endPart = closed ? '' : ` ${endOps(pathEnds(pts, ends.start, ends.end, a.lineWidth), a)}`
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${stroke(a)} ${pt.pre}${path} ${pt.op}${endPart} Q`)
       dict = {
         ...base,
         Subtype: a.kind === 'polyline' ? 'PolyLine' : 'Polygon',
         Vertices: pts.flatMap((p) => toUser(f, p.x, p.y)),
         ...border(a),
-        ...(a.kind === 'cloud' ? { BE: { S: 'C', I: 1 } } : {}),
+        ...(level ? { BE: { S: 'C', I: level } } : {}),
+        ...(a.kind === 'polyline' ? { LE: [ends.start, ends.end] } : {}),
         Subj: PDFHexString.fromText(a.kind === 'cloud' ? 'Cloud' : a.kind === 'polyline' ? 'Polyline' : 'Polygon'),
         AP: { N: ap }
       }
@@ -600,7 +627,7 @@ export async function writeAnnotations(
         ...(turn ? { OPRot: [turn.angle, r.w, r.h] } : {}),
         Subtype: 'Stamp',
         Name: 'OpenPDFImageStamp',
-        Subj: PDFHexString.fromText('Image stamp'),
+        Subj: PDFHexString.fromText(a.signature ? SIGNATURE_SUBJECT : 'Image stamp'),
         AP: { N: ap }
       }
     } else if (a.kind === 'stamp') {
@@ -708,14 +735,18 @@ export async function writeAnnotations(
       }
     }
 
-    if (a.opacity !== undefined && a.opacity < 1 && a.kind !== 'foreign' && a.kind !== 'link') {
-      dict.CA = a.opacity
+    const translucent = a.opacity !== undefined && a.opacity < 1
+    // A blend mode other than Normal goes in the appearance (a highlight has its own graphics state for it).
+    const blend = a.kind !== 'highlight' && a.blend && a.blend !== 'Normal' ? a.blend : undefined
+    if (a.blend && a.kind !== 'foreign' && a.kind !== 'link') dict.BM = a.blend
+    if ((translucent || blend) && a.kind !== 'foreign' && a.kind !== 'link') {
+      if (translucent) dict.CA = a.opacity!
       const apRef = (dict.AP as { N?: PDFRef } | undefined)?.N
       if (apRef && a.kind !== 'highlight') {
         const old = ctx.lookup(apRef) as unknown as { dict: PDFDict; getContents(): Uint8Array }
         const res = (old.dict.lookupMaybe(PDFName.of('Resources'), PDFDict) ?? (ctx.obj({}) as PDFDict)).clone(ctx)
         const ext = res.lookupMaybe(PDFName.of('ExtGState'), PDFDict) ?? (ctx.obj({}) as PDFDict)
-        ext.set(PDFName.of('GSop'), ctx.obj({ Type: 'ExtGState', CA: a.opacity, ca: a.opacity }))
+        ext.set(PDFName.of('GSop'), ctx.obj({ Type: 'ExtGState', CA: a.opacity ?? 1, ca: a.opacity ?? 1, ...(blend ? { BM: blend } : {}) } as never))
         res.set(PDFName.of('ExtGState'), ext)
         const bbox = old.dict.lookup(PDFName.of('BBox'))
         const prev = new TextDecoder('latin1').decode(old.getContents())
@@ -731,6 +762,9 @@ export async function writeAnnotations(
         const fresh = ctx.obj(dict as never) as unknown as PDFDict
         // A link's target is either /A or /Dest: drop the old one so the new one is the only target.
         if (a.kind === 'link') for (const k of ['A', 'Dest']) existing.dict.delete(PDFName.of(k))
+        // Settings that were switched off are dropped rather than left from before.
+        if (a.blend === undefined && a.kind !== 'foreign') existing.dict.delete(PDFName.of('BM'))
+        if ((a.kind === 'polygon' || a.kind === 'cloud' || a.kind === 'rectangle') && !('BE' in dict)) existing.dict.delete(PDFName.of('BE'))
         for (const [key, value] of fresh.entries()) existing.dict.set(key, value)
         const list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
         const ref = list?.get(existing.index)

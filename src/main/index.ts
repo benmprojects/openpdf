@@ -9,6 +9,7 @@ import { editMenuTemplate } from './spellMenu'
 import { copyEncryption, decryptPdf, encryptionInfo, encryptPdf, runQpdf } from './qpdf'
 import { chainStatus, listCertificates, pfxInfo, signCms, type SignSource } from './signing'
 import { findLibreOffice, htmlToPdf, officeToPdf, screenshot } from './convert'
+import { checkCombinePath, COMBINE_EXT, describeCombineFiles, readCombineFile } from './combineIo'
 import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
 import { deleteAction, expandPdfs, listActions, readPdf as readBatchPdf, saveAction, writeResult } from './batchIo'
 import { HELP, loadAction, parseCli } from './cli'
@@ -393,6 +394,24 @@ ipcMain.handle('convert:office-pick', async (e) => {
   const path = await pickPath(e, 'Office documents', ['doc', 'docx', 'odt', 'rtf', 'xls', 'xlsx', 'ods', 'ppt', 'pptx', 'odp', 'csv'])
   return path ? { name: basename(path).replace(/\.[^.]*$/, '') + '.pdf', data: await officeToPdf(path) } : null
 })
+
+/** Combine files: choose files or a folder (tests name them), then read or convert each one the dialog was given. */
+ipcMain.handle('combine:pick', async (e) => {
+  if (e2e && process.env.OPENPDF_E2E_COMBINE_PICK) return describeCombineFiles(process.env.OPENPDF_E2E_COMBINE_PICK.split('|'))
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[], filters: [{ name: 'PDF, pictures and Office files', extensions: COMBINE_EXT }] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled ? [] : describeCombineFiles(res.filePaths)
+})
+ipcMain.handle('combine:folder', async (e) => {
+  if (e2e && process.env.OPENPDF_E2E_COMBINE_DIR) return describeCombineFiles([process.env.OPENPDF_E2E_COMBINE_DIR])
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { properties: ['openDirectory'] as 'openDirectory'[] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled || !res.filePaths[0] ? [] : describeCombineFiles([res.filePaths[0]])
+})
+ipcMain.handle('combine:read', (_e, path: unknown) => readCombineFile(String(path)))
+ipcMain.handle('combine:office', async (_e, path: unknown) => officeToPdf(checkCombinePath(String(path))))
 
 /** The image on the clipboard as a PNG, or null. Tests read a file instead: other programs can change the system clipboard. */
 ipcMain.handle('clipboard:read-image', async () => {

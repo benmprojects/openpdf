@@ -1,4 +1,4 @@
-import { PDFArray, PDFDict, PDFDocument, PDFName } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { writeAnnotations } from './annotWrite'
 import { stampSize, withBounds, type Annot, type AnnotKind } from './annotations'
@@ -145,6 +145,119 @@ describe('writeAnnotations', () => {
     expect(bs.lookup(PDFName.of('D'), PDFArray).size()).toBe(2)
     expect(cloud.lookup(PDFName.of('BE'), PDFDict).lookupMaybe(PDFName.of('S'), PDFName)?.decodeText()).toBe('C')
     expect(list.find((d) => subtype(d) === 'PolyLine')!.lookup(PDFName.of('Vertices'), PDFArray).size()).toBe(6)
+  })
+
+  describe('line ends, cloud intensity, blend mode and flags', () => {
+    const names = (arr: PDFArray) => Array.from({ length: arr.size() }, (_, i) => arr.lookup(i, PDFName).decodeText())
+    const apText = (d: PDFDict) => {
+      const n = d.lookup(PDFName.of('AP'), PDFDict).lookup(PDFName.of('N')) as unknown as { getContents(): Uint8Array }
+      return new TextDecoder('latin1').decode(n.getContents())
+    }
+    const write = async (...a: Annot[]) => annotsOf(await PDFDocument.load(await writeAnnotations(await blankPdf(), a)))
+
+    it('writes /LE for a line, an arrow and a polyline, with matching marks in the appearance', async () => {
+      const pts = [{ x: 50, y: 400 }, { x: 250, y: 400 }]
+      const [line, arrow, def, poly] = await write(
+        annot('line', { points: [pts], lineStart: 'Circle', lineEnd: 'Diamond' }),
+        annot('arrow', { points: [pts], lineEnd: 'ClosedArrow' }),
+        annot('arrow', { points: [pts] }),
+        annot('polyline', { points: [[...pts, { x: 250, y: 500 }]], lineStart: 'Square', lineEnd: 'Slash' })
+      )
+      expect(names(line.lookup(PDFName.of('LE'), PDFArray))).toEqual(['Circle', 'Diamond'])
+      expect(names(arrow.lookup(PDFName.of('LE'), PDFArray))).toEqual(['None', 'ClosedArrow'])
+      expect(names(def.lookup(PDFName.of('LE'), PDFArray))).toEqual(['None', 'OpenArrow'])
+      expect(names(poly.lookup(PDFName.of('LE'), PDFArray))).toEqual(['Square', 'Slash'])
+      // Circle (24 segments) and diamond markers add paths after the line itself.
+      expect(apText(line).match(/ h /g)?.length ?? 0).toBeGreaterThanOrEqual(2)
+      // A closed arrow is filled with the line colour; the open arrow is only stroked.
+      expect(apText(arrow)).toContain(' B')
+      expect(apText(def)).not.toContain(' B')
+      // The marks stay inside the appearance box: /Rect is padded for them.
+      const rect = line.lookup(PDFName.of('Rect'), PDFArray)
+      expect(rect.size()).toBe(4)
+    })
+
+    it('draws a line with no end styles as before', async () => {
+      const [line] = await write(annot('line', { points: [[{ x: 50, y: 400 }, { x: 250, y: 400 }]] }))
+      expect(names(line.lookup(PDFName.of('LE'), PDFArray))).toEqual(['None', 'None'])
+      expect(apText(line)).not.toContain(' h ')
+    })
+
+    it('writes the cloud intensity for a cloud, a polygon and a rectangle, and drops it at 0', async () => {
+      const tri = [[{ x: 100, y: 100 }, { x: 300, y: 100 }, { x: 200, y: 250 }]]
+      const [cloud, big, poly, plain, rect, plainCloud] = await write(
+        annot('cloud', { points: tri }),
+        annot('cloud', { points: tri, cloud: 2 }),
+        annot('polygon', { points: tri, cloud: 1 }),
+        annot('polygon', { points: tri }),
+        annot('rectangle', { rects: [{ x: 100, y: 400, w: 200, h: 120 }], cloud: 2 }),
+        annot('cloud', { points: tri, cloud: 0 })
+      )
+      const intensity = (d: PDFDict) => d.lookupMaybe(PDFName.of('BE'), PDFDict)?.lookupMaybe(PDFName.of('I'), PDFNumber)?.asNumber()
+      expect(intensity(cloud)).toBe(1)
+      expect(intensity(big)).toBe(2)
+      expect(intensity(poly)).toBe(1)
+      expect(intensity(plain)).toBeUndefined()
+      expect(intensity(rect)).toBe(2)
+      expect(subtype(rect)).toBe('Square')
+      expect(intensity(plainCloud)).toBeUndefined()
+      // Larger scallops mean fewer curves.
+      const curves = (d: PDFDict) => apText(d).match(/ c /g)?.length ?? 0
+      expect(curves(big)).toBeLessThan(curves(cloud))
+      expect(curves(rect)).toBeGreaterThan(4)
+      expect(apText(plain)).not.toContain(' c ')
+    })
+
+    it('writes the blend mode in /BM and in the appearance; a highlight multiplies unless told otherwise', async () => {
+      const [hl, hlNormal, shape, lone] = await write(
+        annot('highlight', { rects: [{ x: 50, y: 50, w: 100, h: 12 }] }),
+        annot('highlight', { rects: [{ x: 50, y: 80, w: 100, h: 12 }], blend: 'Normal' }),
+        annot('rectangle', { rects: [{ x: 50, y: 200, w: 100, h: 50 }], blend: 'Multiply', opacity: 0.5 }),
+        annot('rectangle', { rects: [{ x: 50, y: 300, w: 100, h: 50 }] })
+      )
+      const bmOfAp = (d: PDFDict) => {
+        const n = (d.lookup(PDFName.of('AP'), PDFDict).lookup(PDFName.of('N')) as unknown as { dict: PDFDict }).dict
+        const ext = n.lookup(PDFName.of('Resources'), PDFDict).lookup(PDFName.of('ExtGState'), PDFDict)
+        const gs = ext.lookup(ext.keys()[0], PDFDict)
+        return gs.lookupMaybe(PDFName.of('BM'), PDFName)?.decodeText()
+      }
+      expect(bmOfAp(hl)).toBe('Multiply')
+      expect(hl.has(PDFName.of('BM'))).toBe(false)
+      expect(bmOfAp(hlNormal)).toBe('Normal')
+      expect(hlNormal.lookupMaybe(PDFName.of('BM'), PDFName)?.decodeText()).toBe('Normal')
+      expect(shape.lookupMaybe(PDFName.of('BM'), PDFName)?.decodeText()).toBe('Multiply')
+      expect(bmOfAp(shape)).toBe('Multiply')
+      expect(shape.lookupMaybe(PDFName.of('CA'), PDFNumber)?.asNumber()).toBe(0.5)
+      expect(lone.has(PDFName.of('BM'))).toBe(false)
+    })
+
+    it('writes the Print and Locked flags, and keeps the flags an annotation from the file had', async () => {
+      const flagsOf = (d: PDFDict) => d.lookupMaybe(PDFName.of('F'), PDFNumber)?.asNumber()
+      const r = { x: 50, y: 50, w: 100, h: 50 }
+      const [normal, locked, noPrint, note] = await write(
+        annot('rectangle', { rects: [r] }),
+        annot('rectangle', { rects: [r], flags: 4 | 128 }),
+        annot('rectangle', { rects: [r], flags: 0 }),
+        annot('note', { rects: [{ x: 50, y: 300, w: 22, h: 22 }], flags: 4 | 128 })
+      )
+      expect(flagsOf(normal)).toBe(4)
+      expect(flagsOf(locked)).toBe(132)
+      expect(flagsOf(noPrint)).toBe(0)
+      expect(flagsOf(note)).toBe(132)
+    })
+
+    it('updates an annotation from the file in place: new end styles replace old ones and a removed cloud border is dropped', async () => {
+      const first = await writeAnnotations(await blankPdf(), [annot('polygon', { cloud: 1, points: [[{ x: 100, y: 100 }, { x: 300, y: 100 }, { x: 200, y: 250 }]] })])
+      const doc1 = await PDFDocument.load(first)
+      const d1 = annotsOf(doc1)[0]
+      const rect = d1.lookup(PDFName.of('Rect'), PDFArray)
+      const origin = { index: 0, subtype: 7, rect: [0, 1, 2, 3].map((i) => rect.lookup(i, PDFNumber).asNumber()) as [number, number, number, number] }
+      const edited = annot('polygon', { cloud: 0, points: [[{ x: 100, y: 100 }, { x: 300, y: 100 }, { x: 200, y: 250 }]], origin, flags: 4 | 128 })
+      const out = await PDFDocument.load(await writeAnnotations(first, [edited]))
+      const d2 = annotsOf(out)[0]
+      expect(d2.has(PDFName.of('BE'))).toBe(false)
+      expect(d2.lookupMaybe(PDFName.of('F'), PDFNumber)?.asNumber()).toBe(132)
+    })
   })
 
   it('writes the author, and new replies and review states as Text annotations in reply', async () => {

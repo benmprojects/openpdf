@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import { Modal } from './AppDialogs'
 import { PdfClient, type PageSize } from './pdfClient'
 import { parsePageRanges } from './pageOps'
-import { stripComments } from './stripComments'
+import { printCopy, type PrintWhat } from './printCopy'
 import { plural, t } from './i18n'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../../shared/printLayout'
 import {
@@ -79,7 +79,7 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
   const [border, setBorder] = useState(false)
   const [binding, setBinding] = useState<'left' | 'right'>('left')
   const [sides, setSides] = useState<'both' | 'front' | 'back'>('both')
-  const [what, setWhat] = useState<'comments' | 'document'>('comments')
+  const [what, setWhat] = useState<PrintWhat>('comments')
 
   const [face, setFace] = useState(0)
   const printerSelect = useRef<HTMLSelectElement>(null)
@@ -139,11 +139,12 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
   const shownFace = Math.min(face, Math.max(0, faces - 1))
 
   // ---- The document the preview and the job use ----
-  // Edits and layers are written in once; "Document" (without comments) is a copy with the markup taken out.
+  // Edits and layers are written in once; each choice of what to print is a copy of that: comments that are not
+  // printable are left out of all of them, "Document" has the markup taken out, "Comments only" the page taken out.
   const [full, setFull] = useState<Uint8Array | null>(null)
   const [loaded, setLoaded] = useState<{ client: PdfClient; bytes: Uint8Array; what: typeof what } | null>(null)
   const [problem, setProblem] = useState('')
-  const plain = useRef<Uint8Array | null>(null)
+  const printCopies = useRef(new Map<PrintWhat, Uint8Array>())
   useEffect(() => {
     let live = true
     prepare().then(
@@ -160,8 +161,17 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
     let made: PdfClient | null = null
     void (async () => {
       try {
-        let bytes = full
-        if (what === 'document') bytes = plain.current ??= await stripComments(full)
+        let bytes = printCopies.current.get(what)
+        if (!bytes) {
+          try {
+            bytes = await printCopy(full, what)
+          } catch (e) {
+            // The default printout must not fail because the copy could not be made: print the file as it is.
+            if (what !== 'comments') throw e
+            bytes = full
+          }
+          printCopies.current.set(what, bytes)
+        }
         made = new PdfClient()
         await made.load(bytes)
         if (!live) return made.dispose()
@@ -409,10 +419,14 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
           <fieldset>
             <legend>{t('Print what')}</legend>
             <Row label="">
-              <select aria-label={t('Print what')} value={what} onChange={(e) => setWhat(e.target.value as 'comments' | 'document')}>
+              <select aria-label={t('Print what')} value={what} onChange={(e) => setWhat(e.target.value as PrintWhat)}>
                 <option value="comments">{t('Document and comments')}</option>
                 <option value="document">{t('Document')}</option>
+                <option value="markup">{t('Comments only')}</option>
               </select>
+            </Row>
+            <Row label="">
+              <span className="muted small">{t('Comments marked as not printable (Properties panel) are left out.')}</span>
             </Row>
           </fieldset>
         </div>

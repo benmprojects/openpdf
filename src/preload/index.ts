@@ -3,6 +3,7 @@ import type { RecoveryEntry, Settings } from '../main/settings'
 import type { EncryptionInfo, EncryptOptions } from '../shared/pdfSecurity'
 import type { PrintRunOptions } from '../shared/printPlan'
 import type { ImageStamp } from '../main/stamps'
+import type { CombineFile } from '../main/combineIo'
 import type { CertInfo, ChainResult, SignSource } from '../main/signing'
 import type { OcrResult } from '../main/ocr'
 import type { ScanOptions, ScannerInfo } from '../main/scan'
@@ -12,7 +13,7 @@ import type { Place } from '../shared/places'
 import type { UpdateStatus } from '../main/updates'
 import type { PluginManifest } from '../shared/plugins'
 
-export type { ImageStamp }
+export type { ImageStamp, CombineFile }
 
 export type { RecoveryEntry, Settings }
 
@@ -112,6 +113,12 @@ const api = {
   htmlToPdf: (): Promise<{ name: string; data: Uint8Array } | null> => ipcRenderer.invoke('convert:html-pick'),
   /** Prints markup to a PDF. */
   htmlTextToPdf: (html: string): Promise<Uint8Array> => ipcRenderer.invoke('convert:html-text', html),
+  /** Combine files: asks for files or a folder; each resolves the supported files chosen (empty when cancelled). */
+  combinePick: (): Promise<CombineFile[]> => ipcRenderer.invoke('combine:pick'),
+  combineFolder: (): Promise<CombineFile[]> => ipcRenderer.invoke('combine:folder'),
+  /** The bytes of a listed file, or a listed Office file converted to PDF (needs LibreOffice). */
+  combineRead: (path: string): Promise<Uint8Array> => ipcRenderer.invoke('combine:read', path),
+  combineOffice: (path: string): Promise<Uint8Array> => ipcRenderer.invoke('combine:office', path),
   /** Whether LibreOffice is installed (for converting Word, Excel and PowerPoint files). */
   officeAvailable: (): Promise<boolean> => ipcRenderer.invoke('convert:office-available'),
   /** Asks for an Office file and converts it with LibreOffice; null when cancelled. */
