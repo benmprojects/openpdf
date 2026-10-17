@@ -48,6 +48,10 @@ export interface ExportBlock {
   size: number
   bold: boolean
   italic: boolean
+  /** Where the block sits on the page, its colour (#rrggbb) and font name, when known (Word keeps colour and typeface). */
+  rect?: { x: number; y: number; w: number; h: number }
+  color?: string
+  font?: string
 }
 
 const isBold = (b: TextBlock) => b.weight >= 600 || /bold|black|heavy/i.test(b.font)
@@ -75,8 +79,14 @@ export function structurePage(blocks: TextBlock[], body: number): ExportBlock[] 
     // Lines of one paragraph can arrive as separate blocks: same left edge, size and weight, no gap between them.
     const last = out[out.length - 1]
     const continues = !!prev && !!last && heading === 0 && last.heading === 0 && Math.abs(prev.size - b.size) < 0.5 && Math.abs(prev.rect.x - b.rect.x) < 3 && isBold(prev) === isBold(b) && b.rect.y - (prev.rect.y + prev.rect.h) <= b.size * 0.6 && b.rect.y >= prev.rect.y
-    if (continues) last.text = `${last.text} ${text}`
-    else out.push({ text, heading, size: b.size, bold: isBold(b), italic: b.italic })
+    if (continues) {
+      last.text = `${last.text} ${text}`
+      if (last.rect) {
+        const x0 = Math.min(last.rect.x, b.rect.x)
+        const y0 = Math.min(last.rect.y, b.rect.y)
+        last.rect = { x: x0, y: y0, w: Math.max(last.rect.x + last.rect.w, b.rect.x + b.rect.w) - x0, h: Math.max(last.rect.y + last.rect.h, b.rect.y + b.rect.h) - y0 }
+      }
+    } else out.push({ text, heading, size: b.size, bold: isBold(b), italic: b.italic, rect: { ...b.rect }, color: b.color, font: b.font })
     prev = b
   }
   return out

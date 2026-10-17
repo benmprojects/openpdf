@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ImageIcon, Trash2 } from 'lucide-react'
 import { matInverse, matMul, type Matrix6 } from './content'
+import { ObjectBar, type ObjectAction } from './ObjectBar'
 import type { ImageObject, PdfClient } from './pdfClient'
 import { deltaToPage, type Rotation } from './viewRotation'
 
@@ -26,7 +26,8 @@ export function ObjectEditLayer({
   zoom,
   rotation,
   onChange,
-  onReplace
+  onReplace,
+  onAction
 }: {
   kind: 'image' | 'path'
   client: PdfClient
@@ -36,6 +37,8 @@ export function ObjectEditLayer({
   /** `change` is an affine matrix in page space applied after the object is placed; null deletes it. */
   onChange: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
   onReplace?: (page: number, obj: ImageObject, total: number) => void
+  /** Crop, opacity, export and restyle requests from the tool bar. `toPage` maps display space to page space. */
+  onAction?: (page: number, total: number, toPage: Matrix6, action: ObjectAction) => void
 }) {
   const [data, setData] = useState<{ objects: ImageObject[]; total: number; toPage: Matrix6 } | null>(null)
   const [sel, setSel] = useState<number | null>(null)
@@ -222,16 +225,20 @@ export function ObjectEditLayer({
         />
       )}
       {obj && !drag && (
-        <div className="imageedit-bar" style={{ left: obj.rect.x * zoom, top: Math.max(0, obj.rect.y * zoom - 34) }} onMouseDown={(e) => e.stopPropagation()}>
-          {!isPath && onReplace && (
-            <button type="button" onClick={() => onReplace(page, obj, data.total)} title="Replace this picture with another file">
-              <ImageIcon size={14} aria-hidden /> Replace…
-            </button>
-          )}
-          <button type="button" onClick={() => remove(obj)} title={`Delete this ${noun.toLowerCase()} (Delete)`}>
-            <Trash2 size={14} aria-hidden /> Delete
-          </button>
-        </div>
+        <ObjectBar
+          key={`${obj.ordinal}-${isPath ? 'p' : 'i'}`}
+          isPath={isPath}
+          obj={obj}
+          left={obj.rect.x * zoom}
+          top={Math.max(0, obj.rect.y * zoom - 34)}
+          onDisplayChange={(m) => {
+            const change = toPageSpace(m)
+            if (change) onChange(page, obj, data.total, change)
+          }}
+          onDelete={() => remove(obj)}
+          onReplace={!isPath && onReplace ? () => onReplace(page, obj, data.total) : undefined}
+          onAction={(a) => onAction?.(page, data.total, data.toPage, a)}
+        />
       )}
     </div>
   )

@@ -6,7 +6,7 @@ import type { ImageStamp } from '../main/stamps'
 import type { CombineFile } from '../main/combineIo'
 import type { CertInfo, ChainResult, SignSource } from '../main/signing'
 import type { OcrResult } from '../main/ocr'
-import type { ScanOptions, ScannerInfo } from '../main/scan'
+import type { ScanCapabilities, ScanOptions, ScannerInfo } from '../main/scan'
 import type { BatchAction } from '../renderer/src/batch'
 import type { CatalogueEntry, InstalledPlugin } from '../main/plugins'
 import type { Place } from '../shared/places'
@@ -103,6 +103,8 @@ const api = {
   batchDeleteAction: (name: string): Promise<BatchAction[]> => ipcRenderer.invoke('batch:delete-action', name),
   /** Scanners Windows knows about. */
   listScanners: (): Promise<ScannerInfo[]> => ipcRenderer.invoke('scan:devices'),
+  /** Whether the scanner reports duplex scanning from its feeder. */
+  scanCapabilities: (deviceId?: string): Promise<ScanCapabilities> => ipcRenderer.invoke('scan:capabilities', deviceId),
   /** Scans; one PNG per sheet (empty when the scanner's own window was cancelled). */
   scan: (o: ScanOptions): Promise<Uint8Array[]> => ipcRenderer.invoke('scan:acquire', o),
   /** Languages text recognition offers, and which are already on this computer. */

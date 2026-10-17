@@ -14,6 +14,8 @@ import {
   readImageObjects,
   readPathGeometry,
   readPathObjects,
+  readFormObjects,
+  readImagePixels,
   removePageAnnot,
   setPageAnnotRect,
   renderRegion,
@@ -43,6 +45,8 @@ export type WorkerRequest =
   | { id: number; type: 'textObjects'; page: number }
   | { id: number; type: 'imageObjects'; page: number }
   | { id: number; type: 'pathObjects'; page: number }
+  | { id: number; type: 'formObjects'; page: number }
+  | { id: number; type: 'imagePixels'; page: number; ordinal: number }
   | { id: number; type: 'pathGeometry'; page: number }
   | { id: number; type: 'close' }
 
@@ -62,6 +66,8 @@ export type WorkerResponse =
   | { id: number; ok: true; type: 'imageObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
   | { id: number; ok: true; type: 'pathGeometry'; geometry: PathGeometry }
   | { id: number; ok: true; type: 'pathObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
+  | { id: number; ok: true; type: 'formObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
+  | { id: number; ok: true; type: 'imagePixels'; image: { width: number; height: number; data: Uint8Array } | null }
   | { id: number; ok: true; type: 'close' }
   | { id: number; ok: false; error: string }
 
@@ -149,6 +155,18 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const r = readPathObjects(library, page)
       page.close()
       reply({ id: msg.id, ok: true, type: 'pathObjects', ...r })
+    } else if (msg.type === 'formObjects') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const page = doc.getPage(msg.page)
+      const r = readFormObjects(library, page)
+      page.close()
+      reply({ id: msg.id, ok: true, type: 'formObjects', ...r })
+    } else if (msg.type === 'imagePixels') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const page = doc.getPage(msg.page)
+      const image = readImagePixels(library, doc, page, msg.ordinal)
+      page.close()
+      reply({ id: msg.id, ok: true, type: 'imagePixels', image }, image ? [image.data.buffer as ArrayBuffer] : [])
     } else if (msg.type === 'pathGeometry') {
       if (!doc || !library) throw new Error('No document loaded')
       const page = doc.getPage(msg.page)

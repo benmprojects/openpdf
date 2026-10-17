@@ -6,7 +6,9 @@
 import fontkit from '@pdf-lib/fontkit'
 import { PDFDocument, PDFName, StandardFonts, degrees, rgb } from 'pdf-lib'
 import { pageContent } from './pageContent'
-import { isShow, num, parseContent, showBytes, showOrigins, stringToBytes, type Op } from './content'
+import { isShow, num, parseContent, showBytes, showOrigins, stringToBytes, hexString, type Op } from './content'
+import { missingGlyphMessage, openPageFont } from './embeddedFont'
+import { hexToUnit } from './objectOps'
 
 export interface TextEditTarget {
   /** Zero-based page. */
@@ -39,16 +41,46 @@ export function weightAndSlant(s: Pick<TextStyle, 'font' | 'flags' | 'weight' | 
   return { bold: BOLD.test(s.font) || s.weight >= 600 || (s.flags & 0x40000) !== 0, italic: s.italic || ITALIC.test(s.font) }
 }
 
-/** The standard font closest to a font's name and descriptor. */
-export function pickStandardFont(s: Pick<TextStyle, 'font' | 'flags' | 'weight' | 'italic'>): StandardFonts {
-  const bold = BOLD.test(s.font) || s.weight >= 600 || (s.flags & 0x40000) !== 0
-  const italic = s.italic || ITALIC.test(s.font)
+export type StandardFamily = 'helvetica' | 'times' | 'courier' | 'symbol' | 'zapf'
+
+/** The standard font family closest to a font's name and descriptor. */
+export function familyOf(s: Pick<TextStyle, 'font' | 'flags'>): StandardFamily {
   const mono = MONO.test(s.font) || (s.flags & 1) !== 0
   const serif = !/sans/i.test(s.font) && (SERIF.test(s.font) || (!/arial|helvet|calibri|verdana|tahoma|segoe|roboto|open ?sans/i.test(s.font) && (s.flags & 2) !== 0))
-  if (mono) return bold ? (italic ? StandardFonts.CourierBoldOblique : StandardFonts.CourierBold) : italic ? StandardFonts.CourierOblique : StandardFonts.Courier
-  if (serif) return bold ? (italic ? StandardFonts.TimesRomanBoldItalic : StandardFonts.TimesRomanBold) : italic ? StandardFonts.TimesRomanItalic : StandardFonts.TimesRoman
+  return mono ? 'courier' : serif ? 'times' : 'helvetica'
+}
+
+/** One of the standard 14 fonts: a family, with bold and italic where the family has them (Symbol and Zapf Dingbats have neither). */
+export function standardFor(family: StandardFamily, bold: boolean, italic: boolean): StandardFonts {
+  if (family === 'symbol') return StandardFonts.Symbol
+  if (family === 'zapf') return StandardFonts.ZapfDingbats
+  if (family === 'courier') return bold ? (italic ? StandardFonts.CourierBoldOblique : StandardFonts.CourierBold) : italic ? StandardFonts.CourierOblique : StandardFonts.Courier
+  if (family === 'times') return bold ? (italic ? StandardFonts.TimesRomanBoldItalic : StandardFonts.TimesRomanBold) : italic ? StandardFonts.TimesRomanItalic : StandardFonts.TimesRoman
   return bold ? (italic ? StandardFonts.HelveticaBoldOblique : StandardFonts.HelveticaBold) : italic ? StandardFonts.HelveticaOblique : StandardFonts.Helvetica
 }
+
+/** The standard font closest to a font's name and descriptor. */
+export function pickStandardFont(s: Pick<TextStyle, 'font' | 'flags' | 'weight' | 'italic'>): StandardFonts {
+  const { bold, italic } = weightAndSlant(s)
+  return standardFor(familyOf(s), bold, italic)
+}
+
+/** Changes to the look of text that is being rewritten. Whatever is left out stays as the original had it. */
+export interface TextFormat {
+  /** A standard family. Overrides the matched font. */
+  family?: StandardFamily
+  /** The resource name of a font the page already uses; takes precedence over `family`. */
+  pageFont?: string
+  bold?: boolean
+  italic?: boolean
+  /** Size in points on the page. */
+  size?: number
+  /** #rrggbb */
+  color?: string
+}
+
+/** Whether the format asks for anything. */
+export const formatIsEmpty = (f: TextFormat | null | undefined): boolean => !f || (f.family === undefined && f.pageFont === undefined && f.bold === undefined && f.italic === undefined && f.size === undefined && f.color === undefined)
 
 /** Text Render Mode in force just before operation `idx`, following q/Q. */
 function renderModeBefore(ops: Op[], idx: number): number {
@@ -157,7 +189,11 @@ export async function replaceBlock(
   style: TextStyle,
   /** An installed font with the original's family: used when it may be embedded and has every character. */
   installed?: Uint8Array | null,
-  layout?: BlockLayout | null
+  layout?: BlockLayout | null,
+  /** New font, size, colour, bold or italic for the rewritten text. */
+  format?: TextFormat | null,
+  /** The text being replaced, so a subset font can still write the characters it already holds. */
+  originalText = ''
 ): Promise<{ bytes: Uint8Array; hiddenOriginal: boolean; fontUsed: string }> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
   const page = doc.getPage(target.page)
@@ -208,33 +244,70 @@ export async function replaceBlock(
 
   let fontUsed = 'standard'
   if (text) {
-    let font: Awaited<ReturnType<PDFDocument['embedFont']>> | null = null
-    if (installed && embeddable(installed, text)) {
-      doc.registerFontkit(fontkit)
-      font = await doc.embedFont(installed, { subset: true })
-      fontUsed = 'installed'
-    }
-    font ??= await doc.embedFont(pickStandardFont(style))
     const [a, b] = style.matrix
     const scale = Math.hypot(a, b) || 1
-    const size = style.size * scale
+    const originalSize = style.size * scale
+    const size = format?.size !== undefined && format.size > 0 ? format.size : originalSize
+    const color = format?.color && hexToUnit(format.color) ? format.color : style.color
     const angle = (Math.atan2(b, a) * 180) / Math.PI
-    try {
-      font.encodeText(text.replace(/\n/g, ' '))
-    } catch {
-      throw new Error('The replacement font cannot show some of those characters.')
-    }
-    const widthOf = (s: string) => font.widthOfTextAtSize(s, size)
     const upright = Math.abs(angle) < 0.01
     const wrap = !!layout && layout.leading > 0 && idxs.length > 1
-    const lines = upright ? (wrap ? wrapText(text, widthOf, layout!.width - (layout!.firstX - layout!.restX), layout!.width) : text.split('\n')) : [text.replace(/\n/g, ' ')]
-    const pitch = layout?.leading || size * 1.2
-    lines.forEach((line, i) => {
-      if (!line) return
-      const x = layout && wrap ? (i === 0 ? layout.firstX : layout.restX) : style.matrix[4]
-      const y = (layout && wrap ? layout.baselineY : style.matrix[5]) - i * pitch
-      page.drawText(line, { x, y, font, size, color: hexRgb(style.color), rotate: degrees(angle) })
+    const pitch = (layout?.leading || originalSize * 1.2) * (size / (originalSize || 1))
+    const place = (i: number) => ({
+      x: layout && wrap ? (i === 0 ? layout.firstX : layout.restX) : style.matrix[4],
+      y: (layout && wrap ? layout.baselineY : style.matrix[5]) - i * pitch
     })
+    const layoutLines = (widthOf: (s: string) => number) =>
+      upright ? (wrap ? wrapText(text, widthOf, layout!.width - (layout!.firstX - layout!.restX), layout!.width) : text.split('\n')) : [text.replace(/\n/g, ' ')]
+
+    if (format?.pageFont) {
+      // A font the file already holds: draw with its own character codes.
+      const opened = openPageFont(page, format.pageFont)
+      if ('problem' in opened) throw new Error(opened.problem)
+      const codec = opened.codec
+      const lines = layoutLines((s) => codec.widthOf(s, size))
+      const rgbc = hexToUnit(color) ?? [0, 0, 0]
+      const known = originalText.replace(/\n/g, ' ')
+      const missing: string[] = []
+      const parts: string[] = []
+      const rad = (angle * Math.PI) / 180
+      lines.forEach((line, i) => {
+        if (!line) return
+        const enc = codec.encode(line, known)
+        enc.missing.forEach((m) => !missing.includes(m) && missing.push(m))
+        const { x, y } = place(i)
+        parts.push(`BT /${format.pageFont} ${num(size)} Tf ${[Math.cos(rad), Math.sin(rad), -Math.sin(rad), Math.cos(rad), x, y].map(num).join(' ')} Tm ${hexString(enc.bytes)} Tj ET`)
+      })
+      if (missing.length) throw new Error(missingGlyphMessage(codec.info, missing))
+      const ctx2 = doc.context
+      page.node.set(PDFName.of('Contents'), ctx2.register(ctx2.flateStream(stringToBytes(`${out}\nq ${rgbc.map(num).join(' ')} rg ${parts.join(' ')} Q\n`))))
+      fontUsed = 'page'
+    } else {
+      let font: Awaited<ReturnType<PDFDocument['embedFont']>> | null = null
+      const explicit = !!format && (format.family !== undefined || format.bold !== undefined || format.italic !== undefined)
+      if (installed && !format?.family && embeddable(installed, text)) {
+        doc.registerFontkit(fontkit)
+        font = await doc.embedFont(installed, { subset: true })
+        fontUsed = 'installed'
+      }
+      if (!font) {
+        const base = weightAndSlant(style)
+        const family = format?.family ?? familyOf(style)
+        font = await doc.embedFont(explicit ? standardFor(family, format?.bold ?? base.bold, format?.italic ?? base.italic) : pickStandardFont(style))
+      }
+      try {
+        font.encodeText(text.replace(/\n/g, ' '))
+      } catch {
+        throw new Error('The replacement font cannot show some of those characters.')
+      }
+      const used = font
+      const lines = layoutLines((s) => used.widthOfTextAtSize(s, size))
+      lines.forEach((line, i) => {
+        if (!line) return
+        const { x, y } = place(i)
+        page.drawText(line, { x, y, font: used, size, color: hexRgb(color), rotate: degrees(angle) })
+      })
+    }
   }
   return { bytes: await doc.save(), hiddenOriginal, fontUsed }
 }

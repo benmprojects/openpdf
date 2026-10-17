@@ -4,8 +4,9 @@
  * the run of path operators is then wrapped in a `cm` that carries the change, or taken out. Same approach as images.
  */
 import { PDFDocument, PDFName, type PDFPage } from 'pdf-lib'
-import { cmOp, matInverse, matMul, parseContent, pathDraws, removeOps, stringToBytes, type Matrix6, type PathDraw } from './content'
-import { pageContent } from './pageContent'
+import { cmOp, matInverse, matMul, num, parseContent, pathDraws, removeOps, stringToBytes, type Matrix6, type PathDraw } from './content'
+import { clampOpacity, hexToUnit } from './objectOps'
+import { addOpacityState, pageContent } from './pageContent'
 
 export interface PathEditTarget {
   page: number
@@ -47,5 +48,58 @@ export async function transformPath(bytes: Uint8Array, t: PathEditTarget, change
   }
   const ctx = doc.context
   page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(stringToBytes(out))))
+  return doc.save()
+}
+
+const STATE_OPS = new Set(['g', 'rg', 'k', 'G', 'RG', 'K', 'cs', 'CS', 'sc', 'scn', 'SC', 'SCN', 'w', 'gs'])
+
+export interface PathRestyle {
+  /** New stroke colour, #rrggbb. Ignored (with a message) when the path is not stroked. */
+  stroke?: string
+  /** New fill colour, #rrggbb. Ignored when the path is not filled. */
+  fill?: string
+  /** New line width in the path's own units (before its matrix). */
+  lineWidth?: number
+  /** Opacity for the fill and the stroke, 0 to 1. */
+  opacity?: number
+}
+
+/**
+ * Changes how one painted path looks: stroke colour, fill colour, line width or opacity. The path's operators are
+ * wrapped in `q ... Q` with the new settings in front, so nothing else on the page is touched. A stroke colour on a
+ * path that is only filled (or a fill colour on one that is only stroked) would have no effect, so it is refused.
+ */
+export async function restylePath(bytes: Uint8Array, t: PathEditTarget, change: PathRestyle): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  const page = doc.getPage(t.page)
+  const { src, ops, draw } = locate(doc, t)
+  if (change.stroke !== undefined && !draw.stroked) throw new Error('This shape is not outlined, so it has no line colour to change.')
+  if (change.fill !== undefined && !draw.filled) throw new Error('This shape is not filled, so it has no fill colour to change.')
+  if (change.lineWidth !== undefined && !draw.stroked) throw new Error('This shape is not outlined, so it has no line width to change.')
+  let prefix = ''
+  if (change.lineWidth !== undefined) {
+    if (!(change.lineWidth >= 0) || !Number.isFinite(change.lineWidth)) throw new Error('The line width must be zero or more.')
+    prefix += `${num(change.lineWidth)} w `
+  }
+  if (change.stroke !== undefined) {
+    const c = hexToUnit(change.stroke)
+    if (!c) throw new Error('That is not a colour.')
+    prefix += `${c.map(num).join(' ')} RG `
+  }
+  if (change.fill !== undefined) {
+    const c = hexToUnit(change.fill)
+    if (!c) throw new Error('That is not a colour.')
+    prefix += `${c.map(num).join(' ')} rg `
+  }
+  if (change.opacity !== undefined) prefix += `/${addOpacityState(doc, page, clampOpacity(change.opacity))} gs `
+  if (!prefix) return bytes
+  const from = ops[draw.first].start
+  const to = ops[draw.paint].end
+  // Some writers set colours and the width after the path and just before painting it: ours must come last then.
+  const late = ops.slice(draw.first, draw.paint).some((o) => STATE_OPS.has(o.op))
+  const at = ops[draw.paint].start
+  const body = late ? `${src.slice(from, at)}${prefix}${src.slice(at, to)}` : `${prefix}${src.slice(from, to)}`
+  const ctx = doc.context
+  page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(stringToBytes(`${src.slice(0, from)}q ${body} Q${src.slice(to)}`))))
   return doc.save()
 }

@@ -21,7 +21,7 @@ import { checkForUpdates, downloadUpdate, installUpdate, updateStatus } from './
 import type { Place } from '../shared/places'
 import { fetchCatalogue, installFromCatalogue, installFromFolder, installFromZip, listPlugins, uninstallPlugin, type CatalogueEntry } from './plugins'
 import type { BatchAction } from '../renderer/src/batch'
-import { listScanners, scan, type ScanOptions } from './scan'
+import { listScanners, scan, scanCapabilities, type ScanOptions } from './scan'
 import { addStampData, addStamps, listStamps, readStampMeta, removeStamp, updateStamp, writeStampMeta } from './stamps'
 import {
   addRecent,
@@ -337,6 +337,7 @@ ipcMain.handle('file:pick-one', async (e, filter?: { name: string; ext: string[]
 
 /** Scanning through Windows' WIA. Tests give picture paths separated by "|" instead of using a scanner. */
 ipcMain.handle('scan:devices', () => listScanners())
+ipcMain.handle('scan:capabilities', (_e, deviceId?: string) => (e2e && process.env.OPENPDF_E2E_SCAN ? { feeder: true, duplex: false } : scanCapabilities(typeof deviceId === 'string' ? deviceId : undefined)))
 ipcMain.handle('scan:acquire', async (_e, o: ScanOptions) => {
   if (e2e && process.env.OPENPDF_E2E_SCAN) return Promise.all(process.env.OPENPDF_E2E_SCAN.split('|').map(async (f) => new Uint8Array(await readFile(f))))
   return scan(o)

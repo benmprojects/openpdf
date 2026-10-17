@@ -18,7 +18,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | Save / Save As | Save options, save copy | DONE | Atomic write, Save As dialog |
 | New document | Blank, from text, RTF, images, scanner, combine files | PARTIAL | Convert tab has images, text, web page, clipboard, screenshot, Office (via LibreOffice), scan. Missing: blank document, RTF, Markdown, CSV, XPS, WMF |
 | Print | Printer, ranges, copies, scaling, booklet, N-up, comments, preview | PARTIAL | Printer choice, range, odd/even, copies, fit/actual/custom scale, orientation, N-up, booklet, preview, 300 dpi. Print what: document, document and comments, comments only; comments with the Printable flag off are left out. Pages always print as 300 dpi pictures, so "print as image" is how every job already works. Tile large pages (scale percent, overlap in mm, cut marks, labels, shown in the preview). Missing: print with layers choice, output is raster (no selectable text in print-to-PDF), advanced printer properties |
-| Export | Images, Word, Excel, PowerPoint | PARTIAL | Images (PNG/JPEG/TIFF), text, HTML, Word (best effort). Missing: Excel, PowerPoint; Word has no pictures, tables or columns |
+| Export | Images, Word, Excel, PowerPoint | DONE | Images (PNG/JPEG/TIFF), text, HTML, Word, Excel, PowerPoint: see the Convert tab section. All are best effort (tables and columns are found from positions, not from tags) |
 | Share / e-mail | Send by e-mail, SharePoint check in/out | PARTIAL | Send by e-mail saves the document, then shows it in Explorer to drag into a message, or starts a message without it. It cannot attach the file: that needs native mail code (MAPI), which is not used. No check in/out |
 | Revert | Discard unsaved changes | PARTIAL | Undo/redo and recovery snapshots exist; no one-click "Revert to saved" found |
 | Document properties | Description, Fonts, Security, Initial View, Custom, Advanced, Actions, JavaScript | PARTIAL | Description/XMP done; Security via its own dialog. Initial View (page layout, navigation tab, magnification, open-to-page, window options; written to the catalogue and followed on opening, except window size and position, which a tabbed window cannot follow), Fonts (name, type, encoding, embedded, subset, pages; read from the font dictionaries, not PDFium), Custom (add, edit and delete Info keys) and Print presets (page scaling, two-sided, copies up to 5, page range, paper by page size; the Print dialog starts with them) are done. Missing: trapped, base URL, document actions/JavaScript |
@@ -98,15 +98,15 @@ Prepared 17/10/2026 for planning the remaining work.
 
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
-| Scan | Scanner presets, colour mode, dpi, paper size, source, duplex | PARTIAL | WIA only: scanner's own window, glass, feeder, colour mode, dpi. Missing: TWAIN, named presets, duplex and paper size controls, scan straight into an open document (inserts as new document) |
+| Scan | Scanner presets, colour mode, dpi, paper size, source, duplex | PARTIAL | WIA: scanner's own window, glass, feeder, colour mode, dpi, paper size (sent as the scan area), named presets (built in and saved), duplex where the driver reports it (feeder only), straighten, remove specks, crop to content, OCR language, and scanning straight into the open document at a chosen place. Missing: TWAIN (needs a native TWAIN binding or bundled native helper, which this project does not add), duplex on drivers that do not report it. The WIA settings are untested against real hardware |
 | Combine files into one PDF | Mixed formats | DONE | File and Organise tabs: PDFs, pictures and Office files (LibreOffice) with page ranges, drag/arrow ordering, sort, add folder, bookmarks, new tab or save |
 | Create from text / RTF / images / blank | | PARTIAL | Images and text only (see File) |
 | Rasterise pages | Flatten vector to image | MISSING | |
 | Recompress images | | PARTIAL | In Optimise (JPEG reduction), not a standalone tool; no JBIG2/CCITT |
 | Replace fonts | Substitute fonts | MISSING | Only used inside PDF/A conversion |
 | Export to images | Formats, dpi | DONE | |
-| Export to Word / Excel / PowerPoint | | PARTIAL | Word only, text and headings; no Excel, no PowerPoint |
-| OCR pages | Languages, page ranges, engine choice (Plus: enhanced), table lines | PARTIAL | Languages, page range, dpi, skip pages with text. Missing: table detection, output options (searchable image vs. replace), deskew first, enhanced engine |
+| Export to Word / Excel / PowerPoint | | DONE | Word, Flowing text: headings, bold/italic/size/colour, real tables (from ruled grids, horizontal rules only, or text lined up in rows and columns), pictures cut from the rendered page in reading order, text columns as Word section columns; Exact layout: each block of text in a frame fixed at its place with pictures floating behind (tables not rebuilt, hidden text of scans left out; fonts not installed can change wrapping). Excel: tables as one sheet per page or one sheet for all, numbers, dollar amounts, percentages and DD/MM/YYYY dates saved as values. PowerPoint: one slide per page as a PNG or JPEG picture (96/150/200 dpi), slide shaped like the first page, page text optionally in the notes. Not offered: editable slide text, merged table cells (a spanning cell goes in one cell), nested tables, lists as Word lists, page headers and footers |
+| OCR pages | Languages, page ranges, engine choice (Plus: enhanced), table lines | PARTIAL | Languages, page range, dpi, skip pages with text. Missing: table detection, output options (searchable image vs. replace), enhanced engine. Deskew before recognising is done for scans (the Scan dialog straightens sheets first); the OCR dialog for existing pages does not straighten |
 | Enhance scanned pages / Deskew | Clean-up, straighten | MISSING | |
 | Convert colours | To grey/CMYK/RGB | MISSING | |
 | PDF/A, PDF/X conversion | | PARTIAL | PDF/A-2b best effort. No PDF/X, no A-1/A-3 |
@@ -116,14 +116,14 @@ Prepared 17/10/2026 for planning the remaining work.
 
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
-| Edit images | Move, resize, rotate, replace, crop, delete | PARTIAL | Move, resize, replace, delete. Missing: rotate, crop, images in form XObjects, other formats |
-| Edit shapes / objects | Select, transform, recolour, line width | PARTIAL | Move, resize, delete only. Missing: stroke/fill recolour, dash, shading, objects in form XObjects |
-| Align, distribute, order | | DONE | Annotations only; not page-content objects |
-| Format tab (font, size, colour, spacing, paragraph) | Context-sensitive text formatting | PARTIAL | Edit text keeps the font; missing: change font/size/colour/alignment of existing text |
+| Edit images | Move, resize, rotate, replace, crop, delete | PARTIAL | Move, resize, rotate (90, 180, any angle), flip, crop (numeric trim; the trimmed edges stay in the file, hidden), opacity, replace, export as PNG, delete. Missing: dragging crop handles, images in form XObjects, other formats |
+| Edit shapes / objects | Select, transform, recolour, line width | PARTIAL | Move, resize, delete, line and fill colour, line width, opacity. Missing: dash, shading, shapes that also set a clip, objects in form XObjects |
+| Align, distribute, order | | PARTIAL | Annotations: done. Page-content objects: bring forward / send backward in the Content pane (refused where the clip, transparency or layer differs between the two objects); no align or distribute |
+| Format tab (font, size, colour, spacing, paragraph) | Context-sensitive text formatting | PARTIAL | Font (the standard 14, or a font already in the file), size, colour, bold and italic (standard fonts only) while editing a run or paragraph. A subset font only types characters the file already uses; a refusal names the missing ones. Missing: spacing, alignment, text inside form XObjects |
 | Spell check | Pane and as-you-type | PARTIAL | As-you-type in text boxes. Missing: document spell-check pane |
 | Word count | | MISSING | |
 | Layers | Show/hide, set visibility, assign comments | PARTIAL | View show/hide. Missing: set default visibility, edit layers, merge/flatten |
-| Content pane (object tree) | List of page objects | MISSING | |
+| Content pane (object tree) | List of page objects | PARTIAL | Side pane tab: text runs, pictures, shapes and forms of the current page in drawing order; select (highlights it), hide/show (through an optional content group shown in Layers), bring forward/send backward, delete. Missing: contents of forms, multi-select, rename, shadings |
 | Font replacement and page-content search/replace | | MISSING | |
 
 ## 7. Measurement
@@ -214,7 +214,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | Destinations pane | Named destinations | MISSING | |
 | Stamps pane and palette | | PARTIAL | Picker popup only |
 | Comment styles pane | | MISSING | |
-| Content pane | | MISSING | |
+| Content pane | | PARTIAL | See section 6 |
 | Tags pane | | MISSING | |
 | Document recovery pane | | PARTIAL | Recovery snapshots on restart; no pane |
 | Properties pane | Object properties | DONE | Properties panel (Ctrl+E) |
@@ -246,13 +246,13 @@ Ordered by everyday usefulness (marking up drawings, measuring, stamping, combin
 13. Split pages (cut A1 or A0 sheets into A3/A4 tiles) and tiled/poster printing of large sheets.
 14. Search with regular expressions and presets (find and redact for phone numbers, emails, dates, card numbers), plus search scope for comments and bookmarks.
 15. Redaction extras: apply a selected mark only, overlay text or code, redaction fill style, pattern-based marking.
-16. Export to Excel and PowerPoint (and better Word: pictures, tables, columns); Excel matters for schedules and bills of quantities.
+16. Export to Excel and PowerPoint (and better Word: pictures, tables, columns); Excel matters for schedules and bills of quantities. DONE (best effort; see Convert tab).
 17. Auto-generate bookmarks from headings or a table of contents, bookmark colour/bold/italic, import/export; set destination from the current view.
 18. Delete blank pages automatically, delete extracted pages from the source, swap pages, insert pages from clipboard or scanner.
 19. Add QR codes and barcodes to pages and as form fields. (Done: QR code, Code 128, Code 39 and EAN-13 as page content or stamp annotations, and as a barcode form field; DataMatrix is not offered.)
 20. Fillable form gaps: date-picker and image fields, align/distribute/duplicate of fields, fields pane, document and open/save/print scripts, submit action, populate from CSV for many records. (Done except the open/close/save/print document scripts and a console window.)
-21. Scanner support: named presets, duplex, paper size, TWAIN, insert scanned pages into the open document; plus OCR table detection and a deskew/enhance step.
+21. Scanner support: named presets, duplex (where reported), paper size, deskew, speck removal, auto-crop and insert scanned pages into the open document are done (WIA only, hardware-untested). Still missing: TWAIN (needs a native module or helper, not feasible here) and OCR table detection.
 22. Document properties: Initial View (open on page, zoom, pane), fonts list, custom properties, Advanced print presets. DONE, except trapped, base URL and document actions.
-23. Edit-content depth: image rotate and crop, shape recolour and line width, text format changes (font, size, colour), text inside form XObjects, a content/object pane.
+23. Edit-content depth: image rotate, flip, crop, opacity and export, shape recolour, line width and opacity, text format changes (font, size, colour, bold, italic) and a Content pane are DONE. Still open: text and objects inside form XObjects, draggable crop handles, text spacing and alignment.
 24. Open from URL and restore previous session are DONE; send by e-mail is PARTIAL (the file cannot be attached without native mail code). Later, direct SharePoint and OneDrive connection with check in/out (needs app registrations).
 25. Workspace comfort: Fit Visible zoom, loupe, split view and settings import/export are DONE. Still open: pan and zoom window, tab groups/new window, right-to-left and gaps options, quick-access toolbar and customisable ribbon (left for later on purpose).

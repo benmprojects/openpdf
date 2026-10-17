@@ -2,6 +2,7 @@
 import { imagesToPdf } from './createPdf'
 import { addTextLayer, type OcrInput } from './ocrLayer'
 import type { ScanRequest } from './ScanDialog'
+import { processScan } from './scanProcess'
 
 export interface PageSource {
   data: Uint8Array
@@ -24,10 +25,16 @@ export async function clipboardPicturePages(): Promise<PageSource | null> {
 
 /** Scans with the chosen scanner and makes a page of each sheet, with a text layer when asked. Null when nothing was scanned. */
 export async function scannedPages(r: ScanRequest, progress?: (text: string) => void): Promise<PageSource | null> {
-  const sheets = await window.openpdf.scan(r)
-  if (!sheets.length) return null
+  progress?.('Scanning…')
+  const scanned = await window.openpdf.scan(r)
+  if (!scanned.length) return null
   // The scanner's own window does not say what resolution was used, so 200 dpi is assumed for the page size.
   const dpi = r.source === 'dialog' ? 200 : r.dpi
+  const sheets: Uint8Array[] = []
+  for (let i = 0; i < scanned.length; i++) {
+    if (r.deskew || r.despeckle || r.autoCrop) progress?.(`Cleaning up sheet ${i + 1} of ${scanned.length}…`)
+    sheets.push(await processScan(scanned[i], r, dpi))
+  }
   let data = await imagesToPdf(
     sheets.map((s, i) => ({ name: `scan${i + 1}.png`, data: s })),
     'image',
@@ -40,7 +47,7 @@ export async function scannedPages(r: ScanRequest, progress?: (text: string) => 
       inputs.push({
         page: i,
         scale: dpi / 72,
-        lines: (await window.openpdf.ocrRecognise(sheets[i], ['eng'])).lines
+        lines: (await window.openpdf.ocrRecognise(sheets[i], r.ocrLanguages?.length ? r.ocrLanguages : ['eng'])).lines
       })
     }
     data = (await addTextLayer(data, inputs)).bytes

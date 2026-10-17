@@ -5,8 +5,9 @@
  */
 import { PDFDocument, PDFName, concatTransformationMatrix, drawObject, popGraphicsState, pushGraphicsState, type PDFPage } from 'pdf-lib'
 import { frameFor } from './annotWrite'
-import { cmOp, imageDraws, matInverse, matMul, parseContent, removeOps, stringToBytes, type ImageDraw, type Matrix6 } from './content'
-import { isImageXObject, pageContent } from './pageContent'
+import { cmOp, imageDraws, matInverse, matMul, num, parseContent, removeOps, stringToBytes, type ImageDraw, type Matrix6 } from './content'
+import { addOpacityState, isImageXObject, pageContent } from './pageContent'
+import { clampOpacity, clipPolygonOps, pagePointsToUnitSquare, type Pt } from './objectOps'
 
 export interface ImageEditTarget {
   /** Zero-based page. */
@@ -64,6 +65,32 @@ export async function transformImage(bytes: Uint8Array, t: ImageEditTarget, chan
     out = `${src.slice(0, op.start)}q ${cmOp(m)} ${src.slice(op.start, op.end)} Q${src.slice(op.end)}`
   }
   setContent(doc, page, out)
+  return doc.save()
+}
+
+/**
+ * Crops one image to a polygon given in page space (four corners): the picture is drawn through a clipping path, so
+ * the part outside stays in the file but is not shown. Cropping again narrows the clip further.
+ */
+export async function cropImage(bytes: Uint8Array, t: ImageEditTarget, corners: Pt[]): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  const { src, ops, draw, page } = locate(doc, t)
+  const op = ops[draw.index]
+  const inv = matInverse(draw.ctm)
+  if (!inv) throw new Error('This image has no area, so it cannot be cropped.')
+  // The clip is written in the image's own unit square, which is the space its drawing operation runs in.
+  const clip = clipPolygonOps(pagePointsToUnitSquare(corners, inv), num)
+  setContent(doc, page, `${src.slice(0, op.start)}q ${clip} ${src.slice(op.start, op.end)} Q${src.slice(op.end)}`)
+  return doc.save()
+}
+
+/** Draws one image at the given opacity (0 to 1). */
+export async function setImageOpacity(bytes: Uint8Array, t: ImageEditTarget, opacity: number): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  const { src, ops, draw, page } = locate(doc, t)
+  const op = ops[draw.index]
+  const gs = addOpacityState(doc, page, clampOpacity(opacity))
+  setContent(doc, page, `${src.slice(0, op.start)}q /${gs} gs ${src.slice(op.start, op.end)} Q${src.slice(op.end)}`)
   return doc.save()
 }
 

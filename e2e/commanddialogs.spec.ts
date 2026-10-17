@@ -49,7 +49,8 @@ test('Export text, Comments, Save as and Flatten open options dialogs; marks dia
     await win.keyboard.press('Escape')
     await win.getByRole('button', { name: 'Word' }).click()
     const word = win.getByRole('dialog', { name: 'Export as Word' })
-    await expect(word.getByRole('checkbox')).toHaveCount(0)
+    // Word has its own options (pictures, tables, columns) but no line-break option.
+    await expect(word.getByRole('checkbox', { name: /line breaks/ })).toHaveCount(0)
     await win.keyboard.press('Escape')
 
     // Comments: import options. The document has no comments, so nothing is replaced.

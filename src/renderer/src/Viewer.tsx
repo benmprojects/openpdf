@@ -5,6 +5,9 @@ import type { ImageObject, PageLink, PageSize, PdfClient } from './pdfClient'
 import type { TextBlock } from './textBlocks'
 import { TextEditLayer } from './TextEditLayer'
 import { ObjectEditLayer } from './ObjectEditLayer'
+import type { ObjectAction } from './ObjectBar'
+import type { PageFontInfo } from './embeddedFont'
+import type { TextFormat } from './textEdit'
 import { FormLayer, type FormsView } from './FormLayer'
 import type { Matrix6 } from './content'
 import type { PageText } from './pdfiumRaw'
@@ -43,6 +46,16 @@ function paint(cv: HTMLCanvasElement | null, out: { width: number; height: numbe
 
 export const PAD = 16
 export const GAP = 12
+
+/** What the Edit tools need beyond the basics. */
+export interface EditExtras {
+  /** The fonts the page already uses (for the text format bar). */
+  loadFonts?: (page: number) => Promise<PageFontInfo[]>
+  /** Crop, opacity, export and shape look changes from the picture and shape bars. */
+  onObjectAction?: (page: number, total: number, toPage: Matrix6, action: ObjectAction) => void
+  /** An object picked in the Content pane, in display space (points from the top-left of the page as shown). */
+  highlight?: { page: number; rect: { x: number; y: number; w: number; h: number } } | null
+}
 
 export interface ViewerHandle {
   scrollToPage(index: number): void
@@ -163,7 +176,9 @@ interface Props {
   /** A link was clicked: go to a page, or (after asking) open a web address. */
   onFollowLink: (link: PageLink) => void
   /** Edit Text tool: a block of text on a page was given new text. */
-  onEditText: (page: number, block: TextBlock, total: number, text: string) => void
+  onEditText: (page: number, block: TextBlock, total: number, text: string, format?: TextFormat) => void
+  /** Extras for the edit tools: the page's fonts, picture and shape actions, and a box to point out (Content pane). */
+  editExtras?: EditExtras
   /** The form field tool: a box was dragged on a page (display space). */
   onFieldRect: (page: number, rect: Rect) => void
   /** When set, the document's form fields are drawn as controls over each page (the page images leave them out). */
@@ -237,6 +252,7 @@ export function Viewer({
   onErase,
   onFollowLink,
   onEditText,
+  editExtras,
   onChangeImage,
   onReplaceImage,
   onChangePath,
@@ -1192,6 +1208,7 @@ export function Viewer({
                 guides={shownGuides}
                 links={tool === 'select' ? links.get(i) : undefined}
                 onEditText={onEditText}
+                editExtras={editExtras}
                 onChangeImage={onChangeImage}
                 onReplaceImage={onReplaceImage}
                 onChangePath={onChangePath}
@@ -1272,7 +1289,8 @@ interface PageViewProps {
   grid: number | null
   guides: Guide[]
   links?: PageLink[]
-  onEditText: (page: number, block: TextBlock, total: number, text: string) => void
+  onEditText: (page: number, block: TextBlock, total: number, text: string, format?: TextFormat) => void
+  editExtras?: EditExtras
   onChangeImage: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
   onReplaceImage: (page: number, obj: ImageObject, total: number) => void
   onChangePath: (page: number, obj: ImageObject, total: number, change: Matrix6 | null) => void
@@ -1308,7 +1326,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, snapMark, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, onMarkContext, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, snapMark, grid, guides, links, onEditText, editExtras, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, onMarkContext, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const hasForms = !!forms && forms.fields.length > 0
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -1494,9 +1512,12 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
         />
       )}
       {forms && <FormLayer page={index} zoom={zoom} rotation={rotation} forms={forms} interactive={annotProps.tool === 'select' || annotProps.tool === 'formedit'} />}
-      {annotProps.tool === 'edittext' && textEditReady && <TextEditLayer client={client} page={index} zoom={zoom} onCommit={onEditText} />}
-      {annotProps.tool === 'editimage' && textEditReady && <ObjectEditLayer kind="image" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangeImage} onReplace={onReplaceImage} />}
-      {annotProps.tool === 'editpath' && textEditReady && <ObjectEditLayer kind="path" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangePath} />}
+      {annotProps.tool === 'edittext' && textEditReady && <TextEditLayer client={client} page={index} zoom={zoom} onCommit={onEditText} loadFonts={editExtras?.loadFonts} />}
+      {annotProps.tool === 'editimage' && textEditReady && <ObjectEditLayer kind="image" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangeImage} onReplace={onReplaceImage} onAction={editExtras?.onObjectAction} />}
+      {annotProps.tool === 'editpath' && textEditReady && <ObjectEditLayer kind="path" client={client} page={index} zoom={zoom} rotation={rotation} onChange={onChangePath} onAction={editExtras?.onObjectAction} />}
+      {editExtras?.highlight && editExtras.highlight.page === index && (
+        <div className="content-highlight" aria-label="Selected object" style={{ left: editExtras.highlight.rect.x * zoom, top: editExtras.highlight.rect.y * zoom, width: Math.max(4, editExtras.highlight.rect.w * zoom), height: Math.max(4, editExtras.highlight.rect.h * zoom) }} />
+      )}
       {redactMarks.length > 0 && (
         <div className="redact-layer">
           {redactMarks.map((m) => (

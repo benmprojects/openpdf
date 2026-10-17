@@ -40,7 +40,7 @@ import { DeleteDialog, DuplicateDialog, ExtractDialog, InsertDialog, MergeDialog
 import type { DocContext, PageDialogKind, PageDialogResult } from './pageDialogLogic'
 import { DeleteBlankDialog, SwapDialog } from './BlankPagesDialog'
 import { applyDialogEdit, buildExtractFiles, buildSplitFiles, doneMessage } from './pageDialogRun'
-import { CommentsDialog, ExportTextDialog, FlattenDialog, SaveAsDialog, type CommentFormat, type CommentsDialogResult, type SaveAsChoice } from './CommandDialogs'
+import { CommentsDialog, ExportTextDialog, FlattenDialog, SaveAsDialog, type CommentFormat, type ExportOptions, type CommentsDialogResult, type SaveAsChoice } from './CommandDialogs'
 import { applyFilter, type CommentFilter } from './commentFilter'
 import { flattenDocument, flattenSignatures, type FlattenWhat } from './flatten'
 import { getPageClip, onPageClip, setPageClip } from './pageClipboard'
@@ -63,9 +63,11 @@ import { CreateDialog, type CreateRequest } from './CreateDialog'
 import { imagesToPdf, textToPdf } from './createPdf'
 import { ScanDialog, type ScanRequest } from './ScanDialog'
 import { OcrDialog, type OcrRequest } from './OcrDialog'
-import { addTextLayer, ocrDocument, type OcrInput } from './ocrLayer'
+import { ocrDocument } from './ocrLayer'
+import { scannedPages } from './pageSources'
 import { ExportImagesDialog, type ExportImagesRequest } from './ExportDialog'
-import { bodySize, encodePage, pageFileName, scaleFor, structurePage, toDocx, toHtml, type ExportBlock } from './exportDoc'
+import { bodySize, encodePage, pageFileName, scaleFor, structurePage, toHtml, type ExportBlock } from './exportDoc'
+import { exportExcel, exportPowerPoint, exportWord } from './exportRun'
 import { groupBlocks } from './textBlocks'
 import { SanitiseDialog } from './SanitiseDialog'
 import { StandardsDialog } from './StandardsDialog'
@@ -98,8 +100,13 @@ import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
 import { replaceBlock, weightAndSlant } from './textEdit'
-import { addImage, replaceImage, transformImage } from './imageEdit'
-import { transformPath } from './pathEdit'
+import { addImage, cropImage, replaceImage, setImageOpacity, transformImage } from './imageEdit'
+import { restylePath, transformPath } from './pathEdit'
+import { ContentPane } from './ContentPane'
+import type { Matrix6 } from './content'
+import { pageFontsOf } from './contentObjectsDoc'
+import { insetCornersToPage, lineWidthForWrite } from './objectOps'
+import type { ObjectAction } from './ObjectBar'
 import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode } from './arrange'
 import { applyFormValues, readForm, type FieldType, type FormField, type FormValue } from './forms'
 import { detectInDocument, type Detected } from './formDetect'
@@ -116,7 +123,7 @@ import { arrangeWidgets, boxesOf, duplicateSpecs, duplicateTargets, widgetKey, t
 import { imageToDataUrl, isImageField, sniffImage } from './formImage'
 import { submitPayload, submitUrl, type SubmitFormat } from './formSubmit'
 import { flattenForm } from './forms'
-import { CalendarDays as CalendarDaysIcon, Braces, QrCode, Table as TableIcon, UnfoldHorizontal, UnfoldVertical } from 'lucide-react'
+import { CalendarDays as CalendarDaysIcon, Presentation as SlidesIcon, Sheet as SheetIcon, Braces, QrCode, Table as TableIcon, UnfoldHorizontal, UnfoldVertical } from 'lucide-react'
 import { describeRestrictions, restrictsEditing, type EncryptOptions, type Permissions } from '../../shared/pdfSecurity'
 import { SecurityDialog } from './SecurityDialog'
 import { Modal } from './AppDialogs'
@@ -406,7 +413,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [pageDialog, setPageDialog] = useState<{ kind: PageDialogKind; selection: number[]; insertAfter?: number } | null>(null)
   /** Options dialogs for Flatten, Export text, Comments import/export and Save as. */
   const [cmdDialog, setCmdDialog] = useState<
-    { kind: 'flatten' } | { kind: 'export'; as: 'txt' | 'html' | 'docx' } | { kind: 'comments'; mode: 'import' | 'export'; format: CommentFormat } | { kind: 'saveas' } | null
+    { kind: 'flatten' } | { kind: 'export'; as: 'txt' | 'html' | 'docx' | 'xlsx' | 'pptx' } | { kind: 'comments'; mode: 'import' | 'export'; format: CommentFormat } | { kind: 'saveas' } | null
   >(null)
   /** The Combine files dialog (File and Organize tabs). */
   const [combineOpen, setCombineOpen] = useState(false)
@@ -2284,29 +2291,66 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (out.nothingToDo) return setNotice({ kind: 'info', text: 'Every page already has text. Choose "All pages" to recognise them anyway.' })
     setNotice({ kind: 'info', text: `Recognised ${out.words} word${out.words === 1 ? '' : 's'} on ${out.pagesDone} page${out.pagesDone === 1 ? '' : 's'} (average confidence ${Math.round(out.confidence)}%).${out.skipped ? ` ${out.skipped} word${out.skipped === 1 ? '' : 's'} could not be written with the available font.` : ''}` })
   }
-  const runScan = (r: ScanRequest) => {
+  const runScan = async (r: ScanRequest) => {
     setScanOpen(false)
-    void makeNew('Could not scan', async () => {
-      setNotice({ kind: 'info', text: 'Scanning…' })
-      const sheets = await window.openpdf.scan(r)
-      if (!sheets.length) {
-        setNotice({ kind: 'info', text: 'Nothing was scanned.' })
-        return null
-      }
-      // Direct scans know their resolution; the scanner's own window does not say, so 200 dpi is assumed for the page size.
-      const dpi = r.source === 'dialog' ? 200 : r.dpi
-      let bytes = await imagesToPdf(sheets.map((data, i) => ({ name: `scan${i + 1}.png`, data })), 'image', dpi)
-      if (r.ocr) {
-        const inputs: OcrInput[] = []
-        for (let i = 0; i < sheets.length; i++) {
-          setNotice({ kind: 'info', text: `Recognising text on sheet ${i + 1} of ${sheets.length}…` })
-          inputs.push({ page: i, scale: dpi / 72, lines: (await window.openpdf.ocrRecognise(sheets[i], ['eng'])).lines })
+    const progress = (text: string) => setNotice({ kind: 'info', text })
+    if (r.insertAt === undefined) {
+      await makeNew('Could not scan', async () => {
+        const got = await scannedPages(r, progress)
+        if (!got) {
+          setNotice({ kind: 'info', text: 'Nothing was scanned.' })
+          return null
         }
-        bytes = (await addTextLayer(bytes, inputs)).bytes
-      }
-      setNotice({ kind: 'info', text: `Scanned ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}.` })
-      return { name: `Scan ${today()}.pdf`, data: bytes }
-    })
+        setNotice({ kind: 'info', text: `Scanned ${got.count} sheet${got.count === 1 ? '' : 's'}.` })
+        return { name: `Scan ${today()}.pdf`, data: got.data }
+      })
+      return
+    }
+    // Into the open document: scan first, then insert as one undoable page edit.
+    let got: Awaited<ReturnType<typeof scannedPages>> = null
+    setBusy(true)
+    try {
+      got = await scannedPages(r, progress)
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not scan: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    } finally {
+      setBusy(false)
+    }
+    if (!got) return setNotice({ kind: 'info', text: 'Nothing was scanned.' })
+    const made = got
+    const at = Math.max(0, Math.min(r.insertAt, pages.length))
+    await applyPageEdit(
+      async (b) => (await insertPagesFrom(b, made.data, at)).bytes,
+      `Inserted ${made.count} scanned page${made.count === 1 ? '' : 's'} ${at === 0 ? 'before page 1' : `after page ${at}`}.`
+    )
+  }
+  // ---- Edit content: picture and shape actions, fonts for the text bar, and the Content pane -------------
+  const [contentHighlight, setContentHighlight] = useState<{ page: number; rect: { x: number; y: number; w: number; h: number } } | null>(null)
+  const loadPageFonts = useCallback((pg: number) => pageFontsOf(bytes, pg), [bytes])
+  const exportPicture = async (pg: number, ordinal: number) => {
+    if (!client) return
+    try {
+      const px = await client.imagePixels(pg, ordinal)
+      if (!px) return setNotice({ kind: 'error', text: 'This picture could not be read, so it cannot be exported.' })
+      const png = await encodeRotatedPng(px.width, px.height, px.data, 0)
+      const saved = await window.openpdf.saveData(`${stem(name) || 'document'} picture ${ordinal + 1}.png`, png, { name: 'PNG pictures', ext: 'png' })
+      if (saved) setNotice({ kind: 'info', text: `Picture saved (${px.width} \u00d7 ${px.height} pixels).` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not export the picture: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  const objectAction = (pg: number, total: number, toPage: Matrix6, a: ObjectAction) => {
+    const o = a.obj
+    if (a.kind === 'export') return void exportPicture(pg, o.ordinal)
+    if (a.kind === 'crop') {
+      const corners = insetCornersToPage(o.rect, a.inset, toPage)
+      if (!corners) return setNotice({ kind: 'error', text: 'That would trim away the whole picture.' })
+      return void applyPageEdit((b) => cropImage(b, { page: pg, ordinal: o.ordinal, total, matrix: o.matrix }, corners), 'Picture cropped. The trimmed edges stay in the file, hidden.')
+    }
+    if (a.kind === 'opacity') return void applyPageEdit((b) => setImageOpacity(b, { page: pg, ordinal: o.ordinal, total, matrix: o.matrix }, a.value), 'Picture opacity changed')
+    const change = { ...a.change, lineWidth: a.change.lineWidth === undefined ? undefined : lineWidthForWrite(a.change.lineWidth, o.matrix) }
+    void applyPageEdit((b) => restylePath(b, { page: pg, ordinal: o.ordinal, total, pageBounds: o.pageBounds }, change), 'Shape updated')
   }
   const exportStem = () => stem(name) || 'document'
   const runExportImages = async (r: ExportImagesRequest) => {
@@ -2350,7 +2394,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     }
     return out
   }
-  const exportAs = async (kind: 'txt' | 'html' | 'docx', only: number[] = pages.map((_, i) => i), keepLayout = kind === 'txt') => {
+  const exportAs = async (kind: 'txt' | 'html' | 'docx' | 'xlsx' | 'pptx', only: number[] = pages.map((_, i) => i), keepLayout = kind === 'txt', options?: ExportOptions) => {
     if (!client) return
     setBusy(true)
     try {
@@ -2363,11 +2407,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           all.push(keepLayout ? text : text.split(/\n{2,}/).map((para) => para.replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean).join('\n\n'))
         }
         data = new TextEncoder().encode(all.join('\n\f\n'))
+      } else if (kind === 'html') {
+        data = new TextEncoder().encode(toHtml(exportStem(), await exportStructure(only, keepLayout)))
       } else {
-        const structure = await exportStructure(only, kind === 'html' && keepLayout)
-        data = kind === 'html' ? new TextEncoder().encode(toHtml(exportStem(), structure)) : await toDocx(exportStem(), structure)
+        const env = { client, sizes: pages, stem: exportStem(), progress: (text: string) => setNotice({ kind: 'info', text }) }
+        data = kind === 'docx' ? await exportWord(env, only, options!.word) : kind === 'xlsx' ? await exportExcel(env, only, options!.excel) : await exportPowerPoint(env, only, options!.ppt)
       }
-      const label = { txt: 'Text', html: 'HTML', docx: 'Word' }[kind]
+      const label = { txt: 'Text', html: 'HTML', docx: 'Word', xlsx: 'Excel', pptx: 'PowerPoint' }[kind]
       const saved = await window.openpdf.saveData(`${exportStem()}.${kind}`, data, { name: `${label} files`, ext: kind })
       if (saved) setNotice({ kind: 'info', text: `Exported ${saved}` })
     } catch (e) {
@@ -3474,6 +3520,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
               </RGroup>
               <RGroup label={t('Shapes')}>
+                <RB big icon={Shapes} label={t('Content pane')} onClick={() => setSidebar(sidebar === 'content' ? null : 'content')} pressed={sidebar === 'content'} title={t('List the page\u2019s text, pictures, shapes and forms: select, hide, reorder or delete them')} />
                 <RB big icon={Shapes} label={t('Edit shape')} onClick={() => setTool(tool === 'editpath' ? 'select' : 'editpath')} pressed={tool === 'editpath'} disabled={!pages.length || busy || locked} title={t('Click a line, box or filled shape that is part of the page to move, resize or delete it')} />
               </RGroup>
               <RGroup label={t('Images')}>
@@ -3594,7 +3641,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RB big icon={ImageIcon} label={t('Pictures')} onClick={() => setExportImagesOpen(true)} disabled={!pages.length || busy} title={t('Save the pages as PNG, JPEG or TIFF pictures')} />
               <RB big icon={FileText} label={t('Text')} onClick={() => setCmdDialog({ kind: 'export', as: 'txt' })} disabled={!pages.length || busy} title={t('Save the text of the document as a plain text file')} />
               <RB big icon={Globe} label={t('HTML')} onClick={() => setCmdDialog({ kind: 'export', as: 'html' })} disabled={!pages.length || busy} title={t('Save the text as a web page, with headings and paragraphs (pictures and layout are not kept)')} />
-              <RB big icon={FileOutput} label={t('Word')} onClick={() => setCmdDialog({ kind: 'export', as: 'docx' })} disabled={!pages.length || busy} title={t('Save the text as a Word document, with headings and paragraphs (best effort: pictures and layout are not kept)')} />
+              <RB big icon={FileOutput} label={t('Word')} onClick={() => setCmdDialog({ kind: 'export', as: 'docx' })} disabled={!pages.length || busy} title={t('Save as a Word document: flowing text with headings, tables, pictures and columns, or the exact page layout (best effort)')} />
+              <RB big icon={SheetIcon} label={t('Excel')} onClick={() => setCmdDialog({ kind: 'export', as: 'xlsx' })} disabled={!pages.length || busy} title={t('Save the tables found on the pages as an Excel workbook, with numbers, amounts and dates as values (best effort)')} />
+              <RB big icon={SlidesIcon} label={t('PowerPoint')} onClick={() => setCmdDialog({ kind: 'export', as: 'pptx' })} disabled={!pages.length || busy} title={t('Save the pages as a PowerPoint presentation, one slide per page, each a picture of the page')} />
             </RGroup>
             <RGroup label={t('Recognise')}>
               <RB big icon={ScanText} label={t('OCR')} onClick={() => setOcrOpen(true)} disabled={!pages.length || busy || locked} title={t('Recognise the text in scanned pages so they can be searched and copied')} />
@@ -3959,7 +4008,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }}
         />
       )}
-      {scanOpen && <ScanDialog onScan={runScan} onClose={() => setScanOpen(false)} />}
+      {scanOpen && <ScanDialog onScan={(r) => void runScan(r)} onClose={() => setScanOpen(false)} document={pages.length ? { count: pages.length, current: currentPage } : undefined} />}
       {ocrOpen && <OcrDialog pageCount={pages.length} currentPage={currentPage} onRun={(r) => void runOcr(r)} onClose={() => setOcrOpen(false)} />}
       {portfolioFiles && (
         <PortfolioDialog
@@ -4328,9 +4377,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 stem={exportStem()}
                 dir={path ? path.replace(/[\\/][^\\/]*$/, '') : null}
                 onCancel={close}
-                onSubmit={(only, keep) => {
+                onSubmit={(only, keep, options) => {
                   close()
-                  void exportAs(cmdDialog.as, only, keep)
+                  void exportAs(cmdDialog.as, only, keep, options)
                 }}
               />
             )
@@ -4474,6 +4523,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 media={media}
                 onPlayMedia={setPlayer}
                 onSaveMedia={(m) => void saveMedia(m)}
+                content={
+                  client ? (
+                    <ContentPane
+                      client={client}
+                      bytes={bytes}
+                      ready={clientBytes === viewBytes && (hiddenLayers !== null || viewBytes === bytes) && !busy}
+                      page={currentPage}
+                      canEdit={!locked && !busy}
+                      run={(fn, done) => applyPageEdit(fn, done)}
+                      onHighlight={setContentHighlight}
+                    />
+                  ) : null
+                }
                 fields={
                   <FieldsPane
                     fields={formFields}
@@ -4594,16 +4656,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 await applyPageEdit((b) => replaceImage(b, { page, ordinal: obj.ordinal, total, matrix: obj.matrix }, { data: d, kind }), 'Image replaced')
               }}
               textEditReady={clientBytes === viewBytes && (hiddenLayers !== null || viewBytes === bytes) && !busy}
-              onEditText={(page, block, total, text) => {
+              editExtras={{ loadFonts: loadPageFonts, onObjectAction: objectAction, highlight: contentHighlight }}
+              onEditText={(page, block, total, text, format) => {
                 let hidden = false
                 void applyPageEdit(async (b) => {
                   const style = { font: block.font, flags: block.flags, weight: block.weight, italic: block.italic, size: block.size, color: block.color, matrix: block.matrix }
-                  const { bold, italic } = weightAndSlant(style)
-                  const installed = text ? await window.openpdf.findFont(block.font, bold, italic).catch(() => null) : null
-                  const r = await replaceBlock(b, { page, ordinals: block.ordinals, total, origins: block.origins }, text, style, installed?.data, block.reflow ? block.layout : null)
+                  const matched = weightAndSlant(style)
+                  const bold = format?.bold ?? matched.bold
+                  const italic = format?.italic ?? matched.italic
+                  const installed = text && !format?.family && !format?.pageFont ? await window.openpdf.findFont(block.font, bold, italic).catch(() => null) : null
+                  const r = await replaceBlock(b, { page, ordinals: block.ordinals, total, origins: block.origins }, text, style, installed?.data, block.reflow ? block.layout : null, format, block.text)
                   hidden = r.hiddenOriginal
                   return r.bytes
-                }, text ? 'Text updated' : 'Text deleted').then(() => {
+                }, text ? (format && text === block.text ? 'Text formatted' : 'Text updated') : 'Text deleted').then(() => {
                   if (hidden) setNotice({ kind: 'info', text: 'Text updated. The old text stays in the file, hidden, because the text after it depends on its width.' })
                 })
               }}

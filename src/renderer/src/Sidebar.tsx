@@ -28,6 +28,7 @@ import {
   Play,
   Trash2,
   TextCursorInput,
+  Shapes,
   X,
   type LucideIcon
 } from 'lucide-react'
@@ -41,7 +42,7 @@ import type { AttachmentInfo, PageSize, PdfClient } from './pdfClient'
 
 const THUMB_WIDTH = 132
 
-export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media' | 'measure' | 'fields'
+export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media' | 'measure' | 'fields' | 'content'
 
 /** A page edit requested from the thumbnail pane. `move.before` is an index in the current order (page count = end). */
 export type PageOp =
@@ -90,6 +91,8 @@ interface Props {
   measurements?: React.ReactNode
   /** The Fields tab, rendered by the document view. */
   fields?: React.ReactNode
+  /** The Content pane (objects on the page), rendered by the document view. */
+  content?: React.ReactNode
   /** Saves an edited bookmark tree. */
   onEditOutline?: (tree: BookmarkNode[]) => void
   /** Makes bookmarks from headings or pages (opens a dialog). */
@@ -108,7 +111,8 @@ const TABS: [SidebarTab, string, LucideIcon][] = [
   ['layers', msg('Layers'), Layers],
   ['media', 'Media', Clapperboard],
   ['measure', msg('Measurements'), Ruler],
-  ['fields', msg('Fields'), TextCursorInput]
+  ['fields', msg('Fields'), TextCursorInput],
+  ['content', msg('Content'), Shapes]
 ]
 
 export function Sidebar(props: Props) {
@@ -142,6 +146,8 @@ export function Sidebar(props: Props) {
         props.measurements
       ) : tab === 'fields' ? (
         props.fields
+      ) : tab === 'content' ? (
+        props.content
       ) : tab === 'attachments' ? (
         <Attachments list={props.attachments} onSave={props.onSaveAttachment} onAdd={props.onAddAttachments} onRemove={props.onRemoveAttachment} onSaveAll={props.onSaveAllAttachments} />
       ) : tab === 'media' ? (

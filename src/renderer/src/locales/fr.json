@@ -313,7 +313,7 @@
     "Save the pages as PNG, JPEG or TIFF pictures": "Enregistrer les pages en images PNG, JPEG ou TIFF",
     "Save the selected pages as a new PDF": "Enregistrer les pages sélectionnées dans un nouveau PDF",
     "Save the text as a web page, with headings and paragraphs (pictures and layout are not kept)": "Enregistrer le texte en page web, avec titres et paragraphes (les images et la mise en page ne sont pas conservées)",
-    "Save the text as a Word document, with headings and paragraphs (best effort: pictures and layout are not kept)": "Enregistrer le texte en document Word, avec titres et paragraphes (au mieux : les images et la mise en page ne sont pas conservées)",
+    "Save as a Word document: flowing text with headings, tables, pictures and columns, or the exact page layout (best effort)": "Enregistrer en document Word : texte fluide avec titres, tableaux, images et colonnes, ou mise en page exacte (au mieux)",
     "Save the text of the document as a plain text file": "Enregistrer le texte du document dans un fichier texte brut",
     "Scale": "Échelle",
     "Scan": "Numériser",

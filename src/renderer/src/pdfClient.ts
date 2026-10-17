@@ -186,6 +186,20 @@ export class PdfClient {
     throw new Error('Unexpected response')
   }
 
+  /** The form XObjects a page draws directly, like `imageObjects`. */
+  async formObjects(page: number): Promise<{ objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }> {
+    const res = await this.call({ type: 'formObjects', page })
+    if (res.ok && res.type === 'formObjects') return { objects: res.objects, total: res.total, toPage: res.toPage }
+    throw new Error('Unexpected response')
+  }
+
+  /** One image of the page as RGBA pixels (as PDFium shows it), or null when it cannot be read. */
+  async imagePixels(page: number, ordinal: number): Promise<{ width: number; height: number; data: Uint8Array } | null> {
+    const res = await this.call({ type: 'imagePixels', page, ordinal })
+    if (res.ok && res.type === 'imagePixels') return res.image
+    throw new Error('Unexpected response')
+  }
+
   /** Straight pieces and corners of a page's vector paths, for snapping (cached until the document changes). */
   pathGeometry(page: number): Promise<PathGeometry> {
     let p = this.geometryCache.get(page)

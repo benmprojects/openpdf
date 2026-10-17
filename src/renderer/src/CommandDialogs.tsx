@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { annotLabel, type Annot, type AnnotKind } from './annotations'
 import { applyFilter, authorOf, COMMENT_KINDS, type CommentFilter } from './commentFilter'
 import type { FlattenWhat } from './flatten'
+import type { ExcelOptions, PowerPointOptions, WordOptions } from './exportRun'
 import { t } from './i18n'
 import { Frame, PagesControl } from './PageOpsDialogs'
 import { initialRange, pagesWord, resolveRange, type DocContext, type RangePreset, type RangeValue } from './pageDialogLogic'
@@ -57,29 +58,96 @@ export function FlattenDialog({ ctx, fieldPages, annotPages, onCancel, onSubmit 
 
 // ---- Export text, HTML, Word --------------------------------------------------------------------------
 
-export function ExportTextDialog({ kind, ctx, stem, dir, onCancel, onSubmit }: { kind: 'txt' | 'html' | 'docx'; ctx: DocContext; stem: string; dir: string | null; onCancel: () => void; onSubmit: (pages: number[], keepLayout: boolean) => void }) {
+export interface ExportOptions {
+  word: WordOptions
+  excel: ExcelOptions
+  ppt: PowerPointOptions
+}
+
+export function ExportTextDialog({ kind, ctx, stem, dir, onCancel, onSubmit }: { kind: 'txt' | 'html' | 'docx' | 'xlsx' | 'pptx'; ctx: DocContext; stem: string; dir: string | null; onCancel: () => void; onSubmit: (pages: number[], keepLayout: boolean, options: ExportOptions) => void }) {
   const [range, setRange] = useState<RangeValue>({ preset: 'all', custom: '' })
   // Text keeps its line breaks unless told otherwise; HTML and Word build headings and paragraphs unless told otherwise.
   const [keepLayout, setKeepLayout] = useState(kind === 'txt')
+  const [word, setWord] = useState<WordOptions>({ mode: 'flow', pictures: true, tables: true, columns: true })
+  const [oneSheet, setOneSheet] = useState(false)
+  const [ppt, setPpt] = useState<PowerPointOptions>({ dpi: 150, format: 'png', notes: true })
   const r = resolveRange(range, ctx)
-  const title = { txt: t('Export as text'), html: t('Export as HTML'), docx: t('Export as Word') }[kind]
+  const title = { txt: t('Export as text'), html: t('Export as HTML'), docx: t('Export as Word'), xlsx: t('Export as Excel'), pptx: t('Export as PowerPoint') }[kind]
   const file = `${stem}.${kind}`
+  const what = kind === 'xlsx' ? t('The tables found on {pages} will be saved as "{file}". You choose the folder next.', { pages: pagesWord(r.pages.length), file }) : kind === 'pptx' ? t('{pages} will be saved as "{file}", one slide each. You choose the folder next.', { pages: pagesWord(r.pages.length), file }) : t('The text of {pages} will be saved as "{file}". You choose the folder next.', { pages: pagesWord(r.pages.length), file })
   return (
-    <Frame
-      title={title}
-      ok={t('Export…')}
-      error={r.error}
-      summary={t('The text of {pages} will be saved as "{file}". You choose the folder next.', { pages: pagesWord(r.pages.length), file })}
-      onClose={onCancel}
-      onOk={() => onSubmit(r.pages, kind === 'docx' ? false : keepLayout)}
-    >
+    <Frame title={title} ok={t('Export…')} error={r.error} summary={what} onClose={onCancel} onOk={() => onSubmit(r.pages, kind === 'docx' || kind === 'xlsx' || kind === 'pptx' ? false : keepLayout, { word, excel: { oneSheet }, ppt })}>
       <PagesControl value={range} onChange={setRange} ctx={ctx} presets={PRESETS} />
-      {kind !== 'docx' ? (
+      {kind === 'docx' && (
+        <>
+          <fieldset className="pod-group">
+            <legend>{t('Layout')}</legend>
+            <label className="pod-radio">
+              <input type="radio" name="word-mode" checked={word.mode === 'flow'} onChange={() => setWord({ ...word, mode: 'flow' })} /> {t('Flowing text')}
+            </label>
+            <label className="pod-radio">
+              <input type="radio" name="word-mode" checked={word.mode === 'exact'} onChange={() => setWord({ ...word, mode: 'exact' })} /> {t('Exact layout')}
+            </label>
+            <p className="pod-hint">
+              {word.mode === 'flow'
+                ? t('Headings, paragraphs, tables, pictures and columns are rebuilt as ordinary Word content that you can edit and reflow. The page looks may differ from the PDF.')
+                : t('Each block of text is fixed where it is on the page and pictures sit behind it, so pages look like the PDF but are awkward to edit. Fonts that are not installed can make lines wrap differently. Tables are not rebuilt, and the hidden text of scanned pages is left out.')}
+            </p>
+          </fieldset>
+          <label className="pod-check">
+            <input type="checkbox" checked={word.pictures} onChange={(e) => setWord({ ...word, pictures: e.target.checked })} /> {t('Keep pictures (cut from the page as it is drawn)')}
+          </label>
+          <label className="pod-check">
+            <input type="checkbox" checked={word.tables} disabled={word.mode === 'exact'} onChange={(e) => setWord({ ...word, tables: e.target.checked })} /> {t('Rebuild tables found from ruled lines and aligned text')}
+          </label>
+          <label className="pod-check">
+            <input type="checkbox" checked={word.columns} disabled={word.mode === 'exact'} onChange={(e) => setWord({ ...word, columns: e.target.checked })} /> {t('Keep text columns')}
+          </label>
+        </>
+      )}
+      {kind === 'xlsx' && (
+        <>
+          <fieldset className="pod-group">
+            <legend>{t('Sheets')}</legend>
+            <label className="pod-radio">
+              <input type="radio" name="xlsx-sheets" checked={!oneSheet} onChange={() => setOneSheet(false)} /> {t('One sheet for each page that has tables')}
+            </label>
+            <label className="pod-radio">
+              <input type="radio" name="xlsx-sheets" checked={oneSheet} onChange={() => setOneSheet(true)} /> {t('One sheet for all the tables')}
+            </label>
+          </fieldset>
+          <p className="pod-hint">{t('Numbers, percentages, dollar amounts and dates (DD/MM/YYYY) are saved as values; everything else stays text. Tables are found from ruled lines and from text lined up in rows and columns, so check the result.')}</p>
+        </>
+      )}
+      {kind === 'pptx' && (
+        <>
+          <div className="pod-field">
+            <span>{t('Resolution')}</span>
+            <select aria-label={t('Resolution')} value={ppt.dpi} onChange={(e) => setPpt({ ...ppt, dpi: Number(e.target.value) })}>
+              {[96, 150, 200].map((d) => (
+                <option key={d} value={d}>
+                  {d} dpi
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="pod-field">
+            <span>{t('Picture format')}</span>
+            <select aria-label={t('Picture format')} value={ppt.format} onChange={(e) => setPpt({ ...ppt, format: e.target.value as 'png' | 'jpg' })}>
+              <option value="png">{t('PNG (sharp text)')}</option>
+              <option value="jpg">{t('JPEG (smaller file)')}</option>
+            </select>
+          </div>
+          <label className="pod-check">
+            <input type="checkbox" checked={ppt.notes} onChange={(e) => setPpt({ ...ppt, notes: e.target.checked })} /> {t('Put the text of each page in the speaker notes')}
+          </label>
+          <p className="pod-hint">{t('Each slide is a picture of the page, so its text cannot be edited in PowerPoint. The slide takes the shape of the first page.')}</p>
+        </>
+      )}
+      {kind !== 'docx' && kind !== 'xlsx' && kind !== 'pptx' && (
         <label className="pod-check">
           <input type="checkbox" checked={keepLayout} onChange={(e) => setKeepLayout(e.target.checked)} /> {t('Keep the line breaks as they are on the page')}
         </label>
-      ) : (
-        <p className="pod-hint">{t('Headings and paragraphs are kept. Pictures and page layout are not.')}</p>
       )}
       {kind === 'html' && !keepLayout && <p className="pod-hint">{t('Lines are joined into headings and paragraphs.')}</p>}
       <div className="pod-field">

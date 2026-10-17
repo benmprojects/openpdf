@@ -3619,3 +3619,109 @@ button:not([class]):disabled {
 .fields-pane .fields-row .fields-meta { opacity: 0.7; white-space: nowrap; }
 .fields-pane .fields-tools { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; }
 .fields-pane .fields-rename { flex: 1; min-width: 0; }
+
+/* Edit content: picture and shape tool bar, text format bar, Content pane */
+.imageedit-bar {
+  flex-wrap: wrap;
+  max-width: 560px;
+  align-items: center;
+}
+.objbar-style,
+.objbar-pop,
+.textedit-format {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.objbar-pop {
+  flex-basis: 100%;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.objbar-style label,
+.objbar-pop label,
+.textedit-format label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.objbar-problem {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--danger-text, #8a1f1f);
+  font-size: 12px;
+}
+.textedit-format {
+  position: absolute;
+  z-index: 4;
+  padding: 3px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2, 0 2px 8px rgba(0, 0, 0, 0.25));
+  cursor: default;
+  max-width: 520px;
+}
+.textedit-format button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  border-color: var(--accent);
+}
+.textedit-format .hint {
+  flex-basis: 100%;
+  font-size: 12px;
+  margin: 0;
+}
+.content-highlight {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+  z-index: 3;
+}
+.content-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow: auto;
+}
+.content-pane ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.content-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+}
+.content-row.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.content-row.hidden .content-name {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.content-row .content-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 2px;
+}
+.content-row button.icon {
+  padding: 2px 4px;
+  min-height: 22px;
+}

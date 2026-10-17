@@ -874,6 +874,17 @@ export interface ImageObject {
   matrix: [number, number, number, number, number, number]
   /** Box in page space: left, bottom, right, top (stroke width included for paths). */
   pageBounds: [number, number, number, number]
+  /** Painted paths only: how the path is drawn, as PDFium reads it. */
+  style?: PathStyle
+}
+
+export interface PathStyle {
+  /** #rrggbb, or null when the path is not filled. */
+  fill: string | null
+  /** #rrggbb, or null when the path is not stroked. */
+  stroke: string | null
+  /** Line width in the path's own units (before its matrix). */
+  strokeWidth: number
 }
 
 /**
@@ -882,6 +893,57 @@ export interface ImageObject {
  */
 export function readImageObjects(lib: PDFiumLibrary, page: PDFiumPage): PageObjects {
   return readObjects(lib, page, 3)
+}
+
+/** Form XObject drawings (a `Do` of a form) the page makes directly, like `readImageObjects`. */
+export function readFormObjects(lib: PDFiumLibrary, page: PDFiumPage): PageObjects {
+  return readObjects(lib, page, 5)
+}
+
+/**
+ * One image of the page as RGBA pixels, the way PDFium shows it (mask and colour space applied), for exporting the
+ * picture. `ordinal` counts image objects like `readImageObjects`. Null when PDFium cannot make a bitmap of it.
+ */
+export function readImagePixels(lib: PDFiumLibrary, doc: PDFiumDocument, page: PDFiumPage, ordinal: number): { width: number; height: number; data: Uint8Array } | null {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const n = m._FPDFPage_CountObjects(p)
+  let k = 0
+  for (let i = 0; i < n; i++) {
+    const obj = m._FPDFPage_GetObject(p, i)
+    if (m._FPDFPageObj_GetType(obj) !== 3) continue
+    if (k++ !== ordinal) continue
+    const bmp = m._FPDFImageObj_GetRenderedBitmap(docHandle(doc), p, obj)
+    if (!bmp) return null
+    try {
+      const w = m._FPDFBitmap_GetWidth(bmp)
+      const h = m._FPDFBitmap_GetHeight(bmp)
+      const stride = m._FPDFBitmap_GetStride(bmp)
+      const format = m._FPDFBitmap_GetFormat(bmp)
+      const buf = m._FPDFBitmap_GetBuffer(bmp)
+      if (!w || !h || !buf) return null
+      const bpp = format === 1 ? 1 : format === 2 ? 3 : 4
+      const src = m.HEAPU8.slice(buf, buf + stride * h)
+      const out = new Uint8Array(w * h * 4)
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const s = y * stride + x * bpp
+          const d = (y * w + x) * 4
+          if (bpp === 1) out[d] = out[d + 1] = out[d + 2] = src[s]
+          else {
+            out[d] = src[s + 2]
+            out[d + 1] = src[s + 1]
+            out[d + 2] = src[s]
+          }
+          out[d + 3] = format === 4 ? src[s + 3] : 255
+        }
+      }
+      return { width: w, height: h, data: out }
+    } finally {
+      m._FPDFBitmap_Destroy(bmp)
+    }
+  }
+  return null
 }
 
 /** Painted path objects (lines, rectangles, curves, fills) the page draws directly, like `readImageObjects`. */
@@ -1078,7 +1140,26 @@ function readObjects(lib: PDFiumLibrary, page: PDFiumPage, type: number): PageOb
         const mm = new DataView(m.HEAPU8.buffer)
         for (let q = 0; q < 6; q++) matrix[q] = mm.getFloat32(scratch + 16 + q * 4, true)
       }
-      objects.push({ ordinal: k, rect: { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }, matrix, pageBounds: [l, b, r, t] })
+      let style: PathStyle | undefined
+      if (type === 2) {
+        const hex = (off: number) => {
+          const c = new DataView(m.HEAPU8.buffer)
+          return `#${[0, 4, 8].map((q) => Math.min(255, c.getUint32(scratch + off + q, true)).toString(16).padStart(2, '0')).join('')}`
+        }
+        let fill: string | null = null
+        let stroke: string | null = null
+        let strokeWidth = 1
+        if (m._FPDFPath_GetDrawMode(obj, scratch + 68, scratch + 72)) {
+          const dv = new DataView(m.HEAPU8.buffer)
+          const mode = dv.getInt32(scratch + 68, true)
+          const stroked = dv.getInt32(scratch + 72, true) !== 0
+          if (mode !== 0 && m._FPDFPageObj_GetFillColor(obj, scratch + 48, scratch + 52, scratch + 56, scratch + 60)) fill = hex(48)
+          if (stroked && m._FPDFPageObj_GetStrokeColor(obj, scratch + 48, scratch + 52, scratch + 56, scratch + 60)) stroke = hex(48)
+          if (m._FPDFPageObj_GetStrokeWidth(obj, scratch + 64)) strokeWidth = new DataView(m.HEAPU8.buffer).getFloat32(scratch + 64, true)
+        }
+        style = { fill, stroke, strokeWidth }
+      }
+      objects.push({ ordinal: k, rect: { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }, matrix, pageBounds: [l, b, r, t], style })
     }
     return { objects, total: ordinal, toPage }
   } finally {
