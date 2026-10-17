@@ -6,6 +6,7 @@
 import { PDFArray, PDFButton, PDFCheckBox, PDFDict, PDFDocument, PDFDropdown, PDFHexString, PDFName, PDFOptionList, PDFRadioGroup, PDFRef, PDFString, PDFTextField, StandardFonts, TextAlignment, rgb, type PDFField, type PDFPage } from 'pdf-lib'
 import { frameFor } from './annotWrite'
 import type { ButtonAction, FieldScripts, FieldType, FormValue } from './forms'
+import { readBarcodeMeta, setBarcodeAppearance, writeBarcodeMeta, type BarcodeFieldMeta } from './barcodeWrite'
 
 export type { ButtonAction }
 import type { Rect } from './textLogic'
@@ -41,6 +42,8 @@ export interface FieldSpec {
   option?: string
   /** Scripts for the field's format, keystrokes, validation and calculation. */
   scripts?: FieldScripts
+  /** A text field whose value is drawn as a barcode (the value stays plain text). */
+  barcode?: BarcodeFieldMeta
 }
 
 const colour = (hex: string | null | undefined) => {
@@ -226,6 +229,13 @@ async function addOne(doc: PDFDocument, spec: FieldSpec): Promise<void> {
     if (f instanceof PDFTextField || f instanceof PDFDropdown || f instanceof PDFOptionList || f instanceof PDFButton) f.updateAppearances(font2)
     else if (f instanceof PDFCheckBox || f instanceof PDFRadioGroup) f.updateAppearances()
   }
+  if (spec.type === 'text' && spec.barcode) {
+    const f = form.getFieldMaybe(spec.name)
+    if (f instanceof PDFTextField) {
+      writeBarcodeMeta(doc, f, spec.barcode)
+      await setBarcodeAppearance(doc, f, spec.barcode, f.getText() ?? '')
+    }
+  }
 }
 
 export interface FieldPatch {
@@ -246,6 +256,8 @@ export interface FieldPatch {
   action?: ButtonAction
   /** Replaces the field's scripts (an empty object removes them). */
   scripts?: FieldScripts
+  /** Changes how a barcode field draws its value. */
+  barcode?: BarcodeFieldMeta
 }
 
 /** Changes a field's properties. Returns the new file. */
@@ -283,7 +295,10 @@ export async function updateField(bytes: Uint8Array, name: string, patch: FieldP
     if (patch.align !== undefined) f.setAlignment(patch.align === 1 ? TextAlignment.Center : patch.align === 2 ? TextAlignment.Right : TextAlignment.Left)
     if (patch.fontSize !== undefined) f.setFontSize(patch.fontSize)
     if (typeof patch.value === 'string') f.setText(patch.value || undefined)
-    f.updateAppearances(font)
+    if (patch.barcode) writeBarcodeMeta(doc, f, patch.barcode)
+    const bc = readBarcodeMeta(f.acroField.dict)
+    if (bc) await setBarcodeAppearance(doc, f, bc, f.getText() ?? '')
+    else f.updateAppearances(font)
   } else if (f instanceof PDFCheckBox) {
     if (patch.value !== undefined) {
       if (patch.value === true) f.check()
@@ -367,11 +382,40 @@ export async function placeWidget(bytes: Uint8Array, name: string, widget: numbe
   const box = userBox(page, rect)
   if (box.width < 4 || box.height < 4) throw new Error('The field would be too small.')
   w.setRectangle(box)
+  await refreshWidget(doc, f)
+  return doc.save({ updateFieldAppearances: false })
+}
+
+/** Moves or resizes several widgets in one go (one load, one save). */
+export async function placeWidgets(bytes: Uint8Array, moves: { name: string; widget: number; rect: Rect }[]): Promise<Uint8Array> {
+  if (!moves.length) return bytes
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false })
+  const form = doc.getForm()
+  const touched = new Set<PDFField>()
+  for (const m of moves) {
+    const f = form.getFieldMaybe(m.name)
+    const w = f?.acroField.getWidgets()[m.widget]
+    if (!f || !w) throw new Error('That field could not be found.')
+    const pageRef = w.P()
+    const page = doc.getPages().find((p) => p.ref === pageRef) ?? doc.getPages().find((p) => p.node.lookupMaybe(PDFName.of('Annots'), PDFArray)?.asArray().some((r) => doc.context.lookup(r) === w.dict))
+    if (!page) throw new Error('That field is not on a page.')
+    const box = userBox(page, m.rect)
+    if (box.width < 4 || box.height < 4) throw new Error('A field would be too small.')
+    w.setRectangle(box)
+    touched.add(f)
+  }
+  for (const f of touched) await refreshWidget(doc, f)
+  return doc.save({ updateFieldAppearances: false })
+}
+
+/** Redraws a field's appearance after its widgets moved or changed size. */
+async function refreshWidget(doc: PDFDocument, f: PDFField): Promise<void> {
   const font = await doc.embedFont(StandardFonts.Helvetica)
-  if (f instanceof PDFTextField || f instanceof PDFDropdown || f instanceof PDFOptionList) f.updateAppearances(font)
+  const bc = f instanceof PDFTextField ? readBarcodeMeta(f.acroField.dict) : undefined
+  if (f instanceof PDFTextField && bc) await setBarcodeAppearance(doc, f, bc, f.getText() ?? '')
+  else if (f instanceof PDFTextField || f instanceof PDFDropdown || f instanceof PDFOptionList) f.updateAppearances(font)
   else if (f instanceof PDFCheckBox || f instanceof PDFRadioGroup) f.updateAppearances()
   else if (f instanceof PDFButton) f.updateAppearances(font)
-  return doc.save({ updateFieldAppearances: false })
 }
 
 export type TabOrder = 'rows' | 'columns' | 'structure'

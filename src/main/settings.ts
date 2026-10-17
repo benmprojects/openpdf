@@ -31,6 +31,10 @@ export interface Settings {
   /** The printer last used in the Print dialog (its system name), and the paper size last chosen there. */
   printer: string
   printPaper: string
+  /** Reopen the documents that were open when OpenPDF last closed. */
+  restoreSession: boolean
+  /** Paths of the saved documents that were open, in tab order, as of the last change. */
+  lastSession: string[]
 }
 
 /** Mirrors ToolStyle in the renderer's annotations.ts. */
@@ -109,7 +113,9 @@ const defaults = (): Settings => ({
   // Tests always start in Australian English, whatever the machine's language.
   language: process.env.OPENPDF_E2E === '1' ? 'en-AU' : 'system',
   printer: '',
-  printPaper: 'A4'
+  printPaper: 'A4',
+  restoreSession: false,
+  lastSession: []
 })
 
 let current: Settings | null = null
@@ -166,7 +172,9 @@ function sanitise(raw: Partial<Settings>): Settings {
     },
     language: typeof raw.language === 'string' && (raw.language === 'system' || /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(raw.language)) ? raw.language : 'system',
     printer: typeof raw.printer === 'string' ? raw.printer.slice(0, 300) : d.printer,
-    printPaper: isPaperId(raw.printPaper) ? raw.printPaper : d.printPaper
+    printPaper: isPaperId(raw.printPaper) ? raw.printPaper : d.printPaper,
+    restoreSession: typeof raw.restoreSession === 'boolean' ? raw.restoreSession : d.restoreSession,
+    lastSession: Array.isArray(raw.lastSession) ? raw.lastSession.filter((p): p is string => typeof p === 'string' && p.length < 1000 && /\.pdf$/i.test(p)).slice(0, 30) : d.lastSession
   }
 }
 

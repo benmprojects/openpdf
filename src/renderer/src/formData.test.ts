@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { entriesFor, fromCsv, fromFdfData, fromXfdfData, fromXml, readDataFile, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataEntry } from './formData'
+import { csvTable, entriesFor, fromCsv, fromFdfData, fromXfdfData, fromXml, populateMatch, populateNames, readDataFile, recordOf, safeFileStem, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataEntry } from './formData'
 import type { FormField, FormValue } from './forms'
 
 const field = (name: string, type: FormField['type'], value: FormValue, extra: Partial<FormField> = {}): FormField => ({
@@ -136,5 +136,48 @@ describe('valuesFromImport', () => {
     const f = [field('locked', 'text', 'a', { readOnly: true }), field('short', 'text', '', { maxLength: 3 }), field('go', 'button', '')]
     const v = valuesFromImport(f, raw({ locked: 'x', short: 'abcdef', go: 'x', ghost: 'y' }))
     expect([...v]).toEqual([['short', 'abc']])
+  })
+})
+
+describe('populate from a CSV', () => {
+  const field = (name: string, extra: Partial<FormField> = {}): FormField => ({ name, type: 'text', value: '', initial: '', readOnly: false, required: false, align: 0, fontSize: 0, color: '#000', tooltip: '', widgets: [], ...extra })
+
+  it('reads a header and every record, with quotes and line breaks', () => {
+    const t = csvTable('﻿name,site,note\r\nAda,"North, Depot","line1\nline2"\r\n\r\nBen,South,\r\n')
+    expect(t.header).toEqual(['name', 'site', 'note'])
+    expect(t.rows).toEqual([['Ada', 'North, Depot', 'line1\nline2'], ['Ben', 'South', '']])
+    expect(recordOf(t, t.rows[0]).get('site')).toBe('North, Depot')
+    expect(() => csvTable('only,a,header')).toThrow(/at least one row/)
+  })
+
+  it('reports columns without a field and fields without a column', () => {
+    const fields = [field('name'), field('site'), field('locked', { readOnly: true }), field('go', { type: 'button' })]
+    expect(populateMatch(fields, ['name', 'extra', ''])).toEqual({ unknownColumns: ['extra'], unfilledFields: ['site'] })
+  })
+
+  it('names the output files from a column, safely and without clashes', () => {
+    const t = csvTable('id,client\n1,Smith/Jones\n2,Smith/Jones\n3,\n4,CON\n5,"  A: B?  "')
+    expect(populateNames(t, 'client', 'Form')).toEqual(['Smith-Jones', 'Smith-Jones (2)', 'Form 3', 'Form 4', 'A- B-'])
+    expect(populateNames(t, null, 'Form')).toEqual(['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Form 5'])
+    expect(populateNames(t, 'missing', 'Form')[0]).toBe('Form 1')
+  })
+
+  it('replaces every character Windows refuses in a file name', () => {
+    expect(safeFileStem('a\\b/c:d*e?f"g<h>i|j\tk', 'x')).toBe('a-b-c-d-e-f-g-h-i-j-k')
+    expect(safeFileStem('...', 'x')).toBe('x')
+  })
+
+  it('does not let a name clash by case', () => {
+    const t = csvTable('n\nabc\nABC')
+    expect(populateNames(t, 'n', 'F')).toEqual(['abc', 'ABC (2)'])
+  })
+
+  it('turns a record into field values', () => {
+    const fields = [field('name'), field('agree', { type: 'checkbox', value: false, initial: false, widgets: [{ page: 0, rect: { x: 0, y: 0, w: 1, h: 1 }, order: 0, tabs: '', onValue: 'Yes' }] })]
+    const t = csvTable('name,agree\nAda,Yes\nBen,No')
+    const a = valuesFromImport(fields, recordOf(t, t.rows[0]))
+    const b = valuesFromImport(fields, recordOf(t, t.rows[1]))
+    expect([a.get('name'), a.get('agree')]).toEqual(['Ada', true])
+    expect([b.get('name'), b.get('agree')]).toEqual(['Ben', false])
   })
 })

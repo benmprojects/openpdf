@@ -29,6 +29,9 @@ import {
 import fontkit from '@pdf-lib/fontkit'
 import { frameFor } from './annotWrite'
 import type { Rect } from './textLogic'
+import { readBarcodeMeta, setBarcodeAppearance, type BarcodeFieldMeta } from './barcodeWrite'
+import { dataUrlToImage, setButtonImage, storedImageValue } from './formImage'
+import { docScriptsOf, joinDocScripts } from './docScripts'
 
 /** What a push button does when pressed. */
 export type ButtonAction =
@@ -93,6 +96,10 @@ export interface FormField {
   calcOrder?: number
   /** What a push button does. */
   action?: ButtonAction
+  /** A text field drawn as a barcode (written by OpenPDF). */
+  barcode?: BarcodeFieldMeta
+  /** The document's own JavaScript (the same on every field), for field scripts to call. */
+  docJs?: string
   /** Font size from the default appearance; 0 means auto. */
   fontSize: number
   /** Text colour from the default appearance. */
@@ -184,6 +191,7 @@ export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
     }
   })
   const fields: FormField[] = []
+  const docJs = joinDocScripts(docScriptsOf(doc)) || undefined
   // The calculation order: the field objects listed in the form's /CO array.
   const co = form.acroForm.dict.lookupMaybe(PDFName.of('CO'), PDFArray)
   const calcOrderOf = new Map<string, number>()
@@ -256,7 +264,7 @@ export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
       value = f.getSelected()
       options = f.getOptions()
       flags.multiSelect = f.isMultiselect()
-    }
+    } else if (f instanceof PDFButton) value = storedImageValue(f.acroField.dict)
     const align = f instanceof PDFTextField ? f.getAlignment() : TextAlignment.Left
     fields.push({
       name: f.getName(),
@@ -268,6 +276,8 @@ export async function readForm(bytes: Uint8Array): Promise<FormField[]> {
       scripts: readScripts(f.acroField.dict),
       calcOrder: calcOrderOf.get(f.ref.toString()),
       action: type === 'button' ? readAction(f.acroField.getWidgets()[0].dict) : undefined,
+      barcode: f instanceof PDFTextField ? readBarcodeMeta(f.acroField.dict) : undefined,
+      docJs,
       readOnly: f.isReadOnly(),
       required: f.isRequired(),
       align: align === TextAlignment.Center ? 1 : align === TextAlignment.Right ? 2 : 0,
@@ -319,7 +329,19 @@ export async function applyFormValues(
         /* keep the stored value */
       }
     }
-    if (f instanceof PDFTextField && typeof value === 'string') {
+    if (f instanceof PDFTextField && typeof value === 'string' && readBarcodeMeta(f.acroField.dict)) {
+      // A barcode field: the value is plain text, its appearance the symbol.
+      f.setText(value || undefined)
+      try {
+        await setBarcodeAppearance(doc, f, readBarcodeMeta(f.acroField.dict)!, value)
+      } catch {
+        refresh(() => f.updateAppearances(helvetica))
+      }
+    } else if (f instanceof PDFButton && typeof value === 'string') {
+      // An image field: the picture the filler chose (a data URL) becomes the button's look.
+      const img = dataUrlToImage(value)
+      if (img) await setButtonImage(doc, f, img)
+    } else if (f instanceof PDFTextField && typeof value === 'string') {
       const max = f.getMaxLength()
       // Automatic size on a multiline field is 12 pt, as in Acrobat (pdf-lib would size it to the box).
       if (f.isMultiline() && defaultSize(f) === 0) refresh(() => f.setFontSize(12))

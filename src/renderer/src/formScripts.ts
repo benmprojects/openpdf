@@ -17,6 +17,8 @@ export interface FieldState {
   readOnly: boolean
   /** The field is formatted as a number: scripts read its value as a number. */
   numeric: boolean
+  /** The document's own JavaScript (carried on the states and run before the script; it is not passed to the sandbox as data). */
+  docJs?: string
 }
 
 export interface RunResult {
@@ -47,8 +49,11 @@ export async function runScript(
   event: { value?: string; change?: string; willCommit?: boolean } = {},
   fileName = ''
 ): Promise<RunResult> {
-  const input = { fields, target, pages: 1, fileName, event: { name: kind, value: event.value ?? '', change: event.change ?? '', willCommit: event.willCommit ?? true } }
-  const source = `var __inputJson = ${JSON.stringify(JSON.stringify(input))};\n${wrapScript(code)}`
+  const docJs = fields.find((f) => f.docJs)?.docJs
+  const plain = fields.map((f) => ({ name: f.name, type: f.type, value: f.value, readOnly: f.readOnly, numeric: f.numeric }))
+  const input = { fields: plain, target, pages: 1, fileName, event: { name: kind, value: event.value ?? '', change: event.change ?? '', willCommit: event.willCommit ?? true } }
+  const source = `var __inputJson = ${JSON.stringify(JSON.stringify(input))};\n${wrapScript(docJs ? `${docJs}
+${code}` : code)}`
   const qjs = await engine()
   try {
     const out = qjs.evalCode(source, { shouldInterrupt: shouldInterruptAfterDeadline(Date.now() + TIME_LIMIT_MS), memoryLimitBytes: MEMORY_LIMIT, maxStackSizeBytes: STACK_LIMIT })
@@ -65,7 +70,7 @@ export async function runScript(
 export const isNumericField = (f: FormField) => /AFNumber_Format|AFPercent_Format/.test(f.scripts?.format ?? '')
 
 export function fieldStates(fields: FormField[], values: ReadonlyMap<string, FormValue>): FieldState[] {
-  return fields.map((f) => ({ name: f.name, type: f.type, value: values.get(f.name) ?? f.value, readOnly: f.readOnly, numeric: isNumericField(f) }))
+  return fields.map((f) => ({ name: f.name, type: f.type, value: values.get(f.name) ?? f.value, readOnly: f.readOnly, numeric: isNumericField(f), docJs: f.docJs }))
 }
 
 /** The text a field shows when it is not being edited: its value through the format script, if it has one. */

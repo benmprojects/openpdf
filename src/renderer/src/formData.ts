@@ -285,3 +285,63 @@ export async function readDataFile(name: string, data: Uint8Array): Promise<Map<
   if (ext === 'xml') return fromXml(text)
   throw new Error('Choose an FDF, XFDF, CSV or XML file.')
 }
+
+// ---- Populate from a CSV: one filled copy of the form per row -----------------------------------------------
+
+export interface CsvTable {
+  header: string[]
+  rows: string[][]
+}
+
+/** A header row of field names, then one row per record. Rows with nothing in them are skipped. */
+export function csvTable(text: string): CsvTable {
+  const rows = csvRows(text)
+  if (rows.length < 2) throw new Error('The CSV needs a row of field names and at least one row of values.')
+  return { header: rows[0].map((h) => h.trim()), rows: rows.slice(1) }
+}
+
+/** One record as the name-to-text map the importer reads. A blank column name is ignored. */
+export function recordOf(table: CsvTable, row: string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  table.header.forEach((name, i) => {
+    if (name) out.set(name, row[i] ?? '')
+  })
+  return out
+}
+
+/** Header names that match no field (so their columns are left out) and fields no column fills. */
+export function populateMatch(fields: FormField[], header: string[]): { unknownColumns: string[]; unfilledFields: string[] } {
+  const fillable = fields.filter((f) => !f.readOnly && f.type !== 'button' && f.type !== 'signature')
+  const names = new Set(fillable.map((f) => f.name))
+  const cols = header.filter(Boolean)
+  return { unknownColumns: cols.filter((c) => !names.has(c)), unfilledFields: fillable.filter((f) => !cols.includes(f.name)).map((f) => f.name) }
+}
+
+/** Characters Windows does not allow in a file name, and control characters, are replaced; the result is not empty. */
+export function safeFileStem(raw: string, fallback: string): string {
+  const s = [...raw]
+    .map((c) => (c.charCodeAt(0) < 32 || '\\/:*?"<>|'.includes(c) ? '-' : c))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s.]+|[\s.]+$/g, '')
+    .slice(0, 100)
+    .trim()
+  const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(s)
+  return s && !reserved ? s : fallback
+}
+
+/**
+ * The output file names for the rows: from the chosen column (or `stem 1`, `stem 2` ... when there is none or the cell
+ * is empty). Repeated names get ` (2)`, ` (3)`; the names carry no extension.
+ */
+export function populateNames(table: CsvTable, nameColumn: string | null, stem: string): string[] {
+  const col = nameColumn ? table.header.indexOf(nameColumn) : -1
+  const used = new Set<string>()
+  return table.rows.map((row, i) => {
+    const base = safeFileStem(col >= 0 ? (row[col] ?? '') : '', `${stem} ${i + 1}`)
+    let name = base
+    for (let n = 2; used.has(name.toLowerCase()); n++) name = `${base} (${n})`
+    used.add(name.toLowerCase())
+    return name
+  })
+}

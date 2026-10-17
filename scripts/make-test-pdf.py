@@ -63,7 +63,7 @@ add(item("Part 3", 5, 4, prev=part2))
 add(item("Section 1.1", 1, part1, nxt=c2))
 add(item("Section 1.2", 2, part1, prev=c1))
 
-objs[0] = "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R /PageMode /UseOutlines >>"
+objs[0] = "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>"
 objs[1] = f"<< /Type /Pages /Kids [{' '.join(f'{i} 0 R' for i in page_ids)}] /Count {PAGES} >>"
 objs[3] = f"<< /Type /Outlines /First {part1} 0 R /Last {part3} 0 R /Count 5 >>"
 

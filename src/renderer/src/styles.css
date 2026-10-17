@@ -1801,6 +1801,144 @@ button.compare-item:hover {
 .props-form {
   min-width: 440px;
 }
+.props-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.props-tabs button {
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: transparent;
+  padding: 5px 12px;
+}
+.props-tabs button[aria-selected='true'] {
+  background: var(--panel);
+  border-color: var(--border-strong);
+  font-weight: 600;
+}
+.props-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 300px;
+}
+.props-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.props-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.props-scroll {
+  max-height: 300px;
+  overflow: auto;
+}
+.props-custom {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr auto;
+  gap: 6px;
+}
+.props-custom input,
+.props-row select {
+  min-height: 28px;
+  padding: 3px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.props-fonts td,
+.props-fonts th {
+  padding-right: 12px;
+}
+
+/* Split view and loupe */
+.split-host {
+  display: contents;
+}
+.split-host.split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.split-host.split.vertical {
+  flex-direction: row;
+}
+.split-host.split > .viewer-frame,
+.split-host.split > .scroller {
+  flex: 1 1 0;
+  min-height: 0;
+}
+.split-pane {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-top: 3px solid var(--border-strong);
+}
+.split-pane.vertical {
+  border-top: none;
+  border-left: 3px solid var(--border-strong);
+}
+.split-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.split-scroller {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.split-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  gap: 12px;
+}
+.loupe {
+  position: fixed;
+  z-index: 60;
+  overflow: hidden;
+  background: #fff;
+  border: 2px solid var(--focus);
+  border-radius: 50%;
+  box-shadow: var(--shadow-2, 0 4px 14px rgba(0, 0, 0, 0.35));
+  pointer-events: none;
+}
+.loupe[hidden] {
+  display: none;
+}
+.loupe canvas {
+  display: block;
+}
+.loupe-cross {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border: 1px solid var(--focus);
+  border-radius: 50%;
+}
 .props-row {
   display: grid;
   grid-template-columns: 110px 1fr;
@@ -3443,3 +3581,41 @@ button:not([class]):disabled {
   background: var(--match);
   border-radius: 2px;
 }
+
+/* Date fields: a calendar button inside the field, and the (invisible) input that opens the system picker. */
+.form-date-btn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #1f5fd1;
+  cursor: pointer;
+  z-index: 3;
+}
+.form-date-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.form-design-box.selected.multi {
+  outline-style: dashed;
+}
+.barcode-preview {
+  display: block;
+  margin: 6px auto;
+  border: 1px solid #bbb;
+  background: #fff;
+}
+.fields-pane { display: flex; flex-direction: column; min-height: 0; flex: 1; font-size: 12px; }
+.fields-pane .fields-list { overflow: auto; flex: 1; margin: 0; padding: 0; list-style: none; }
+.fields-pane .fields-row { display: flex; align-items: center; gap: 4px; padding: 3px 6px; cursor: pointer; border-bottom: 1px solid rgba(128, 128, 128, 0.2); }
+.fields-pane .fields-row.selected { background: rgba(31, 95, 209, 0.18); }
+.fields-pane .fields-row .fields-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fields-pane .fields-row .fields-meta { opacity: 0.7; white-space: nowrap; }
+.fields-pane .fields-tools { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; }
+.fields-pane .fields-rename { flex: 1; min-width: 0; }

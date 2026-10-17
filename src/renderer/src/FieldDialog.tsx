@@ -2,11 +2,18 @@ import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import type { FieldPatch, FieldSpec } from './formDesign'
 import type { ButtonAction, FieldType, FormField } from './forms'
+import { BARCODE_KINDS, type BarcodeKind, type QrEcc } from './barcode'
+import { imageFieldAction, isImageField } from './formImage'
 import { buildScripts, parseScripts, type CalcChoice, type FormatChoice, type ScriptUi, type ValidateChoice } from './scriptPresets'
 
 const TYPE_NAME: Record<FieldType, string> = { text: 'Text field', checkbox: 'Check box', radio: 'Radio button', dropdown: 'Drop-down list', list: 'List box', button: 'Button', signature: 'Signature field' }
 
 type ActionKind = ButtonAction['kind']
+
+/** Fields that are a kind of text field or button with a special job. */
+export type FieldVariant = 'date' | 'image' | 'barcode'
+
+const VARIANT_NAME: Record<FieldVariant, string> = { date: 'Date field', image: 'Image field', barcode: 'Barcode field' }
 
 /**
  * Properties of a form field. In create mode (`field` absent) it returns a complete spec for the box just drawn; when
@@ -14,6 +21,7 @@ type ActionKind = ButtonAction['kind']
  */
 export function FieldDialog({
   type,
+  variant,
   field,
   names,
   sourceNames = [],
@@ -23,6 +31,8 @@ export function FieldDialog({
   onClose
 }: {
   type: FieldType
+  /** Date, image and barcode fields are drawn as a text field or a button; this says which job a new one is for. */
+  variant?: FieldVariant
   /** The field being edited, or undefined when creating. */
   field?: FormField
   /** Names in use, for the repeat check. */
@@ -35,6 +45,11 @@ export function FieldDialog({
   onClose: () => void
 }) {
   const editing = !!field
+  const isBarcode = variant === 'barcode' || !!field?.barcode
+  const isImage = variant === 'image' || (!!field && isImageField(field))
+  const [bcKind, setBcKind] = useState<BarcodeKind>(field?.barcode?.kind ?? 'qr')
+  const [bcEcc, setBcEcc] = useState<QrEcc>(field?.barcode?.ecc ?? 'M')
+  const [bcText, setBcText] = useState(field?.barcode?.showText ?? true)
   const [name, setName] = useState(field?.name ?? proposedName)
   const [tooltip, setTooltip] = useState(field?.tooltip ?? '')
   const [required, setRequired] = useState(field?.required ?? false)
@@ -52,7 +67,7 @@ export function FieldDialog({
   const [chosen, setChosen] = useState(Array.isArray(field?.value) ? field.value[0] ?? '' : typeof field?.value === 'string' && (type === 'dropdown' || type === 'radio') ? field.value : '')
   const [editable, setEditable] = useState(field?.editable ?? false)
   const [multiSelect, setMultiSelect] = useState(field?.multiSelect ?? false)
-  const [caption, setCaption] = useState(field?.widgets[0]?.caption ?? 'Button')
+  const [caption, setCaption] = useState(field?.widgets[0]?.caption ?? (variant === 'image' ? 'Click to add a picture' : 'Button'))
   const [actionKind, setActionKind] = useState<ActionKind>(field?.action?.kind ?? 'none')
   const [url, setUrl] = useState(field?.action && (field.action.kind === 'uri' || field.action.kind === 'submit') ? field.action.url : 'https://')
   const [format, setFormat] = useState<'fdf' | 'xfdf' | 'html' | 'pdf'>(field?.action?.kind === 'submit' ? field.action.format : 'xfdf')
@@ -62,9 +77,12 @@ export function FieldDialog({
   const [background, setBackground] = useState('#e8efff')
   const [noBackground, setNoBackground] = useState(type !== 'text')
   const [error, setError] = useState('')
-  const [ui, setUi] = useState<ScriptUi>(() => parseScripts(field?.scripts))
+  const [ui, setUi] = useState<ScriptUi>(() => {
+    const u = parseScripts(field?.scripts)
+    return !field && variant === 'date' ? { ...u, format: 'date' } : u
+  })
   const setScript = (patch: Partial<ScriptUi>) => setUi({ ...ui, ...patch })
-  const scriptable = type === 'text' || type === 'dropdown'
+  const scriptable = (type === 'text' && !isBarcode) || type === 'dropdown'
 
   const optionList = options.split('\n').map((o) => o.trim()).filter(Boolean)
   const isRadioExisting = type === 'radio' && !editing && names.includes(name)
@@ -87,7 +105,8 @@ export function FieldDialog({
       if (type === 'checkbox') p.value = checked
       if (type === 'radio') p.value = chosen
       if (type === 'dropdown' || type === 'list') Object.assign(p, { options: optionList, editable, multiSelect, fontSize: size, value: type === 'list' ? (chosen ? [chosen] : []) : chosen })
-      if (type === 'button') Object.assign(p, { caption, action: action() })
+      if (type === 'button') Object.assign(p, isImage ? { caption } : { caption, action: action() })
+      if (isBarcode) p.barcode = { kind: bcKind, ecc: bcEcc, showText: bcText }
       return onUpdate(field.name, p)
     }
     const spec: Omit<FieldSpec, 'page' | 'rect' | 'type'> = {
@@ -104,12 +123,13 @@ export function FieldDialog({
     if (type === 'checkbox') spec.value = checked
     if (type === 'radio') Object.assign(spec, { option: option.trim(), value: selectedByDefault ? option.trim() : '' })
     if (type === 'dropdown' || type === 'list') Object.assign(spec, { options: optionList, editable, multiSelect, value: type === 'list' ? (chosen ? [chosen] : []) : chosen })
-    if (type === 'button') Object.assign(spec, { caption, action: action() })
+    if (type === 'button') Object.assign(spec, { caption, action: isImage ? imageFieldAction() : action() })
+    if (isBarcode) spec.barcode = { kind: bcKind, ecc: bcEcc, showText: bcText }
     onCreate(spec)
   }
 
   return (
-    <Modal title={editing ? `${TYPE_NAME[type]} properties` : `New ${TYPE_NAME[type].toLowerCase()}`} onClose={onClose}>
+    <Modal title={editing ? `${variant ? VARIANT_NAME[variant] : isBarcode ? VARIANT_NAME.barcode : isImage ? VARIANT_NAME.image : TYPE_NAME[type]} properties` : `New ${(variant ? VARIANT_NAME[variant] : TYPE_NAME[type]).toLowerCase()}`} onClose={onClose}>
       <form
         className="marks-form props-form"
         onSubmit={(e) => {
@@ -165,6 +185,37 @@ export function FieldDialog({
             </div>
           </>
         )}
+        {isBarcode && (
+          <fieldset className="marks-remove script-box">
+            <legend>Barcode</legend>
+            <label className="props-row">
+              <span>Type</span>
+              <select aria-label="Barcode type" value={bcKind} onChange={(e) => setBcKind(e.target.value as BarcodeKind)}>
+                {BARCODE_KINDS.map((k) => (
+                  <option key={k.kind} value={k.kind}>
+                    {k.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {bcKind === 'qr' ? (
+              <label className="props-row">
+                <span>Error correction</span>
+                <select aria-label="Error correction" value={bcEcc} onChange={(e) => setBcEcc(e.target.value as QrEcc)}>
+                  <option value="L">Low (7%)</option>
+                  <option value="M">Medium (15%)</option>
+                  <option value="Q">Quartile (25%)</option>
+                  <option value="H">High (30%)</option>
+                </select>
+              </label>
+            ) : (
+              <label className="inline">
+                <input type="checkbox" checked={bcText} onChange={(e) => setBcText(e.target.checked)} /> Print the text under the bars
+              </label>
+            )}
+            <p className="muted small">The value is typed as plain text and drawn as a barcode when the form is saved. Other PDF viewers may show the plain text instead of the barcode.</p>
+          </fieldset>
+        )}
         {type === 'checkbox' && (
           <label className="inline">
             <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} /> Ticked to begin with
@@ -215,7 +266,8 @@ export function FieldDialog({
               <span>Caption</span>
               <input aria-label="Caption" value={caption} onChange={(e) => setCaption(e.target.value)} />
             </label>
-            <label className="props-row">
+            {isImage && <p className="muted small">Whoever fills the form clicks the button and chooses a PNG or JPEG picture, which then fills the button.</p>}
+            {!isImage && <label className="props-row">
               <span>When pressed</span>
               <select aria-label="When pressed" value={actionKind} onChange={(e) => setActionKind(e.target.value as ActionKind)}>
                 <option value="none">Nothing</option>
@@ -224,14 +276,14 @@ export function FieldDialog({
                 <option value="submit">Send the form to a web address</option>
                 <option value="javascript">Run JavaScript</option>
               </select>
-            </label>
-            {(actionKind === 'uri' || actionKind === 'submit') && (
+            </label>}
+            {!isImage && (actionKind === 'uri' || actionKind === 'submit') && (
               <label className="props-row">
                 <span>Web address</span>
                 <input aria-label="Web address" value={url} onChange={(e) => setUrl(e.target.value)} />
               </label>
             )}
-            {actionKind === 'submit' && (
+            {!isImage && actionKind === 'submit' && (
               <label className="props-row">
                 <span>Send as</span>
                 <select aria-label="Send as" value={format} onChange={(e) => setFormat(e.target.value as typeof format)}>
@@ -242,7 +294,7 @@ export function FieldDialog({
                 </select>
               </label>
             )}
-            {actionKind === 'javascript' && (
+            {!isImage && actionKind === 'javascript' && (
               <label className="props-row">
                 <span>Script</span>
                 <textarea aria-label="Script" rows={4} value={code} onChange={(e) => setCode(e.target.value)} spellCheck={false} />

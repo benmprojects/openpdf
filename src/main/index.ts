@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, net, shell } from 'electron'
-import { mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
@@ -14,6 +14,8 @@ import { installedLanguages, OCR_LANGUAGES, recognise, stopOcr } from './ocr'
 import { deleteAction, expandPdfs, listActions, readPdf as readBatchPdf, saveAction, writeResult } from './batchIo'
 import { HELP, loadAction, parseCli } from './cli'
 import { listPlaces } from './places'
+import { downloadPdf } from './download'
+import { exportSettings, parseSettingsImport } from './settingsIo'
 import { userCatalogues } from './locales'
 import { checkForUpdates, downloadUpdate, installUpdate, updateStatus } from './updates'
 import type { Place } from '../shared/places'
@@ -172,6 +174,57 @@ ipcMain.handle('file:open-recent', async (_e, path: string) => {
 ipcMain.handle('settings:get', () => loadSettings())
 ipcMain.handle('settings:set', (_e, patch: Partial<Settings>) => updateSettings(patch))
 
+/** Settings export and import (JSON). Tests name the file in OPENPDF_E2E_SETTINGS_FILE instead of using a dialog. */
+ipcMain.handle('settings:export', async (e) => {
+  let target: string | undefined
+  if (e2e && process.env.OPENPDF_E2E_SETTINGS_FILE) target = process.env.OPENPDF_E2E_SETTINGS_FILE
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { defaultPath: 'openpdf-settings.json', filters: [{ name: 'Settings', extensions: ['json'] }] }
+    const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+    if (res.canceled || !res.filePath) return null
+    target = res.filePath
+  }
+  await writeFile(`${target}.openpdf-tmp`, exportSettings(await loadSettings()), 'utf8')
+  await rename(`${target}.openpdf-tmp`, target)
+  return target
+})
+ipcMain.handle('settings:import', async (e): Promise<{ ok: true; settings: Settings; applied: number; skipped: string[] } | { ok: false; error: string } | null> => {
+  let source: string | undefined
+  if (e2e && process.env.OPENPDF_E2E_SETTINGS_FILE) source = process.env.OPENPDF_E2E_SETTINGS_FILE
+  else {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { properties: ['openFile'] as 'openFile'[], filters: [{ name: 'Settings', extensions: ['json'] }] }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    source = res.filePaths[0]
+  }
+  let text: string
+  try {
+    const data = await readFile(source)
+    if (data.length > 2 * 1024 * 1024) return { ok: false, error: 'That file is too large to be a settings file.' }
+    text = data.toString('utf8')
+  } catch {
+    return { ok: false, error: 'That file could not be read.' }
+  }
+  const checked = parseSettingsImport(text)
+  if (!checked.ok) return checked
+  return { ok: true, settings: await updateSettings(checked.patch), applied: Object.keys(checked.patch).length, skipped: checked.skipped }
+})
+
+/** Send by e-mail: Windows gives a program no way to attach a file to a message without native mail code, so the saved file is shown in Explorer, or a message is started without it. */
+ipcMain.handle('mail:send', async (_e, path: unknown, mode: unknown) => {
+  if (typeof path !== 'string' || !path.toLowerCase().endsWith('.pdf')) throw new Error('Only a saved PDF can be sent.')
+  await stat(path)
+  if (e2e && process.env.OPENPDF_E2E_MAIL_LOG) {
+    await writeFile(process.env.OPENPDF_E2E_MAIL_LOG, `${mode === 'compose' ? 'compose' : 'reveal'}|${path}`)
+    return true
+  }
+  if (mode === 'compose') await shell.openExternal(`mailto:?subject=${encodeURIComponent(basename(path))}`)
+  else shell.showItemInFolder(path)
+  return true
+})
+
 ipcMain.handle('recovery:save', (_e, key: string, meta: { name: string; path?: string }, data: Uint8Array) =>
   saveRecovery(key, meta, data)
 )
@@ -328,6 +381,26 @@ ipcMain.handle('plugins:uninstall', (_e, id: unknown) => uninstallPlugin(plugins
 ipcMain.handle('plugins:catalogue', (_e, url: unknown) => fetchCatalogue(String(url), asFetch))
 ipcMain.handle('plugins:install-catalogue', (_e, entry: CatalogueEntry) => installFromCatalogue(pluginsRoot(), entry, asFetch))
 
+/**
+ * Open from URL: https only, downloaded to a temporary file, size-limited, checked to be a PDF. Tests stand in for the
+ * network: https://<any host>/<name> is answered from the file of that name in OPENPDF_E2E_URL_ROOT (or a 404).
+ */
+ipcMain.handle('url:open', async (_e, address: unknown) => {
+  let fetchFn: typeof fetch = asFetch
+  if (e2e && process.env.OPENPDF_E2E_URL_ROOT) {
+    const root = process.env.OPENPDF_E2E_URL_ROOT
+    fetchFn = (async (input: string) => {
+      try {
+        return new Response(new Uint8Array(await readFile(join(root, basename(new URL(input).pathname)))), { status: 200 })
+      } catch {
+        return new Response('', { status: 404, statusText: 'Not Found' })
+      }
+    }) as unknown as typeof fetch
+  }
+  const max = e2e && Number(process.env.OPENPDF_E2E_URL_MAX) > 0 ? Number(process.env.OPENPDF_E2E_URL_MAX) : undefined
+  return downloadPdf(typeof address === 'string' ? address : '', fetchFn, { tmpRoot: tmpdir(), maxBytes: max })
+})
+
 /** Batch processing: files in, results out (never overwriting), and the saved actions. */
 ipcMain.handle('batch:expand', (_e, paths: unknown, recursive: unknown) => expandPdfs(Array.isArray(paths) ? paths.filter((x): x is string => typeof x === 'string') : [], recursive === true))
 ipcMain.handle('batch:read', (_e, path: unknown) => readBatchPdf(String(path)))
@@ -448,6 +521,27 @@ ipcMain.handle('link:open', async (e, url: string) => {
   if (res.response !== 0) return false
   await shell.openExternal(parsed.href)
   return true
+})
+
+/** Sends form data to a web address (a Submit button in a form), after asking. Only http and https. */
+ipcMain.handle('form:submit', async (e, url: string, contentType: string, body: Uint8Array) => {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error('That is not a web address.')
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Forms can only be sent to a web address (http or https).')
+  if (!(e2e && process.env.OPENPDF_E2E_SUBMIT)) {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts = { type: 'question' as const, buttons: ['Send', 'Cancel'], defaultId: 1, cancelId: 1, message: 'Send this form to the address below?', detail: `${parsed.href}
+
+The values you filled in leave this computer.` }
+    const res = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+    if (res.response !== 0) return { sent: false, status: 0, note: '' }
+  }
+  const r = await net.fetch(parsed.href, { method: 'POST', headers: { 'Content-Type': String(contentType) }, body: Buffer.from(body), signal: AbortSignal.timeout(30000) })
+  return { sent: true, status: r.status, note: (await r.text()).slice(0, 200) }
 })
 
 /** Presentation mode. */

@@ -14,19 +14,19 @@ Prepared 17/10/2026 for planning the remaining work.
 
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
-| Open | Local, recent, restore previous session, cloud accounts, open from URL | PARTIAL | Recent list, tabs, drag and drop, Places (synced OneDrive/SharePoint/Dropbox/Google Drive folders) exist. Missing: open from URL, restore previous session, direct cloud API sign-in |
+| Open | Local, recent, restore previous session, cloud accounts, open from URL | PARTIAL | Recent list, tabs, drag and drop, Places (synced OneDrive/SharePoint/Dropbox/Google Drive folders) exist. Open from URL: https only, downloaded to a temporary file (250 MB limit, checked to be a PDF, clear errors), opens unsaved. Restore previous session: a setting (off by default) reopens the saved documents that were open at close, and File > Reopen last session does it on request; documents with no file yet are not restored. Missing: direct cloud API sign-in |
 | Save / Save As | Save options, save copy | DONE | Atomic write, Save As dialog |
 | New document | Blank, from text, RTF, images, scanner, combine files | PARTIAL | Convert tab has images, text, web page, clipboard, screenshot, Office (via LibreOffice), scan. Missing: blank document, RTF, Markdown, CSV, XPS, WMF |
 | Print | Printer, ranges, copies, scaling, booklet, N-up, comments, preview | PARTIAL | Printer choice, range, odd/even, copies, fit/actual/custom scale, orientation, N-up, booklet, preview, 300 dpi. Print what: document, document and comments, comments only; comments with the Printable flag off are left out. Pages always print as 300 dpi pictures, so "print as image" is how every job already works. Tile large pages (scale percent, overlap in mm, cut marks, labels, shown in the preview). Missing: print with layers choice, output is raster (no selectable text in print-to-PDF), advanced printer properties |
 | Export | Images, Word, Excel, PowerPoint | PARTIAL | Images (PNG/JPEG/TIFF), text, HTML, Word (best effort). Missing: Excel, PowerPoint; Word has no pictures, tables or columns |
-| Share / e-mail | Send by e-mail, SharePoint check in/out | MISSING | No send-by-email, no check in/out |
+| Share / e-mail | Send by e-mail, SharePoint check in/out | PARTIAL | Send by e-mail saves the document, then shows it in Explorer to drag into a message, or starts a message without it. It cannot attach the file: that needs native mail code (MAPI), which is not used. No check in/out |
 | Revert | Discard unsaved changes | PARTIAL | Undo/redo and recovery snapshots exist; no one-click "Revert to saved" found |
-| Document properties | Description, Fonts, Security, Initial View, Custom, Advanced, Actions, JavaScript | PARTIAL | Description/XMP done; Security via its own dialog. Missing: Fonts list, Initial View, custom keys, Advanced (page scaling, duplex, trapped, base URL), document actions/JavaScript |
+| Document properties | Description, Fonts, Security, Initial View, Custom, Advanced, Actions, JavaScript | PARTIAL | Description/XMP done; Security via its own dialog. Initial View (page layout, navigation tab, magnification, open-to-page, window options; written to the catalogue and followed on opening, except window size and position, which a tabbed window cannot follow), Fonts (name, type, encoding, embedded, subset, pages; read from the font dictionaries, not PDFium), Custom (add, edit and delete Info keys) and Print presets (page scaling, two-sided, copies up to 5, page range, paper by page size; the Print dialog starts with them) are done. Missing: trapped, base URL, document actions/JavaScript |
 | Rename / move to trash | Rename or delete the file | MISSING | Not present |
 | Close / Exit | One or all | DONE | Unsaved prompt |
 | Preferences | About 35 categories | PARTIAL | Settings has theme, language, author, recovery interval, spellcheck, updates, tool defaults and presets. Missing: most categories (page display defaults, colour management, file associations UI, identity, launch applications, search providers, performance) |
 | Manage settings | Export, import, reset | MISSING | Not present |
-| Customise UI | Custom ribbons/toolbars, panes, RTL | MISSING | Fixed ribbon; panes dock left/right only; no quick-access toolbar |
+| Customise UI | Custom ribbons/toolbars, panes, RTL | MISSING | Fixed ribbon; panes dock left/right only; no quick-access toolbar. Customisable ribbon and toolbars, and tab groups, are deliberately left for later. Settings can be exported and imported as JSON (Settings dialog) |
 
 ## 2. Home tab (tools, view, quick comment, links)
 
@@ -36,12 +36,12 @@ Prepared 17/10/2026 for planning the remaining work.
 | Snapshot | Copy area as image | DONE | 200 dpi PNG |
 | Clipboard | Cut, copy, paste | PARTIAL | Copy of text and page copy/paste only; no cut/paste of objects |
 | Find | Search the document, search the internet | PARTIAL | Match case, whole word, highlight all, find in several files. Missing: regular expressions, search providers, search in comments or bookmarks scope |
-| Zoom / fit | Slider, presets, actual size, fit page/width/visible | PARTIAL | Presets, fit page/width, Ctrl+/-. Missing: Fit Visible (trim margins) |
+| Zoom / fit | Slider, presets, actual size, fit page/width/visible | DONE | Presets, fit page/width, Ctrl+/-. Fit visible zooms so the content (blank margins trimmed off a sample of up to 40 pages) fills the width, and scrolls to its left edge |
 | Rotate view | 90 degrees | DONE | |
 | Pane toggles | Bookmarks, Thumbnails, Comments, Attachments, Content, Properties | PARTIAL | See section 12 |
 | Edit text | Edit base content text | PARTIAL | Run and paragraph edit with font match. Not in form XObjects; character spacing and horizontal scaling lost; falls back to standard fonts |
 | Edit objects | Move/resize/rotate/delete content, images | PARTIAL | See section 6 |
-| Add text / image / QR code | Insert new content | PARTIAL | Typewriter, text box, Add image (PNG/JPEG). Missing: QR code, barcode |
+| Add text / image / QR code | Insert new content | DONE | Typewriter, text box, Add image (PNG/JPEG). Edit tab, Images, QR / barcode: QR code (levels L to Q to H), Code 128, Code 39, EAN-13 as vector drawings, from typed text or a template ({filename}, {page}, {pages}, {date}), to the current page, every page or a range, in a corner or the centre, as page content or as a Stamp annotation, with a live preview. Encoders written for OpenPDF and checked against reference encoders. Not offered: DataMatrix and other symbologies |
 | Quick comment tools | Typewriter, note, highlight, arrow, underline, rectangle, stamp | DONE | In Comment/Draw tabs |
 | Links | Add/edit links, links from URLs, remove web-links, links from barcodes, batch link | PARTIAL | Link tool (web address or page) and edit. Missing: auto-link URLs in text, remove all web links, link actions other than URL/page (open file, run JavaScript, named destination), batch link |
 | Sign Document | From Home | DONE | Under Sign tab |
@@ -144,15 +144,15 @@ Prepared 17/10/2026 for planning the remaining work.
 
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
-| Field types | Text, button, check, radio, list, dropdown, date, barcode, image, digital signature | PARTIAL | Text, check, radio, dropdown, list, button, signature. Missing: date picker field (format scripts give date text), barcode, image field |
-| Select / edit fields | Move, resize, properties, align, duplicate | PARTIAL | Select, move, resize, delete, properties. Missing: align/distribute/duplicate/copy across pages, multi-select with common properties |
-| Highlight fields, grid, fields pane | | PARTIAL | Highlight present. No fields pane list, grid for form design uses View grid |
+| Field types | Text, button, check, radio, list, dropdown, date, barcode, image, digital signature | DONE | Text, check, radio, dropdown, list, button, signature, plus Date (a text field with an AFDate format; filling shows a calendar button and date picker, and the date is written in the field's own form), Image (a button that lets the filler choose a PNG or JPEG, kept in the file and shown again when it is opened) and Barcode (a text field drawn as QR, Code 128, Code 39 or EAN-13; other viewers may show plain text). Not offered: DataMatrix; an image already saved in an image field cannot be cleared |
+| Select / edit fields | Move, resize, properties, align, duplicate | PARTIAL | Select, move, resize, delete, properties. Shift or Ctrl and click selects several: align left, centre, right, top, middle, bottom, spread across or down, same width, same height, same size (the first selected is the model; the maths is arrange.ts); Duplicate copies a field to other pages at the same place or down the page at a distance, with new names. Missing: moving a selection as a group, properties of several fields at once, drag-select |
+| Highlight fields, grid, fields pane | | DONE | Highlight; the grid for form design uses View grid; Fields pane (Forms, Fields pane, or the Fields tab of the side pane) lists every field with its type and page, with find, select (goes to the page), rename, delete, properties and tab order Earlier and Later |
 | Reset, import, export | FDF, XFDF, CSV, XML | DONE | |
 | Email form data | | MISSING | |
-| Populate from CSV (Plus-style) | Merge many records | MISSING | Import fills one record |
+| Populate from CSV (Plus-style) | Merge many records | DONE | Forms, Populate from CSV: the first row names fields, every other row makes one filled PDF (calculations and formats applied, optional flatten), named from a chosen column (unsafe characters replaced, repeats numbered) and written to a folder without overwriting. Import still fills one record |
 | Form identification (Plus) | Detect fields | DONE | Detect fields with confirm |
 | Calculations, validation, formats | | DONE | Presets and custom scripts in a sandbox |
-| JavaScript console, document JS, document actions | | PARTIAL | Field scripts only. No console, document-level or open/close/save/print scripts, submit action |
+| JavaScript console, document JS, document actions | | PARTIAL | Field scripts, a document-level JavaScript editor (Forms, Document JavaScript: named scripts kept in /Names /JavaScript, run with Run in the field-script sandbox, and available to every field script), and a Submit button that sends the form (FDF, XFDF, HTML or the whole PDF) to an http or https address after asking, and a Reset button. Missing: console window, open/close/save/print document actions |
 | Tab order | | DONE | |
 | Fill and save | Fill, flatten | DONE | |
 | Placeholder tool (Plus) | Mark where signature/initials go | DONE | Sign tab: Sign here and Initial here markers (stamps) |
@@ -174,7 +174,7 @@ Prepared 17/10/2026 for planning the remaining work.
 
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
-| Send by e-mail | | MISSING | |
+| Send by e-mail | | PARTIAL | See Share / e-mail above: no attaching |
 | SharePoint check in/out | | MISSING | Files in synced folders open normally |
 | Proofing: spell check, word count, text correction | | PARTIAL | As-you-type spell check only |
 | Compare documents | | DONE | |
@@ -189,11 +189,11 @@ Prepared 17/10/2026 for planning the remaining work.
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
 | Go to / previous view / next view | Page box, first/last | DONE | |
-| Zoom tools | Continuous zoom, zoom in/out tool, loupe, pan and zoom | PARTIAL | Marquee zoom tool, presets. Missing: loupe, pan and zoom window |
+| Zoom tools | Continuous zoom, zoom in/out tool, loupe, pan and zoom | PARTIAL | Marquee zoom tool, presets, loupe (View > Workspace: a magnifier window that follows the pointer, 2 to 6 times, drawn sharp by PDFium). Missing: pan and zoom window |
 | Page display | Single, continuous, two pages, cover, gaps, right-to-left | PARTIAL | Single, continuous, two, cover. Missing: gaps toggle, right-to-left |
 | Show rulers, grid, guides, snapping, page size/position | | PARTIAL | Missing: page size/position display, transparency grid |
 | Thin lines | Hairline rendering | MISSING | |
-| Split views | Two views of one document | MISSING | |
+| Split views | Two views of one document | PARTIAL | View > Workspace: split horizontally or vertically; the second pane has its own scrolling and zoom. It is read-only, a single column as PDFium draws it (comment overlays and form fields show only in the first view). No four-way (spreadsheet) split |
 | Page transitions, autoscroll | | MISSING | Presentation mode (F5) exists |
 | Document tabs | Group, new window, close options | PARTIAL | Tabs exist; missing: tab groups, open in new window, drag a tab out |
 | Full screen, reading mode, night/high-contrast colours | | DONE | |
@@ -210,7 +210,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | Attachments pane | Add, save, open | DONE | Add, save all, remove |
 | Layers pane | | PARTIAL | See section 6 |
 | Signatures pane | List, validate, properties | DONE | Panel in a dialog rather than a docked pane |
-| Fields pane | List of fields | MISSING | |
+| Fields pane | List of fields | DONE | Side pane, Fields tab |
 | Destinations pane | Named destinations | MISSING | |
 | Stamps pane and palette | | PARTIAL | Picker popup only |
 | Comment styles pane | | MISSING | |
@@ -225,7 +225,7 @@ Prepared 17/10/2026 for planning the remaining work.
 
 Counted from the tables above (one count per row).
 
-DONE 45, PARTIAL 72, MISSING 34 (total 151 rows). Several rows repeat a feature seen from two tabs (Compare, Flatten, bookmarks), so treat the counts as a guide.
+DONE 50, PARTIAL 69, MISSING 32 (total 151 rows). Several rows repeat a feature seen from two tabs (Compare, Flatten, bookmarks), so treat the counts as a guide.
 
 ## Top 25 gaps for a construction-company office user
 
@@ -249,10 +249,10 @@ Ordered by everyday usefulness (marking up drawings, measuring, stamping, combin
 16. Export to Excel and PowerPoint (and better Word: pictures, tables, columns); Excel matters for schedules and bills of quantities.
 17. Auto-generate bookmarks from headings or a table of contents, bookmark colour/bold/italic, import/export; set destination from the current view.
 18. Delete blank pages automatically, delete extracted pages from the source, swap pages, insert pages from clipboard or scanner.
-19. Add QR codes and barcodes to pages and as form fields.
-20. Fillable form gaps: date-picker and image fields, align/distribute/duplicate of fields, fields pane, document and open/save/print scripts, submit action, populate from CSV for many records.
+19. Add QR codes and barcodes to pages and as form fields. (Done: QR code, Code 128, Code 39 and EAN-13 as page content or stamp annotations, and as a barcode form field; DataMatrix is not offered.)
+20. Fillable form gaps: date-picker and image fields, align/distribute/duplicate of fields, fields pane, document and open/save/print scripts, submit action, populate from CSV for many records. (Done except the open/close/save/print document scripts and a console window.)
 21. Scanner support: named presets, duplex, paper size, TWAIN, insert scanned pages into the open document; plus OCR table detection and a deskew/enhance step.
-22. Document properties: Initial View (open on page, zoom, pane), fonts list, custom properties, Advanced print presets.
+22. Document properties: Initial View (open on page, zoom, pane), fonts list, custom properties, Advanced print presets. DONE, except trapped, base URL and document actions.
 23. Edit-content depth: image rotate and crop, shape recolour and line width, text format changes (font, size, colour), text inside form XObjects, a content/object pane.
-24. Send by e-mail with the file attached, and open from URL / restore previous session; later, direct SharePoint and OneDrive connection with check in/out (needs app registrations).
-25. Workspace comfort: Fit Visible zoom, loupe, pan and zoom window, split view, tab groups/new window, right-to-left and gaps options, quick-access toolbar and customisable ribbon, settings import/export.
+24. Open from URL and restore previous session are DONE; send by e-mail is PARTIAL (the file cannot be attached without native mail code). Later, direct SharePoint and OneDrive connection with check in/out (needs app registrations).
+25. Workspace comfort: Fit Visible zoom, loupe, split view and settings import/export are DONE. Still open: pan and zoom window, tab groups/new window, right-to-left and gaps options, quick-access toolbar and customisable ribbon (left for later on purpose).

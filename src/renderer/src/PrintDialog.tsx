@@ -26,6 +26,7 @@ import {
   type Subset
 } from '../../shared/printPlan'
 import { tileArea, type PrintOptions } from './print'
+import type { PrintDefaults } from './viewPrefs'
 import { bestPrintLandscape, clampTileScale, mmToPt, tileLabel, tileSheets, type TileOptions } from '../../shared/tiling'
 
 /** Everything DocView needs to run a print job. */
@@ -47,6 +48,8 @@ interface Props {
   prepare: () => Promise<Uint8Array>
   onPrint: (job: PrintJob) => void
   onClose: () => void
+  /** What the document's own print presets ask the dialog to start with. */
+  defaults?: PrintDefaults | null
 }
 
 type PerSheet = '1' | '2' | '4' | '6' | '9' | '16' | 'booklet'
@@ -56,22 +59,22 @@ const FILE = '\u0000file'
 /** The longest side of the preview sheet in CSS pixels. */
 const PREVIEW_BOX = { w: 330, h: 400 }
 
-export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected, prepare, onPrint, onClose }: Props) {
+export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected, prepare, onPrint, onClose, defaults }: Props) {
   const [printers, setPrinters] = useState<{ name: string; displayName: string; isDefault: boolean }[] | null>(null)
   const [printer, setPrinter] = useState<PrinterChoice>('')
-  const [copies, setCopies] = useState(1)
+  const [copies, setCopies] = useState(defaults?.copies ?? 1)
   const [collate, setCollate] = useState(true)
   const [colour, setColour] = useState(true)
-  const [duplex, setDuplex] = useState<Duplex>('off')
+  const [duplex, setDuplex] = useState<Duplex>(defaults?.duplex ?? 'off')
   const [paper, setPaper] = useState<PaperId>('A4')
   const [orientation, setOrientation] = useState<Orientation>('auto')
 
-  const [range, setRange] = useState<PageRangeKind>('all')
-  const [customText, setCustomText] = useState(pageCount > 1 ? `1-${pageCount}` : '1')
+  const [range, setRange] = useState<PageRangeKind>(defaults?.rangeText ? 'custom' : 'all')
+  const [customText, setCustomText] = useState(defaults?.rangeText || (pageCount > 1 ? `1-${pageCount}` : '1'))
   const [subset, setSubset] = useState<Subset>('all')
   const [reverse, setReverse] = useState(false)
 
-  const [scalingKind, setScalingKind] = useState<Scaling['kind']>('fit')
+  const [scalingKind, setScalingKind] = useState<Scaling['kind']>(defaults?.scaling ?? 'fit')
   const [percent, setPercent] = useState(100)
   const [autoRotate, setAutoRotate] = useState(true)
   const [centre, setCentre] = useState(true)
@@ -100,7 +103,9 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
       setPrinters(list)
       const remembered = settings?.printer && list.some((p) => p.name === settings.printer) ? settings.printer : null
       setPrinter(remembered ?? list.find((p) => p.isDefault)?.name ?? list[0]?.name ?? '')
-      if (isPaperId(settings?.printPaper)) setPaper(settings.printPaper)
+      // The document's own wish (choose the paper by page size) beats the paper used last time.
+      if (defaults?.paper) setPaper(defaults.paper)
+      else if (isPaperId(settings?.printPaper)) setPaper(settings.printPaper)
     })()
     return () => {
       live = false
@@ -248,6 +253,11 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
     <Modal title={t('Print')} onClose={onClose} wide>
       <form className="print-modal" onSubmit={submit} onKeyDown={onKeyDown}>
         <div className="print-options">
+          {defaults?.any && (
+            <p className="muted small" role="status">
+              {t('Started with the print settings saved in this document.')}
+            </p>
+          )}
           <fieldset>
             <legend>{t('Printer')}</legend>
             <Row label={t('Name')}>

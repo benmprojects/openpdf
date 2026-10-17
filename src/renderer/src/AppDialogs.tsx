@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { UpdateStatus } from '../../main/updates'
 import type { Settings } from '../../preload'
-import { languages, t } from './i18n'
+import { languages, plural, t } from './i18n'
 
 /** A centred modal panel. Esc and a click on the backdrop close it. */
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -124,13 +124,60 @@ function UpdateSettings({ settings, onChange }: { settings: Settings; onChange: 
   )
 }
 
+/** Move the portable settings to another computer as a JSON file, and bring them in from one. */
+function SettingsTransfer({ onImported }: { onImported: (s: Settings) => void }) {
+  const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null)
+  const exportNow = async () => {
+    try {
+      const path = await window.openpdf.exportSettings()
+      if (path) setMessage({ error: false, text: t('Settings saved to {path}', { path }) })
+    } catch (e) {
+      setMessage({ error: true, text: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  const importNow = async () => {
+    try {
+      const r = await window.openpdf.importSettings()
+      if (!r) return
+      if (!r.ok) return setMessage({ error: true, text: r.error })
+      onImported(r.settings)
+      const done = plural(r.applied, { one: 'Imported {n} setting.', other: 'Imported {n} settings.' })
+      setMessage({ error: false, text: r.skipped.length ? `${done} ${t('Skipped: {list}.', { list: r.skipped.join(', ') })}` : done })
+    } catch (e) {
+      setMessage({ error: true, text: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  return (
+    <section aria-label={t('Move settings')}>
+      <h3 style={{ marginBottom: 4 }}>{t('Move settings')}</h3>
+      <p className="muted small">{t('Export saves your preferences, tool styles and scale presets to a file; import brings them in on another computer. Recent files, the printer and the update address stay where they are.')}</p>
+      <div className="batch-actionbar">
+        <button type="button" onClick={() => void exportNow()}>
+          {t('Export settings…')}
+        </button>
+        <button type="button" onClick={() => void importNow()}>
+          {t('Import settings…')}
+        </button>
+      </div>
+      {message && (
+        <p role="status" className={message.error ? 'error-text' : 'muted'}>
+          {message.text}
+        </p>
+      )}
+    </section>
+  )
+}
+
 export function SettingsDialog({
   settings,
   onChange,
+  onImported,
   onClose
 }: {
   settings: Settings
   onChange: (patch: Partial<Settings>) => void
+  /** Settings were replaced by an import. */
+  onImported?: (s: Settings) => void
   onClose: () => void
 }) {
   return (
@@ -167,10 +214,14 @@ export function SettingsDialog({
       <label className="inline" style={{ marginTop: 10 }}>
         <input type="checkbox" checked={settings.spellcheck} onChange={(e) => onChange({ spellcheck: e.target.checked })} /> Check spelling in text boxes (right-click a word for suggestions)
       </label>
+      <label className="inline" style={{ marginTop: 6 }}>
+        <input type="checkbox" checked={settings.restoreSession} onChange={(e) => onChange({ restoreSession: e.target.checked })} /> {t('Reopen the documents that were open when OpenPDF last closed')}
+      </label>
       <p className="muted small">
         Recovery snapshots are kept only until you save or close a document. After a crash they are offered back the next
         time OpenPDF starts.
       </p>
+      <SettingsTransfer onImported={(s) => onImported?.(s)} />
       <UpdateSettings settings={settings} onChange={onChange} />
     </Modal>
   )

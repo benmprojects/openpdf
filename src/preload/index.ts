@@ -62,6 +62,8 @@ const api = {
   pickFile: (filter?: { name: string; ext: string[] }): Promise<{ name: string; data: Uint8Array } | null> => ipcRenderer.invoke('file:pick-one', filter),
   /** Asks, then opens a web or mail link in the default app. Resolves false if refused or cancelled. */
   openLink: (url: string): Promise<boolean> => ipcRenderer.invoke('link:open', url),
+  /** Sends form data to a web address after asking; resolves what happened. */
+  submitForm: (url: string, contentType: string, body: Uint8Array): Promise<{ sent: boolean; status: number; note: string }> => ipcRenderer.invoke('form:submit', url, contentType, body),
   setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
   copyImage: (png: Uint8Array): Promise<void> => ipcRenderer.invoke('clipboard:write-image', png),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('file:pick-folder'),
@@ -161,6 +163,13 @@ const api = {
     ipcRenderer.on('file:open-files', h)
     return () => ipcRenderer.removeListener('file:open-files', h)
   },
+  /** Downloads a PDF from an https address (to a temporary file, size-limited); the error is a message to show. */
+  openUrl: (address: string): Promise<{ ok: true; name: string; data: Uint8Array } | { ok: false; error: string }> => ipcRenderer.invoke('url:open', address),
+  /** Shows a saved PDF in Explorer (to attach by hand), or starts a message without it. */
+  sendMail: (path: string, mode: 'reveal' | 'compose'): Promise<boolean> => ipcRenderer.invoke('mail:send', path, mode),
+  /** Settings to a JSON file (null when cancelled), and back (null when cancelled). */
+  exportSettings: (): Promise<string | null> => ipcRenderer.invoke('settings:export'),
+  importSettings: (): Promise<{ ok: true; settings: Settings; applied: number; skipped: string[] } | { ok: false; error: string } | null> => ipcRenderer.invoke('settings:import'),
   getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   setSettings: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:set', patch),
   recoverySave: (key: string, meta: { name: string; path?: string }, data: Uint8Array): Promise<void> =>

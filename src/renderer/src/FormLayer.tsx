@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Lock, Settings2, Trash2 } from 'lucide-react'
+import { CalendarDays, Lock, Settings2, Trash2 } from 'lucide-react'
+import { dateFormatOf, formatDate, fromInputValue, parseDate, toInputValue } from './dateField'
+import { isImageField } from './formImage'
 import type { FormField, FormValue, Widget } from './forms'
 import { deltaToPage, type Rotation } from './viewRotation'
 import type { Rect } from './textLogic'
@@ -24,6 +26,10 @@ export interface FormsView {
 export interface DesignProps {
   selected: { name: string; widget: number } | null
   onSelect: (s: { name: string; widget: number } | null) => void
+  /** Further widgets selected with Shift or Ctrl (keys `name#widget`), for aligning, spreading and matching size. */
+  extra?: ReadonlySet<string>
+  /** Shift or Ctrl and click: add the widget to the selection, or take it out. */
+  onToggle?: (s: { name: string; widget: number }) => void
   onPlace: (name: string, widget: number, rect: Rect) => void
   onEdit: (name: string) => void
   onDelete: (name: string) => void
@@ -73,13 +79,18 @@ function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: n
   const [drag, setDrag] = useState<{ key: string; kind: 'move' | 'resize'; dx: number; dy: number } | null>(null)
   const root = useRef<HTMLDivElement>(null)
   const isSel = (it: Item) => design.selected?.name === it.field.name && design.selected.widget === it.index
+  const isExtra = (it: Item) => !!design.extra?.has(`${it.field.name}#${it.index}`)
 
   const begin = (e: React.MouseEvent, it: Item, kind: 'move' | 'resize') => {
     if (e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
-    design.onSelect({ name: it.field.name, widget: it.index })
     root.current?.focus({ preventScroll: true })
+    if (kind === 'move' && (e.shiftKey || e.ctrlKey || e.metaKey) && design.onToggle) {
+      design.onToggle({ name: it.field.name, widget: it.index })
+      return
+    }
+    design.onSelect({ name: it.field.name, widget: it.index })
     const sx = e.clientX
     const sy = e.clientY
     let moved = false
@@ -138,8 +149,8 @@ function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: n
             role="button"
             tabIndex={0}
             aria-label={`Field ${it.field.name}${it.field.widgets.length > 1 ? ` (${it.index + 1})` : ''}`}
-            aria-pressed={isSel(it)}
-            className={`form-design-box${isSel(it) ? ' selected' : ''}`}
+            aria-pressed={isSel(it) || isExtra(it)}
+            className={`form-design-box${isSel(it) ? ' selected' : isExtra(it) ? ' selected multi' : ''}`}
             style={{ left: r.x * zoom, top: r.y * zoom, width: r.w * zoom, height: r.h * zoom }}
             onMouseDown={(e) => begin(e, it, 'move')}
             onDoubleClick={() => design.onEdit(it.field.name)}
@@ -211,6 +222,7 @@ function Control({
 
   if (field.type === 'text') {
     const text = typeof value === 'string' ? value : ''
+    const dateForm = dateFormatOf(field)
     // While not being edited a field with a format script shows its formatted value; editing shows what was entered.
     // (A field that cannot be typed into is never being edited, even when it has focus.)
     const display = (!editing || locked) && shown !== undefined ? shown : text
@@ -218,10 +230,26 @@ function Control({
       setEditing(false)
       onCommit(text)
     } }
-    return field.multiline ? (
-      <textarea ref={box} className={cls} style={style} aria-label={label} value={display} readOnly={locked} maxLength={field.maxLength} spellCheck {...focus} onChange={(e) => onChange(e.target.value)} />
-    ) : (
+    if (field.multiline)
+      return <textarea ref={box} className={cls} style={style} aria-label={label} value={display} readOnly={locked} maxLength={field.maxLength} spellCheck {...focus} onChange={(e) => onChange(e.target.value)} />
+    const input = (
       <input ref={box} className={cls} style={style} aria-label={label} type={field.password ? 'password' : 'text'} value={display} readOnly={locked} maxLength={field.maxLength} spellCheck {...focus} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onCommit(text)} />
+    )
+    if (!dateForm || locked) return input
+    return (
+      <>
+        {input}
+        <DatePicker
+          name={label}
+          style={style}
+          current={parseDate(text, dateForm)}
+          onPick={(d) => {
+            const picked = formatDate(d, dateForm)
+            onChange(picked)
+            onCommit(picked)
+          }}
+        />
+      </>
     )
   }
   if (field.type === 'checkbox') {
@@ -314,9 +342,58 @@ function Control({
       </button>
     )
   }
+  const picture = isImageField(field) && typeof value === 'string' && value.startsWith('data:image/') ? value : null
   return (
-    <button type="button" className={cls} style={style} aria-label={label} title={field.tooltip || label} onClick={onButton}>
-      {widget.caption ?? label}
+    <button
+      type="button"
+      className={`${cls}${isImageField(field) ? ' image-field' : ''}`}
+      style={picture ? { ...style, backgroundImage: `url(${picture})`, backgroundSize: 'contain', backgroundRepeat: 'no-repeat', backgroundPosition: 'center' } : style}
+      aria-label={label}
+      title={field.tooltip || (isImageField(field) ? 'Click to choose a picture' : label)}
+      onClick={onButton}
+    >
+      {picture ? '' : (widget.caption ?? label)}
     </button>
+  )
+}
+
+/** A small calendar button at the right end of a date field; it opens the system date picker. */
+function DatePicker({ name, style, current, onPick }: { name: string; style: React.CSSProperties; current: Date | null; onPick: (d: Date) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  const size = Math.min(Number(style.height) || 16, 22)
+  return (
+    <>
+      <button
+        type="button"
+        className="form-date-btn"
+        aria-label={`Pick a date for ${name}`}
+        title="Pick a date"
+        style={{ left: Number(style.left) + Number(style.width) - size - 1, top: Number(style.top) + (Number(style.height) - size) / 2, width: size, height: size }}
+        onClick={() => {
+          const el = input.current
+          if (!el) return
+          el.value = current ? toInputValue(current) : ''
+          try {
+            el.showPicker()
+          } catch {
+            el.focus()
+          }
+        }}
+      >
+        <CalendarDays size={Math.max(8, size - 6)} aria-hidden />
+      </button>
+      <input
+        ref={input}
+        type="date"
+        className="form-date-input"
+        aria-label={`Date for ${name}`}
+        tabIndex={-1}
+        style={{ left: Number(style.left), top: Number(style.top), width: Number(style.width), height: Number(style.height) }}
+        onChange={(e) => {
+          const d = fromInputValue(e.target.value)
+          if (d) onPick(d)
+        }}
+      />
+    </>
   )
 }

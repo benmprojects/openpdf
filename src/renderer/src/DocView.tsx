@@ -104,14 +104,32 @@ import { alignAnnots, distributeAnnots, restack, type AlignMode, type StackMode 
 import { applyFormValues, readForm, type FieldType, type FormField, type FormValue } from './forms'
 import { detectInDocument, type Detected } from './formDetect'
 import { DetectDialog } from './DetectDialog'
-import { addField, addFields, deleteField, moveInTabOrder, placeWidget, setTabOrder, updateField, type FieldPatch, type FieldSpec, type TabOrder } from './formDesign'
-import { FieldDialog } from './FieldDialog'
+import { addField, addFields, deleteField, moveInTabOrder, placeWidget, placeWidgets, setTabOrder, updateField, type FieldPatch, type FieldSpec, type TabOrder } from './formDesign'
+import { FieldDialog, type FieldVariant } from './FieldDialog'
+import { BarcodeDialog } from './BarcodeDialog'
+import { placeBarcodes, type BarcodePlacement } from './barcodeWrite'
+import { FieldsPane } from './FieldsPane'
+import { DocScriptsDialog } from './DocScriptsDialog'
+import { readDocScripts, writeDocScripts, type DocScript } from './docScripts'
+import { DuplicateFieldDialog, PopulateDialog, type PopulateRun } from './FormToolsDialogs'
+import { arrangeWidgets, boxesOf, duplicateSpecs, duplicateTargets, widgetKey, type ArrangeOp, type DuplicateMode, type WidgetRef } from './formArrange'
+import { imageToDataUrl, isImageField, sniffImage } from './formImage'
+import { submitPayload, submitUrl, type SubmitFormat } from './formSubmit'
+import { flattenForm } from './forms'
+import { CalendarDays as CalendarDaysIcon, Braces, QrCode, Table as TableIcon, UnfoldHorizontal, UnfoldVertical } from 'lucide-react'
 import { describeRestrictions, restrictsEditing, type EncryptOptions, type Permissions } from '../../shared/pdfSecurity'
 import { SecurityDialog } from './SecurityDialog'
 import { Modal } from './AppDialogs'
 import { commitValue, displayValue, fieldStates, recalculate, runScript } from './formScripts'
-import { entriesFor, readDataFile, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataFormat } from './formData'
+import { entriesFor, populateNames, readDataFile, recordOf, toCsv, toFdfData, toXfdfData, toXml, valuesFromImport, type DataFormat } from './formData'
 import { DocPropsDialog } from './DocPropsDialog'
+import { writeCustomProps } from './docExtras'
+import { fitVisible, samplePages, trimBox, type Frac } from './contentBox'
+import { SplitPane } from './SplitPane'
+import { MailDialog } from './FileDialogs'
+import { Loupe } from './Loupe'
+import { LOUPE_FACTORS } from './workspace'
+import { openViewFrom, printDefaults, readViewPrefs, writeViewPrefs, type PrintDefaults } from './viewPrefs'
 import { formatSize, OptimiseDialog } from './OptimiseDialog'
 import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
 import { ComparePanel } from './ComparePanel'
@@ -138,6 +156,7 @@ import {
   BookOpen,
   Camera,
   Columns2,
+  Rows2,
   FileText,
   GalleryVertical,
   ScanSearch,
@@ -185,6 +204,8 @@ import {
   Maximize2,
   ClipboardPaste,
   Globe,
+  History,
+  Mail,
   CopyPlus,
   GitCompare,
   FileInput,
@@ -274,7 +295,7 @@ import { IconButton, RB, RGroup, RStack } from './Ribbon'
 import { displayDims, turn, type Rotation } from './viewRotation'
 import { msg, t } from './i18n'
 
-type ZoomMode = 'fit-width' | 'fit-page' | number
+type ZoomMode = 'fit-width' | 'fit-page' | 'fit-visible' | number
 
 const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 8]
 const MIN_ZOOM = 0.1
@@ -305,6 +326,9 @@ interface Props {
   /** Called when the user finishes dragging the side pane's edge. */
   onSidebarWidth: (w: number) => void
   onOpen: () => void
+  /** Open from URL, and reopen the documents of the last session (File tab). */
+  onOpenUrl: () => void
+  onRestoreSession: () => void
   /** A new document made here (from pictures, text and so on) opens in a tab of its own, unsaved. */
   onNewDoc: (name: string, data: Uint8Array) => void
   onCloseDoc: () => void
@@ -363,7 +387,7 @@ function compactRanges(pages: number[]): string {
   return out.join(', ')
 }
 
-export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onNewDoc, onCloseDoc, jump, author, toolDefaults, toolPresets, onSettings }: Props) {
+export function DocView({ id: docId, data, name, path, active, onMeta: reportMeta, recovered, autosaveMinutes, sidebarWidth, onSidebarWidth, paneSide, onPaneSide, onOpen, onOpenUrl, onRestoreSession, onNewDoc, onCloseDoc, jump, author, toolDefaults, toolPresets, onSettings }: Props) {
   const [ribbon, setRibbon] = useState<RibbonTab>('home')
   // Pages selected in the thumbnail pane; the Organise tab acts on them, or on the current page if none are.
   const [pageSel, setPageSel] = useState<number[]>([])
@@ -421,6 +445,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const rotateView = useCallback((dir: 1 | -1) => setRotation((r) => turn(r, dir)), [])
   const [pageMode, setPageMode] = useState<PageMode>(DEFAULT_MODE)
   const zoomTo = useCallback((z: number) => setMode(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))), [])
+  /** Fit visible: how much of the page width the content takes, and where it starts (null until measured or blank). */
+  const [visibleFit, setVisibleFit] = useState<{ ratio: number; left: number } | null>(null)
+  // Split view (a second pane showing the same document), the loupe, and its magnification.
+  const [split, setSplit] = useState<'horizontal' | 'vertical' | null>(null)
+  const [loupe, setLoupe] = useState(false)
+  const [loupeFactor, setLoupeFactor] = useState(3)
 
   /** Snapshot tool: render the box at 200 dpi (as it is displayed, rotation included) and copy it as an image. */
   const takeSnapshot = async (page: number, rect: { x: number; y: number; w: number; h: number }) => {
@@ -654,9 +684,46 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     const { maxWidth, maxHeight } = rowExtent(layoutRows(pages.length, pageMode), shown, 0)
     const gaps = pageMode.twoUp ? GAP : 0 // pixels between the two pages of a row
     const byWidth = (size.w - 2 * PAD - gaps) / maxWidth
-    const z = mode === 'fit-width' ? byWidth : Math.min(byWidth, (size.h - 2 * PAD) / maxHeight)
+    const z =
+      mode === 'fit-width' ? byWidth : mode === 'fit-visible' ? byWidth / (visibleFit?.ratio ?? 1) : Math.min(byWidth, (size.h - 2 * PAD) / maxHeight)
     return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
-  }, [mode, pages, size, rotation, pageMode])
+  }, [mode, pages, size, rotation, pageMode, visibleFit])
+
+  // Fit visible: the content box of a sample of the pages, found by trimming the white margins off small renders.
+  useEffect(() => {
+    if (mode !== 'fit-visible' || !client || !pages.length) return
+    let cancelled = false
+    const boxes: (Frac | null)[] = []
+    void (async () => {
+      for (const i of samplePages(pages.length, currentPage)) {
+        if (cancelled) return
+        try {
+          const out = await client.render(i, 160 / pages[i].width, { priority: 2 })
+          boxes.push(trimBox(out.data, out.width, out.height))
+        } catch {
+          return
+        }
+      }
+      if (!cancelled) setVisibleFit(fitVisible(boxes, rotation))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [mode, client, pages, rotation])
+
+  // After the zoom changes to fit the content, scroll sideways so the content (not the page margin) is at the edge.
+  useEffect(() => {
+    if (mode !== 'fit-visible' || !visibleFit || !active) return
+    const timer = window.setTimeout(() => {
+      const sc = [...document.querySelectorAll<HTMLElement>('.docview')].find((d) => d.style.display !== 'none')?.querySelector<HTMLElement>('.scroller')
+      const pageEl = sc?.querySelector<HTMLElement>('[data-page]')
+      if (!sc || !pageEl) return
+      const s = sc.getBoundingClientRect()
+      const p = pageEl.getBoundingClientRect()
+      sc.scrollLeft = Math.max(0, p.left - s.left + sc.scrollLeft + visibleFit.left * p.width - PAD)
+    }, 150)
+    return () => window.clearTimeout(timer)
+  }, [mode, visibleFit, zoom, active])
 
   const stepZoom = useCallback(
     (dir: 1 | -1) => {
@@ -692,6 +759,15 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [designSel, setDesignSel] = useState<{ name: string; widget: number } | null>(null)
   /** Fields found on the pages, waiting for the user to choose which to create (null: not looking). */
   const [detected, setDetected] = useState<Detected[] | null>(null)
+  /** Date, image and barcode fields are text fields or buttons with a special job. */
+  const [fieldVariant, setFieldVariant] = useState<FieldVariant | undefined>(undefined)
+  /** Further fields selected for arranging (keys `name#widget`); `designSel` is the first. */
+  const [designExtra, setDesignExtra] = useState<ReadonlySet<string>>(new Set())
+  const [barcodeOpen, setBarcodeOpen] = useState(false)
+  const [docScripts, setDocScripts] = useState<DocScript[]>([])
+  const [docScriptsOpen, setDocScriptsOpen] = useState(false)
+  const [dupOpen, setDupOpen] = useState(false)
+  const [populateOpen, setPopulateOpen] = useState(false)
   const formFieldsRef = useRef<FormField[]>([])
   formFieldsRef.current = formFields
   const setFormValue = useCallback((name: string, v: FormValue) => {
@@ -1024,6 +1100,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setFormFields(f)
       })
       .catch(() => !cancelled && setFormFields([]))
+    readDocScripts(bytes)
+      .then((s) => !cancelled && setDocScripts(s))
+      .catch(() => !cancelled && setDocScripts([]))
     return () => {
       cancelled = true
     }
@@ -1712,17 +1791,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   )
 
   // ---- Form design ----------------------------------------------------------------------------------
-  const proposeName = (type: FieldType) => {
+  const proposeName = (type: FieldType, variant?: FieldVariant) => {
     const base: Record<FieldType, string> = { text: 'Text', checkbox: 'Check', radio: 'Group', dropdown: 'Dropdown', list: 'List', button: 'Button', signature: 'Signature' }
+    const stem = variant ? { date: 'Date', image: 'Image', barcode: 'Barcode' }[variant] : base[type]
     const taken = new Set(formFields.map((f) => f.name))
     let n = 1
-    while (taken.has(`${base[type]}${n}`)) n++
-    return `${base[type]}${n}`
+    while (taken.has(`${stem}${n}`)) n++
+    return `${stem}${n}`
   }
   /** Choose a kind of field and the drawing tool (pressing it again stops drawing). */
-  const startField = (type: FieldType) => {
-    if (tool === 'formfield' && fieldKind === type) return setTool('select')
+  const startField = (type: FieldType, variant?: FieldVariant) => {
+    if (tool === 'formfield' && fieldKind === type && fieldVariant === variant) return setTool('select')
     setFieldKind(type)
+    setFieldVariant(variant)
     setTool('formfield')
     setNotice({ kind: 'info', text: 'Drag a box on the page where the field should go.' })
   }
@@ -1731,8 +1812,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (!d) return
     setFieldDraft(null)
     await applyPageEdit((b) => addField(b, { ...spec, type: d.type, page: d.page, rect: d.rect }), 'Field added')
+    setFieldVariant(undefined)
     setTool('formedit')
     setDesignSel({ name: spec.name, widget: 0 })
+    setDesignExtra(new Set())
   }
   /** Look for places where fields belong (blanks, rules, boxes, squares) and ask which to create. */
   const detectFormFields = async () => {
@@ -1761,10 +1844,123 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     await applyPageEdit((b) => deleteField(b, name), 'Field deleted')
   }
   const moveField = (name: string, widget: number, rect: { x: number; y: number; w: number; h: number }) => void applyPageEdit((b) => placeWidget(b, name, widget, rect), 'Field moved')
+  /** Plain select: this widget only. */
+  const selectDesign = (s: { name: string; widget: number } | null) => {
+    setDesignSel(s)
+    setDesignExtra(new Set())
+  }
+  /** Shift or Ctrl and click: add to the selection or take out of it. */
+  const toggleDesign = (s: { name: string; widget: number }) => {
+    if (!designSel) return setDesignSel(s)
+    const key = widgetKey(s)
+    if (widgetKey(designSel) === key) return
+    setDesignExtra((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+  const designRefs = (): WidgetRef[] => {
+    const out: WidgetRef[] = designSel ? [{ name: designSel.name, widget: designSel.widget }] : []
+    for (const k of designExtra) {
+      const i = k.lastIndexOf('#')
+      out.push({ name: k.slice(0, i), widget: Number(k.slice(i + 1)) })
+    }
+    return out
+  }
+  const arrangeFields = (op: ArrangeOp) => {
+    const moves = arrangeWidgets(boxesOf(formFields), designRefs(), op)
+    if (!moves.length) return setNotice({ kind: 'info', text: 'Nothing to change: the fields are already arranged that way.' })
+    void applyPageEdit((b) => placeWidgets(b, moves.map((m) => ({ name: m.name, widget: m.widget, rect: m.rect }))), `${moves.length} field${moves.length === 1 ? '' : 's'} arranged`)
+  }
+  const duplicateField = async (mode: DuplicateMode) => {
+    setDupOpen(false)
+    const f = designSel ? formFields.find((x) => x.name === designSel.name) : undefined
+    const w = f && designSel ? f.widgets[designSel.widget] : undefined
+    if (!f || !designSel || !w || w.page < 0) return
+    const specs = duplicateSpecs(f, designSel.widget, duplicateTargets({ name: f.name, widget: designSel.widget, page: w.page, rect: w.rect }, mode), formFields.map((x) => x.name))
+    if (!specs.length) return setNotice({ kind: 'info', text: 'There was nothing to copy to.' })
+    await applyPageEdit((b) => addFields(b, specs), `${specs.length} cop${specs.length === 1 ? 'y' : 'ies'} added`)
+  }
+  /** Choosing a field in the Fields pane selects it on the page. */
+  const selectFieldFromPane = (fieldName: string) => {
+    const f = formFields.find((x) => x.name === fieldName)
+    if (!f) return
+    if (!locked && tool !== 'formedit') setTool('formedit')
+    selectDesign({ name: f.name, widget: 0 })
+    if (f.widgets[0] && f.widgets[0].page >= 0) goTo(f.widgets[0].page)
+  }
+  const placeBarcodeItems = async (items: BarcodePlacement[]) => {
+    setBarcodeOpen(false)
+    await applyPageEdit((b) => placeBarcodes(b, items), items.length === 1 ? 'Barcode added' : `${items.length} barcodes added`)
+  }
+  const saveDocScripts = async (list: DocScript[]) => {
+    setDocScriptsOpen(false)
+    await applyPageEdit((b) => writeDocScripts(b, list), 'Document JavaScript saved')
+  }
+  /** An image field: the filler chooses a PNG or JPEG, which fills the button. */
+  const chooseFieldImage = async (f: FormField) => {
+    const file = await window.openpdf.pickFile({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg'] })
+    if (!file) return
+    const img = sniffImage(file.data)
+    if (!img) return setNotice({ kind: 'error', text: 'Choose a PNG or JPEG picture.' })
+    setFormValue(f.name, imageToDataUrl(img))
+    setNotice({ kind: 'info', text: 'Picture added. Save to keep it.' })
+  }
+  /** A Submit button: sends the values (or the whole PDF) to its web address, after the main process asks. */
+  const submitForm = async (url: string, format: SubmitFormat) => {
+    if (!submitUrl(url)) return setNotice({ kind: 'error', text: 'This button has no web address (http or https) to send the form to.' })
+    const missing = formFields.filter((f) => f.required && !f.readOnly && f.type !== 'button' && f.type !== 'signature').filter((f) => {
+      const v = formValues.get(f.name) ?? f.value
+      return Array.isArray(v) ? v.length === 0 : v === '' || v === false
+    })
+    if (missing.length) return setNotice({ kind: 'error', text: `Fill in the required fields first: ${missing.map((f) => f.name).join(', ')}.` })
+    try {
+      const pdf = format === 'pdf' ? await applyEdits(bytes) : undefined
+      const p = submitPayload(format, entriesFor(formFields, formValues), name, pdf)
+      setNotice({ kind: 'info', text: 'Sending the form…' })
+      const r = await window.openpdf.submitForm(url, p.contentType, p.body)
+      if (!r.sent) return setNotice(null)
+      setNotice(r.status >= 200 && r.status < 300 ? { kind: 'info', text: `The form was sent (the server answered ${r.status}).` } : { kind: 'error', text: `The server answered ${r.status}${r.note ? `: ${r.note}` : ''}.` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not send the form: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  /** Populate from a CSV: one filled copy of the form per row, written to a folder. */
+  const runPopulate = async (r: PopulateRun) => {
+    setPopulateOpen(false)
+    try {
+      setNotice({ kind: 'info', text: `Creating ${r.table.rows.length} PDF${r.table.rows.length === 1 ? '' : 's'}…` })
+      const base = await applyEdits(bytes)
+      const names = populateNames(r.table, r.nameColumn, name.replace(/\.pdf$/i, ''))
+      const wide = r.table.rows.some((row) => row.some((c) => [...c].some((ch) => ch.charCodeAt(0) > 0xff)))
+      const unicode = wide ? await window.openpdf.findFont('Arial', false, false).catch(() => null) : null
+      const files: { name: string; data: Uint8Array }[] = []
+      for (let i = 0; i < r.table.rows.length; i++) {
+        const row = valuesFromImport(formFields, recordOf(r.table, r.table.rows[i]))
+        const merged = new Map<string, FormValue>([...formValuesRef.current, ...row])
+        const calc = await recalculate(formFields, merged)
+        for (const [k, v] of calc.changed) {
+          merged.set(k, v)
+          row.set(k, v)
+        }
+        let out = await applyFormValues(base, row, unicode?.data, await computeDisplays(formFields, merged))
+        if (r.flatten) out = (await flattenForm(out)).bytes
+        files.push({ name: `${names[i]}.pdf`, data: out })
+        if (i % 10 === 9) setNotice({ kind: 'info', text: `Created ${i + 1} of ${r.table.rows.length}…` })
+      }
+      const saved = await window.openpdf.saveMany(files)
+      setNotice(saved ? { kind: 'info', text: `Saved ${saved.written.length} PDF${saved.written.length === 1 ? '' : 's'} to ${saved.dir}` } : null)
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not fill the form from the CSV: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   const chooseTabOrder = (order: TabOrder) => void applyPageEdit((b) => setTabOrder(b, order), 'Tab order changed')
   const stepTabOrder = (dir: -1 | 1) => designSel && void applyPageEdit((b) => moveInTabOrder(b, designSel.name, dir), 'Tab order changed')
   /** A push button was pressed in the filled-in form. */
   const pressFormButton = (f: FormField) => {
+    if (isImageField(f)) return void chooseFieldImage(f)
     const a = f.action
     if (!a || a.kind === 'none') return
     if (a.kind === 'reset') resetForm()
@@ -1781,7 +1977,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         else if (r.alerts.length) setNotice({ kind: 'info', text: r.alerts.join(' ') })
         await applyCalculations(merged)
       })
-    } else setNotice({ kind: 'info', text: 'Sending a form to a web address is not supported yet. Use Export to save the data.' })
+    } else if (a.kind === 'submit') void submitForm(a.url, a.format)
   }
 
   // Bookmark edits come quicker than the document reloads: keep the latest tree and write it when free.
@@ -2582,7 +2778,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }, [pages.length, bytes, annotsDirty, formValues, zDirty, locked, annots, deleted, hiddenLayers, currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Print ----------------------------------------------------------------------------------------
-  const [printDialog, setPrintDialog] = useState<{ viewRange: [number, number] | null } | null>(null)
+  const [printDialog, setPrintDialog] = useState<{ viewRange: [number, number] | null; defaults: PrintDefaults | null } | null>(null)
   const [printing, setPrinting] = useState<{ done: number; total: number; ctrl: AbortController } | null>(null)
   const openPrint = useCallback(() => {
     if (!pages.length || printing || permissions?.print === 'none') return
@@ -2598,8 +2794,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       })
       if (seen.length) viewRange = [Math.min(...seen), Math.max(...seen)]
     }
-    setPrintDialog((d) => d ?? { viewRange })
-  }, [pages.length, printing, permissions])
+    // The document's own print presets (copies, two-sided, scaling, page range) are what the dialog starts with.
+    void readViewPrefs(bytes).then(
+      (v) => printDefaults(v, pages.length, pages[0]),
+      () => null
+    ).then((defaults) => setPrintDialog((d) => d ?? { viewRange, defaults }))
+  }, [pages, printing, permissions, bytes])
 
   /** The document as it prints: pending annotation edits written into a copy (so the printout matches what Save would write), and layers hidden in the view hidden on paper too. */
   const preparePrint = async () => {
@@ -2858,6 +3058,48 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     else setPageText(pageName(currentPage))
   }
 
+  // ---- Send by e-mail -------------------------------------------------------------------------------
+  // The document is saved first (Save As if it has no file yet), then the dialog offers what can honestly be done.
+  const [mailDialog, setMailDialog] = useState<{ name: string; path: string } | null>(null)
+  const savedState = useRef({ path, dirty, name })
+  savedState.current = { path, dirty, name }
+  const sendByEmail = async () => {
+    if (dirty || !path) await save(false)
+    await new Promise((r) => setTimeout(r, 80)) // let the saved path reach this component
+    const s = savedState.current
+    if (s.path && !s.dirty) setMailDialog({ name: s.name, path: s.path })
+    else setNotice({ kind: 'error', text: 'Nothing was sent: the document has to be saved first.' })
+  }
+
+  // ---- Initial view ---------------------------------------------------------------------------------
+  // The file's own wish for how it opens (page layout, navigation tab, magnification, page, title, toolbars) is
+  // followed once, when the document first shows. Window size and position are not: this program has one tabbed window.
+  const openViewDone = useRef(false)
+  const [shownTitle, setShownTitle] = useState('')
+  useEffect(() => {
+    if (openViewDone.current || !client || !pages.length || recovered) return
+    openViewDone.current = true
+    void readViewPrefs(bytes)
+      .then(async (v) => {
+        const o = openViewFrom(v)
+        if (o.twoUp !== undefined) setPageMode({ twoUp: o.twoUp, continuous: o.continuous ?? true, cover: o.cover ?? false })
+        if (o.zoom !== undefined) setMode(o.zoom)
+        if (o.sidebar !== undefined) setSidebar(o.sidebar)
+        if (o.hideToolbar) setReadingMode(true)
+        if (o.displayTitle) setShownTitle((await readProps(bytes)).title)
+        if (o.page !== undefined) window.setTimeout(() => goTo(o.page ?? 0), 250)
+      })
+      .catch(() => undefined)
+  }, [client, pages.length, bytes, recovered]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!active || !shownTitle) return
+    const before = document.title
+    document.title = `${shownTitle} - OpenPDF`
+    return () => {
+      document.title = before
+    }
+  }, [active, shownTitle])
+
   const zoomValue = typeof mode === 'number' ? (ZOOM_STEPS.includes(mode) ? String(mode) : 'custom') : mode
   const opPages = pageSel.length ? pageSel : [Math.min(currentPage, Math.max(0, pages.length - 1))]
   opPagesRef.current = pageSel
@@ -2965,6 +3207,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             <>
               <RGroup label={t('Document')}>
                 <RB big icon={FolderOpen} label={t('Open')} onClick={onOpen} title={t('Open a PDF (Ctrl+O)')} />
+                <RStack>
+                  <RB icon={Globe} label={t('Open from URL')} onClick={onOpenUrl} title={t('Open a PDF from an https address')} />
+                  <RB icon={History} label={t('Reopen last session')} onClick={onRestoreSession} title={t('Reopen the documents that were open when OpenPDF last closed')} />
+                </RStack>
                 <RB big icon={Save} label={t('Save')} badge={dirty} onClick={() => void save(false)} disabled={saving || !pages.length} title={dirty ? 'Save (Ctrl+S). There are unsaved changes' : 'Save (Ctrl+S)'} />
                 <RB big icon={SaveAll} label={t('Save as')} onClick={() => setCmdDialog({ kind: 'saveas' })} disabled={saving || !pages.length} title={t('Save a copy (Ctrl+Shift+S)')} />
                 <RB big icon={Combine} label={t('Combine files')} onClick={() => setCombineOpen(true)} title={t('Combine PDFs, pictures and Office files into one PDF')} />
@@ -2977,6 +3223,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={GitCompare} label={t('Compare…')} onClick={() => void compareWith()} disabled={!pages.length} title={t('Compare the comments with another copy of this document')} />
                   <RB icon={FileOutput} label={t('Export FDF')} onClick={() => setCmdDialog({ kind: 'comments', mode: 'export', format: 'fdf' })} disabled={!commentAnnots.length} title={t('Export the comments as FDF')} />
                 </RStack>
+              </RGroup>
+              <RGroup label={t('Share')}>
+                <RB big icon={Mail} label={t('Send by e-mail')} onClick={() => void sendByEmail()} disabled={!pages.length || saving || locked} title={t('Save the document, then show it in Explorer to attach to an e-mail message')} />
               </RGroup>
               <RGroup label={t('Automate')}>
                 <RB big icon={Puzzle} label={t('Plugins')} onClick={() => setPluginsOpen(true)} title={t('Install and run plugins: small sandboxed scripts that make changes you choose')} />
@@ -3228,6 +3477,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Shapes} label={t('Edit shape')} onClick={() => setTool(tool === 'editpath' ? 'select' : 'editpath')} pressed={tool === 'editpath'} disabled={!pages.length || busy || locked} title={t('Click a line, box or filled shape that is part of the page to move, resize or delete it')} />
               </RGroup>
               <RGroup label={t('Images')}>
+                <RB big icon={QrCode} label={t('QR / barcode')} onClick={() => setBarcodeOpen(true)} disabled={!pages.length || busy || locked} title={t('Add a QR code or bar code (Code 128, Code 39, EAN-13) to the page, from typed text or a template with the file name, page and date')} />
                 <RB big icon={ImageIcon} label={t('Add image')} onClick={() => void startAddImage()} pressed={tool === 'addimage'} disabled={!pages.length || busy || locked} title={t('Choose a PNG or JPEG, then click the page to place it as page content')} />
                 <RB big icon={ImageIcon} label={t('Edit image')} onClick={() => setTool(tool === 'editimage' ? 'select' : 'editimage')} pressed={tool === 'editimage'} disabled={!pages.length || busy || locked} title={t('Click a picture to move it, resize it, replace it or delete it')} />
               </RGroup>
@@ -3255,6 +3505,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={RectangleHorizontal} label={t('Button')} onClick={() => startField('button')} pressed={tool === 'formfield' && fieldKind === 'button'} disabled={!pages.length || busy || locked} title={t('Draw a push button')} />
                 </RStack>
                 <RB big icon={PenLine} label={t('Signature')} onClick={() => startField('signature')} pressed={tool === 'formfield' && fieldKind === 'signature'} disabled={!pages.length || busy || locked} title={t('Draw a signature field')} />
+                <RStack>
+                  <RB icon={CalendarDaysIcon} label={t('Date')} onClick={() => startField('text', 'date')} pressed={tool === 'formfield' && fieldVariant === 'date'} disabled={!pages.length || busy || locked} title={t('Draw a date field: a text field with a date format and a date picker when it is filled in')} />
+                  <RB icon={ImageIcon} label={t('Image')} onClick={() => startField('button', 'image')} pressed={tool === 'formfield' && fieldVariant === 'image'} disabled={!pages.length || busy || locked} title={t('Draw an image field: a button that lets whoever fills the form choose a picture')} />
+                  <RB icon={QrCode} label={t('Barcode')} onClick={() => startField('text', 'barcode')} pressed={tool === 'formfield' && fieldVariant === 'barcode'} disabled={!pages.length || busy || locked} title={t('Draw a barcode field: its value is drawn as a QR code or bar code')} />
+                </RStack>
               </RGroup>
               <RGroup label={t('Find fields')}>
                 <RB big icon={ScanSearch} label={t('Detect fields')} onClick={() => void detectFormFields()} disabled={!pages.length || busy || locked || !client} title={t('Find blanks, lines, boxes and squares on the pages and make them into fields')} />
@@ -3271,8 +3526,35 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                   <RB icon={ArrowDown} label={t('Later')} onClick={() => stepTabOrder(1)} disabled={!designSel || tool !== 'formedit' || busy} title={t('Move the selected field later in the tab order')} />
                 </RStack>
               </RGroup>
+              <RGroup label={t('Align fields')}>
+                <RStack>
+                  <RB icon={AlignHorizontalJustifyStart} label={t('Left')} onClick={() => arrangeFields({ kind: 'align', mode: 'left' })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Align the selected fields to their left edge (Shift-click fields to select several)')} />
+                  <RB icon={AlignHorizontalJustifyCenter} label={t('Centre')} onClick={() => arrangeFields({ kind: 'align', mode: 'centre' })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Centre the selected fields horizontally')} />
+                  <RB icon={AlignHorizontalJustifyEnd} label={t('Right')} onClick={() => arrangeFields({ kind: 'align', mode: 'right' })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Align to the right edge')} />
+                </RStack>
+                <RStack>
+                  <RB icon={AlignVerticalJustifyStart} label={t('Top')} onClick={() => arrangeFields({ kind: 'align', mode: 'top' })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Align to the top edge')} />
+                  <RB icon={AlignVerticalJustifyCenter} label={t('Middle')} onClick={() => arrangeFields({ kind: 'align', mode: 'middle' })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Centre vertically')} />
+                  <RB icon={AlignVerticalJustifyEnd} label={t('Bottom')} onClick={() => arrangeFields({ kind: 'align', mode: 'bottom' })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Align to the bottom edge')} />
+                </RStack>
+                <RStack>
+                  <RB icon={AlignHorizontalDistributeCenter} label={t('Spread across')} onClick={() => arrangeFields({ kind: 'distribute', axis: 'horizontal' })} disabled={designRefs().length < 3 || tool !== 'formedit' || busy || locked} title={t('Space three or more selected fields evenly from left to right')} />
+                  <RB icon={AlignVerticalDistributeCenter} label={t('Spread down')} onClick={() => arrangeFields({ kind: 'distribute', axis: 'vertical' })} disabled={designRefs().length < 3 || tool !== 'formedit' || busy || locked} title={t('Space three or more selected fields evenly from top to bottom')} />
+                </RStack>
+                <RStack>
+                  <RB icon={UnfoldHorizontal} label={t('Same width')} onClick={() => designSel && arrangeFields({ kind: 'match', dim: 'width', primary: designSel })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Make the selected fields as wide as the first one you selected')} />
+                  <RB icon={UnfoldVertical} label={t('Same height')} onClick={() => designSel && arrangeFields({ kind: 'match', dim: 'height', primary: designSel })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Make the selected fields as high as the first one you selected')} />
+                  <RB icon={Maximize2} label={t('Same size')} onClick={() => designSel && arrangeFields({ kind: 'match', dim: 'both', primary: designSel })} disabled={designRefs().length < 2 || tool !== 'formedit' || busy || locked} title={t('Make the selected fields the same width and height as the first one you selected')} />
+                </RStack>
+                <RB big icon={Copy} label={t('Duplicate')} onClick={() => setDupOpen(true)} disabled={!designSel || tool !== 'formedit' || busy || locked} title={t('Copy the selected field to other pages or down the page')} />
+              </RGroup>
+              <RGroup label={t('Scripts')}>
+                <RB big icon={Braces} label={t('Document JavaScript')} onClick={() => setDocScriptsOpen(true)} disabled={!pages.length || busy || locked} title={t('Functions every field script in this document can call')} />
+                <RB big icon={List} label={t('Fields pane')} onClick={() => setSidebar(sidebar === 'fields' ? null : 'fields')} pressed={sidebar === 'fields'} title={t('List every field: select, rename, delete or reorder them')} />
+              </RGroup>
               <RGroup label={t('Form data')}>
                 <RB big icon={FileInput} label={t('Import…')} onClick={() => void importFormData()} disabled={!formFields.length || busy} title={t('Fill the fields from an FDF, XFDF, CSV or XML file')} />
+                <RB big icon={TableIcon} label={t('Populate from CSV')} onClick={() => setPopulateOpen(true)} disabled={!formFields.length || busy} title={t('Make one filled PDF for every row of a CSV file')} />
                 <RStack>
                   <RB icon={FileOutput} label={t('XFDF')} onClick={() => void exportFormData('xfdf')} disabled={!formFields.length} title={t('Export the values as XFDF (XML)')} />
                   <RB icon={FileOutput} label={t('FDF')} onClick={() => void exportFormData('fdf')} disabled={!formFields.length} title={t('Export the values as FDF')} />
@@ -3399,6 +3681,25 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RStack>
                   <RB icon={Scan} label={t('Actual size')} onClick={() => setMode(1)} disabled={!pages.length} pressed={mode === 1} title={t('Actual size (Ctrl+1)')} />
                   <RB icon={ZoomIn} label={t('Zoom in')} onClick={() => stepZoom(1)} disabled={!pages.length} title={t('Zoom in (Ctrl++)')} />
+                </RStack>
+                <RStack>
+                  <RB icon={Crop} label={t('Fit visible')} onClick={() => setMode('fit-visible')} disabled={!pages.length} pressed={mode === 'fit-visible'} title={t('Fit visible: zoom so the content, without the blank margins, fills the width')} />
+                </RStack>
+              </RGroup>
+              <RGroup label={t('Workspace')}>
+                <RB big icon={Search} label={t('Loupe')} onClick={() => setLoupe((o) => !o)} disabled={!pages.length} pressed={loupe} title={t('Loupe: a magnifier window that follows the pointer')} />
+                <RStack>
+                  <select className="rselect" aria-label={t('Loupe magnification')} value={loupeFactor} onChange={(e) => setLoupeFactor(Number(e.target.value))} title={t('Loupe magnification')}>
+                    {LOUPE_FACTORS.map((f) => (
+                      <option key={f} value={f}>
+                        {f}×
+                      </option>
+                    ))}
+                  </select>
+                </RStack>
+                <RStack>
+                  <RB icon={Rows2} label={t('Split horizontally')} onClick={() => setSplit(split === 'horizontal' ? null : 'horizontal')} disabled={!pages.length} pressed={split === 'horizontal'} title={t('Show the same document in two panes, one above the other, each with its own scrolling and zoom')} />
+                  <RB icon={Columns2} label={t('Split vertically')} onClick={() => setSplit(split === 'vertical' ? null : 'vertical')} disabled={!pages.length} pressed={split === 'vertical'} title={t('Show the same document in two panes side by side, each with its own scrolling and zoom')} />
                 </RStack>
               </RGroup>
               <RGroup label={t('Rulers and grid')}>
@@ -3628,7 +3929,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       )}
 
       {detected && <DetectDialog found={detected} onApply={(c) => void createDetected(c)} onClose={() => setDetected(null)} />}
-      {fieldDraft && <FieldDialog type={fieldDraft.type} names={formFields.map((f) => f.name)} sourceNames={formFields.filter((f) => f.type === 'text' || f.type === 'dropdown').map((f) => f.name)} proposedName={proposeName(fieldDraft.type)} onCreate={(s) => void createField(s)} onUpdate={() => {}} onClose={() => setFieldDraft(null)} />}
+      {fieldDraft && <FieldDialog type={fieldDraft.type} names={formFields.map((f) => f.name)} sourceNames={formFields.filter((f) => f.type === 'text' || f.type === 'dropdown').map((f) => f.name)} variant={fieldVariant} proposedName={proposeName(fieldDraft.type, fieldVariant)} onCreate={(s) => void createField(s)} onUpdate={() => {}} onClose={() => setFieldDraft(null)} />}
+      {barcodeOpen && <BarcodeDialog sizes={pages.map((p) => ({ width: p.width, height: p.height }))} currentPage={currentPage} fileName={name} onPlace={(i) => void placeBarcodeItems(i)} onClose={() => setBarcodeOpen(false)} />}
+      {docScriptsOpen && <DocScriptsDialog scripts={docScripts} fileName={name} onSave={(s) => void saveDocScripts(s)} onClose={() => setDocScriptsOpen(false)} />}
+      {dupOpen && designSel && <DuplicateFieldDialog name={designSel.name} pageCount={pages.length} currentPage={formFields.find((f) => f.name === designSel.name)?.widgets[designSel.widget]?.page ?? currentPage} onSubmit={(m) => void duplicateField(m)} onClose={() => setDupOpen(false)} />}
+      {populateOpen && <PopulateDialog fields={formFields} stem={name.replace(/\.pdf$/i, '')} onRun={(r) => void runPopulate(r)} onClose={() => setPopulateOpen(false)} />}
       {fieldEdit &&
         (() => {
           const f = formFields.find((x) => x.name === fieldEdit)
@@ -3846,16 +4151,22 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }}
         />
       )}
+      {mailDialog && <MailDialog name={mailDialog.name} path={mailDialog.path} onClose={() => setMailDialog(null)} />}
       {docProps && (
         <DocPropsDialog
           initial={docProps}
+          bytes={bytes}
           fileName={name}
           pageCount={pages.length}
           size={bytes.length}
           onClose={() => setDocProps(null)}
-          onApply={(p) => {
+          onApply={(p, extras) => {
             setDocProps(null)
-            void applyPageEdit((b) => writeProps(b, p), 'Document properties updated')
+            void applyPageEdit(async (b) => {
+              let out = await writeProps(b, p)
+              if (extras) out = await writeViewPrefs(await writeCustomProps(out, extras.custom), extras.view)
+              return out
+            }, 'Document properties updated')
           }}
           onRemove={() => {
             setDocProps(null)
@@ -3967,6 +4278,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           sizes={pages}
           currentPage={currentPage}
           viewRange={printDialog.viewRange}
+          defaults={printDialog.defaults}
           selected={pageSel}
           prepare={preparePrint}
           onPrint={(job) => void runPrint(job)}
@@ -4162,6 +4474,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 media={media}
                 onPlayMedia={setPlayer}
                 onSaveMedia={(m) => void saveMedia(m)}
+                fields={
+                  <FieldsPane
+                    fields={formFields}
+                    selected={designSel?.name ?? null}
+                    labels={pageLabels}
+                    canEdit={!locked && !busy}
+                    onSelect={selectFieldFromPane}
+                    onRename={(n, to) => void changeField(n, { name: to })}
+                    onDelete={(n) => void removeField(n)}
+                    onTabMove={(n, d) => void applyPageEdit((b) => moveInTabOrder(b, n, d), 'Tab order changed')}
+                    onProperties={setFieldEdit}
+                  />
+                }
                 isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
                 onToggleLayer={toggleLayer}
                 onEditOutline={locked ? undefined : editOutline}
@@ -4225,6 +4550,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 }}
               />
             )}
+            <div className={split ? `split-host split${split === 'vertical' ? ' vertical' : ''}` : 'split-host'}>
             <Viewer
               ref={viewer}
               client={client}
@@ -4297,7 +4623,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                       onButton: pressFormButton,
                       onCommit: (f, v) => void commitField(f, v),
                       display: displayed,
-                      design: tool === 'formedit' ? { selected: designSel, onSelect: setDesignSel, onPlace: moveField, onEdit: setFieldEdit, onDelete: (n) => void removeField(n) } : undefined
+                      design: tool === 'formedit' ? { selected: designSel, onSelect: selectDesign, extra: designExtra, onToggle: toggleDesign, onPlace: moveField, onEdit: setFieldEdit, onDelete: (n) => void removeField(n) } : undefined
                     }
                   : undefined
               }
@@ -4320,6 +4646,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onPageChange={setCurrentPage}
               onSize={onSize}
             />
+            {split && <SplitPane client={client} pages={pages} rotation={rotation} epoch={epoch} vertical={split === 'vertical'} onClose={() => setSplit(null)} />}
+            </div>
+            {loupe && active && <Loupe client={client} pages={pages} zoom={zoom} rotation={rotation} factor={loupeFactor} />}
             {comparison && (
               <ComparePanel
                 otherName={comparison.otherName}
@@ -4389,12 +4718,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           aria-label="Zoom"
           onChange={(e) => {
             const v = e.target.value
-            if (v === 'fit-width' || v === 'fit-page') setMode(v)
+            if (v === 'fit-width' || v === 'fit-page' || v === 'fit-visible') setMode(v)
             else if (v !== 'custom') setMode(Number(v))
           }}
         >
           <option value="fit-width">Fit width</option>
           <option value="fit-page">Fit page</option>
+          <option value="fit-visible">Fit visible</option>
           {zoomValue === 'custom' && <option value="custom">{Math.round(zoom * 100)}%</option>}
           {ZOOM_STEPS.map((s) => (
             <option key={s} value={s}>

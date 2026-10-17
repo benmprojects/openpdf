@@ -6,6 +6,7 @@ import { SettingsDialog, ShortcutsDialog } from './AppDialogs'
 import type { SearchSource } from './multiSearch'
 import { SearchPanel, type SearchJump } from './SearchPanel'
 import { Logo } from './Logo'
+import { OpenUrlDialog } from './FileDialogs'
 import { IconButton } from './Ribbon'
 import { DocView, type DocMeta } from './DocView'
 import { addCatalogues, setLanguage, t, useLanguage } from './i18n'
@@ -264,12 +265,60 @@ export function App() {
     return () => window.removeEventListener('beforeunload', block)
   }, [anyDirty])
 
+  // ---- Session: the saved documents that were open, to reopen next time ----
+  /** What was open when OpenPDF last closed (as read at the start; the saved list changes as tabs do). */
+  const [previousSession, setPreviousSession] = useState<string[]>([])
+  const [sessionReady, setSessionReady] = useState(false)
+
+  /** Reads the files of a session; the ones that are gone are counted and left out. */
+  const readSession = useCallback(async (paths: string[]): Promise<{ files: Incoming[]; missing: number }> => {
+    const files: Incoming[] = []
+    let missing = 0
+    for (const p of paths) {
+      if (tabsRef.current.some((t) => t.path === p)) continue
+      try {
+        files.push(await window.openpdf.readFile(p))
+      } catch {
+        missing++
+      }
+    }
+    return { files, missing }
+  }, [])
+
+  /** The File command: reopen what was open last time, skipping what is open now. */
+  const reopenSession = useCallback(async () => {
+    setError(null)
+    if (!previousSession.length) return setError('There is no earlier session to reopen.')
+    const { files, missing } = await readSession(previousSession)
+    addFiles(files)
+    if (missing) setError(`${missing} of the earlier documents could not be found, so ${missing === 1 ? 'it was' : 'they were'} left out.`)
+    else if (!files.length) setError('The documents from the last session are already open.')
+  }, [previousSession, readSession, addFiles])
+
   const initDone = useRef(false)
   useEffect(() => {
     if (initDone.current) return // StrictMode runs effects twice in development
     initDone.current = true
-    window.openpdf.initialFiles().then(addFiles)
-  }, [addFiles])
+    void (async () => {
+      const [initial, s] = await Promise.all([window.openpdf.initialFiles(), window.openpdf.getSettings()])
+      setPreviousSession(s.lastSession)
+      let restored: Incoming[] = []
+      if (s.restoreSession) {
+        const r = await readSession(s.lastSession.filter((p) => !initial.some((f) => f.path === p)))
+        restored = r.files
+        if (r.missing) setError(`${r.missing} of the documents from the last session could not be found, so ${r.missing === 1 ? 'it was' : 'they were'} left out.`)
+      }
+      addFiles([...restored, ...initial])
+      setSessionReady(true)
+    })()
+  }, [addFiles, readSession])
+
+  // Keep the saved list of open documents current (only once the start-up restore has run, so it cannot erase itself).
+  useEffect(() => {
+    if (!sessionReady) return
+    void window.openpdf.setSettings({ lastSession: tabsRef.current.flatMap((t) => (t.path ? [t.path] : [])) })
+  }, [pathsKey, sessionReady])
+  const [urlDialog, setUrlDialog] = useState(false)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -426,7 +475,8 @@ export function App() {
           {error}
         </div>
       )}
-      {dialog === 'settings' && settings && <SettingsDialog settings={settings} onChange={changeSettings} onClose={() => setDialog(null)} />}
+      {dialog === 'settings' && settings && <SettingsDialog settings={settings} onChange={changeSettings} onImported={setSettings} onClose={() => setDialog(null)} />}
+      {urlDialog && <OpenUrlDialog onOpen={(f) => addFiles([{ name: f.name, data: f.data, recovered: true }])} onClose={() => setUrlDialog(false)} />}
       {dialog === 'shortcuts' && <ShortcutsDialog onClose={() => setDialog(null)} />}
       <div className="workspace">
       <main className="content">
@@ -447,6 +497,8 @@ export function App() {
             onPaneSide={setPaneSide}
             onSidebarWidth={setSidebarWidth}
             onOpen={open}
+            onOpenUrl={() => setUrlDialog(true)}
+            onRestoreSession={() => void reopenSession()}
             onNewDoc={(name, data) => addFiles([{ name, data, recovered: true }])}
             onCloseDoc={() => close(t.id)}
             author={settings?.author ?? ''}
@@ -469,6 +521,12 @@ export function App() {
                 <button className="primary big" onClick={open}>
                   <FolderOpen size={18} strokeWidth={1.8} aria-hidden />
                   Open a PDF…
+                </button>
+                <button className="big" onClick={() => setUrlDialog(true)}>
+                  {t('Open from URL…')}
+                </button>
+                <button className="big" onClick={() => void reopenSession()} disabled={!previousSession.length}>
+                  {t('Reopen last session')}
                 </button>
                 <span className="muted small">or drag files onto this window · Ctrl+O</span>
               </div>
