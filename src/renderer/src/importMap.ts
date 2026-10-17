@@ -30,6 +30,9 @@ export function annotsFromImported(page: number, list: ImportedAnnot[], replies:
     cloud: r.cloud,
     blend: r.blend,
     flags: r.flags,
+    subject: r.subject,
+    layer: r.layer,
+    icon: r.icon,
     author: r.author,
     created: r.created ? pdfDateToIso(r.created) : undefined,
     modified: r.modified ? pdfDateToIso(r.modified) : undefined,
@@ -42,6 +45,7 @@ export function annotsFromImported(page: number, list: ImportedAnnot[], replies:
           text: x.text,
           date: pdfDateToIso(x.date) ?? new Date(0).toISOString(),
           state: REVIEW_STATES.includes(x.state as ReviewState) ? (x.state as ReviewState) : undefined,
+          mark: x.mark,
           origin: { index: x.index, subtype: 1, rect: x.rect }
         })
       )

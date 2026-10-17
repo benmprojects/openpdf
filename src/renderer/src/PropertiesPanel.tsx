@@ -1,4 +1,4 @@
-import { Bookmark, Paintbrush, Pin, Save, Trash2, X } from 'lucide-react'
+import { Bookmark, Download, Paintbrush, Pin, Save, Trash2, Upload, X } from 'lucide-react'
 import { useState } from 'react'
 import {
   annotLabel,
@@ -6,6 +6,7 @@ import {
   blendOf,
   canBlend,
   canCloud,
+  canIcon,
   canDash,
   canFill,
   canLineEnds,
@@ -14,6 +15,9 @@ import {
   FONT_FAMILIES,
   formatWhen,
   hasFont,
+  NOTE_ICONS,
+  reviewHistory,
+  type NoteIcon,
   isLocked,
   isPrintable,
   isShapeKind,
@@ -54,6 +58,14 @@ interface Props {
   selectedCount?: number
   /** Makes a saved style the default for its tool. */
   onPresetDefault?: (p: ToolPreset) => void
+  /** Sets the subject of the selected annotation. */
+  onSubject?: (subject: string) => void
+  /** The document's layers, and moving the selected annotation to one ('' for none). */
+  layers?: { key: string; name: string }[]
+  onLayer?: (key: string) => void
+  /** Saves the saved styles as a file, and reads a file of styles into the list. */
+  onExportStyles?: () => void
+  onImportStyles?: () => void
   /** Switches the Print and Locked flags of the selected annotation. */
   onFlags?: (patch: { printable?: boolean; locked?: boolean }) => void
   onClose: () => void
@@ -63,11 +75,15 @@ const endLabel = (e: LineEnd) =>
   ({ None: t('None'), OpenArrow: t('Open arrow'), ClosedArrow: t('Closed arrow'), ROpenArrow: t('Reversed open arrow'), RClosedArrow: t('Reversed closed arrow'), Circle: t('Circle'), Square: t('Square'), Diamond: t('Diamond'), Slash: t('Slash'), Butt: t('Butt') })[e]
 
 /** Every property of the selected annotation (or the current tool), with tool defaults and saved presets. */
-export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeDefault, presets, onSavePreset, onUsePreset, onDeletePreset, onApplyPreset, selectedCount = 0, onPresetDefault, onFlags, onClose }: Props) {
+export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeDefault, presets, onSavePreset, onUsePreset, onDeletePreset, onApplyPreset, selectedCount = 0, onPresetDefault, onSubject, layers, onLayer, onExportStyles, onImportStyles, onFlags, onClose }: Props) {
   const [presetName, setPresetName] = useState('')
   const shape = isShapeKind(kind) || kind === 'stamp' || kind === 'callout'
   const locked = !!annot && isLocked(annot)
   const ends = lineEndsOf({ kind, lineStart: style.lineStart, lineEnd: style.lineEnd })
+  const iconLabels: Record<NoteIcon, string> = { Comment: t('Comment'), Note: t('Note'), Help: t('Help'), Key: t('Key'), Paragraph: t('Paragraph'), Insert: t('Insert') }
+  const history = annot ? reviewHistory(annot) : []
+  const historyLabel = (e: ReturnType<typeof reviewHistory>[number]) =>
+    e.kind === 'created' ? t('Created') : e.kind === 'modified' ? t('Changed') : e.kind === 'checked' ? t('Checked') : e.kind === 'unchecked' ? t('Check removed') : e.kind === 'status' ? `${t('Status')}: ${e.text}` : `${t('Reply')}: ${e.text}`
   const blendLabels: Record<BlendMode, string> = { Normal: t('Normal'), Multiply: t('Multiply'), Screen: t('Screen'), Overlay: t('Overlay'), Darken: t('Darken'), Lighten: t('Lighten') }
   return (
     <aside className="props-panel" aria-label="Properties">
@@ -177,6 +193,18 @@ export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeD
               </select>
             </>
           )}
+          {canIcon(kind) && (
+            <>
+              <label htmlFor="prop-icon">{t('Icon')}</label>
+              <select id="prop-icon" value={style.icon ?? 'Comment'} onChange={(e) => onStyle({ icon: e.target.value as NoteIcon })}>
+                {NOTE_ICONS.map((i) => (
+                  <option key={i} value={i}>
+                    {iconLabels[i]}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           {hasFont(kind) && (
             <>
               <label htmlFor="prop-font">Font</label>
@@ -201,6 +229,25 @@ export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeD
             <>
               <label htmlFor="prop-author">Author</label>
               <input id="prop-author" value={annot.author ?? ''} onChange={(e) => onAuthor(e.target.value)} />
+              {onSubject && (
+                <>
+                  <label htmlFor="prop-subject">{t('Subject')}</label>
+                  <input id="prop-subject" value={annot.subject ?? ''} onChange={(e) => onSubject(e.target.value)} />
+                </>
+              )}
+              {onLayer && layers && layers.length > 0 && (
+                <>
+                  <label htmlFor="prop-layer">{t('Layer')}</label>
+                  <select id="prop-layer" value={annot.layer && layers.some((l) => l.key === annot.layer) ? annot.layer : ''} onChange={(e) => onLayer(e.target.value)}>
+                    <option value="">{t('(all layers)')}</option>
+                    {layers.map((l) => (
+                      <option key={l.key} value={l.key}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
               <span className="muted">Created</span>
               <span>{formatWhen(annot.created) || '—'}</span>
               <span className="muted">Modified</span>
@@ -221,12 +268,42 @@ export function PropertiesPanel({ annot, kind, style, onStyle, onAuthor, onMakeD
             </label>
           </div>
         )}
+        {annot && history.length > 0 && (
+          <>
+            <h3>{t('Review history')}</h3>
+            <ul className="props-history" aria-label={t('Review history')}>
+              {history.map((e, i) => (
+                <li key={i}>
+                  <span className="muted small">
+                    {formatWhen(e.when)}
+                    {e.author ? ` · ${e.author}` : ''}
+                  </span>
+                  <span>{historyLabel(e)}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         <div className="props-actions">
           <button className="btn" onClick={onMakeDefault} title={`New ${annotLabel(kind).toLowerCase()} annotations will use this style, in every document`}>
             <Save size={14} aria-hidden /> Make default for {annotLabel(kind)}
           </button>
         </div>
         <h3>Presets</h3>
+        {(onExportStyles || onImportStyles) && (
+          <div className="props-actions">
+            {onExportStyles && (
+              <button className="btn" onClick={onExportStyles} disabled={!presets.length} title={t('Save the saved styles as a file to share')}>
+                <Download size={14} aria-hidden /> {t('Export styles')}
+              </button>
+            )}
+            {onImportStyles && (
+              <button className="btn" onClick={onImportStyles} title={t('Add the styles from a file; a style with the same name and tool is replaced')}>
+                <Upload size={14} aria-hidden /> {t('Import styles')}
+              </button>
+            )}
+          </div>
+        )}
         <form
           className="props-preset-form"
           onSubmit={(e) => {

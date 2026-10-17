@@ -157,3 +157,54 @@ export const pdfUnit = (unit: string) => (unit === 'ft-in' ? 'ft' : unit)
 export function quantityOf(kind: 'distance' | 'perimeter' | 'area', lengthPt: number, areaPt2: number, factor: number): number {
   return kind === 'area' ? areaPt2 * factor * factor : lengthPt * factor
 }
+
+// ---- Scale lists as files ----------------------------------------------------------------------------
+
+export const SCALE_LIST_FORMAT = 'openpdf-scales'
+
+/** The saved scales as the text of a scale list file (JSON). */
+export function exportScaleList(presets: ScalePreset[]): string {
+  return JSON.stringify(
+    {
+      format: SCALE_LIST_FORMAT,
+      version: 1,
+      scales: presets.map((p) => ({ name: p.name, ratio: p.ratio, unit: p.unit, ...(p.fraction ? { fraction: p.fraction } : typeof p.decimals === 'number' ? { decimals: p.decimals } : {}) }))
+    },
+    null,
+    2
+  )
+}
+
+/** Reads a scale list file. Throws a plain message when it is not one; entries that make no sense are skipped. */
+export function parseScaleList(text: string, newId: () => string): ScalePreset[] {
+  let data: unknown
+  try {
+    data = JSON.parse(text.replace(/^\uFEFF/, ''))
+  } catch {
+    throw new Error('This is not a scale list file.')
+  }
+  const list = Array.isArray(data) ? data : (data as { scales?: unknown } | null)?.scales
+  if (!Array.isArray(list)) throw new Error('This is not a scale list file.')
+  const out: ScalePreset[] = []
+  for (const item of list) {
+    const r = item as { name?: unknown; ratio?: unknown; unit?: unknown; decimals?: unknown; fraction?: unknown } | null
+    if (!r || typeof r.name !== 'string' || !r.name.trim() || typeof r.ratio !== 'number' || !(r.ratio > 0) || !Number.isFinite(r.ratio) || typeof r.unit !== 'string' || !isUnit(r.unit)) continue
+    const p: ScalePreset = { id: newId(), name: r.name.trim().slice(0, 80), ratio: r.ratio, unit: r.unit }
+    if (typeof r.fraction === 'number' && (FRACTIONS as readonly number[]).includes(r.fraction) && isImperial(r.unit)) p.fraction = r.fraction
+    else if (typeof r.decimals === 'number' && r.decimals >= 0 && r.decimals <= 6) p.decimals = Math.floor(r.decimals)
+    out.push(p)
+  }
+  if (!out.length) throw new Error('The file has no scales in it.')
+  return out
+}
+
+/** `incoming` added to `existing`; a scale with the same name replaces the old one (keeping its place). */
+export function mergeScaleLists(existing: ScalePreset[], incoming: ScalePreset[]): ScalePreset[] {
+  const out = [...existing]
+  for (const p of incoming) {
+    const at = out.findIndex((x) => x.name === p.name)
+    if (at >= 0) out[at] = { ...p, id: out[at].id }
+    else out.push(p)
+  }
+  return out
+}

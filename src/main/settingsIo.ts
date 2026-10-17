@@ -16,7 +16,8 @@ export const PORTABLE_KEYS = [
   'printPaper',
   'toolDefaults',
   'toolPresets',
-  'scalePresets'
+  'scalePresets',
+  'markPresets'
 ] as const satisfies readonly (keyof Settings)[]
 
 export type PortableKey = (typeof PORTABLE_KEYS)[number]
@@ -45,7 +46,8 @@ const GUARDS: Record<PortableKey, (v: unknown) => boolean> = {
   printPaper: (v) => typeof v === 'string',
   toolDefaults: isObject,
   toolPresets: Array.isArray,
-  scalePresets: Array.isArray
+  scalePresets: Array.isArray,
+  markPresets: Array.isArray
 }
 
 export type ImportCheck = { ok: true; patch: Partial<Settings>; skipped: string[] } | { ok: false; error: string }

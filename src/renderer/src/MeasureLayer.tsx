@@ -1,8 +1,9 @@
 import type { Pt } from './annotations'
 import type { Rotation } from './viewRotation'
 import type { SnapHit } from './snap'
+import { measureLabelAt } from './measure'
 
-export type MeasureKind = 'distance' | 'perimeter' | 'area'
+export type MeasureKind = 'distance' | 'perimeter' | 'area' | 'angle'
 
 export interface Measurement {
   id: number
@@ -44,13 +45,13 @@ export function MeasureLayer({ items, draft, snap, zoom, rotation, size, label, 
       const ny = ((b.x - a.x) / len) * tick
       return `M${a.x - nx} ${a.y - ny} L${a.x + nx} ${a.y + ny}`
     }
-    const text = kind === 'calibrate' ? '' : pts.length > 1 ? label(kind, pts, page) : ''
-    const anchor = labelPoint(kind, pts)
+    const text = kind === 'calibrate' ? '' : kind === 'angle' ? (pts.length > 2 ? label(kind, pts, page) : '') : pts.length > 1 ? label(kind, pts, page) : ''
+    const anchor = kind === 'calibrate' ? labelPoint(kind, pts) : measureLabelAt(kind, pts)
     return (
       <g key={key} className={live ? 'measure live' : 'measure'}>
         {closed && <path d={d} className="measure-fill" />}
         <path d={d} fill="none" strokeWidth={stroke} />
-        {pts.length > 1 && kind !== 'area' && (
+        {pts.length > 1 && kind !== 'area' && kind !== 'angle' && (
           <path d={`${ticks(first, pts[1])} ${ticks(last, pts[pts.length - 2])}`} strokeWidth={stroke} />
         )}
         {pts.map((p, i) => (

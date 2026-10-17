@@ -3,6 +3,7 @@ import { clampPercent, paperPoints, shouldRotate, type PrintRunOptions } from '.
 import { PdfClient } from './pdfClient'
 import { renderTileSheet } from './tilePrint'
 import { tileLabel, tileSheets, type TileOptions } from '../../shared/tiling'
+import { buildVectorPrint } from './printVector'
 
 export interface PrintOptions extends Omit<PrintRunOptions, 'count'> {
   /** 0-based page indices, in print order. */
@@ -11,6 +12,8 @@ export interface PrintOptions extends Omit<PrintRunOptions, 'count'> {
   autoRotate: boolean
   /** Tile large pages over several sheets (one page per sheet layout only). */
   tile?: TileOptions
+  /** With `toFile`: write the pages as vector content (text stays text) instead of pictures. Falls back to pictures if that fails. */
+  vector?: boolean
 }
 
 /** Printable area of a sheet in tiled printing, in points: the paper less the edge a printer cannot reach. */
@@ -35,7 +38,20 @@ export async function printDocument(
   opts: PrintOptions,
   onProgress: (done: number, total: number) => void,
   signal?: AbortSignal
-): Promise<{ ok: boolean; error?: string; pdfPath?: string }> {
+): Promise<{ ok: boolean; error?: string; pdfPath?: string; fallback?: string }> {
+  let fallback: string | undefined
+  if (opts.vector && opts.toFile && !opts.tile) {
+    // Text-preserving path: the chosen pages are written with pdf-lib. A file it cannot handle prints as pictures instead.
+    try {
+      let out = await buildVectorPrint(bytes, { pages: opts.pages, layout: opts.layout, scaling: opts.scaling, centre: opts.centre, landscape: opts.landscape, paper: opts.paper, autoRotate: opts.autoRotate }, onProgress)
+      // pdf-lib leaves the original pages' objects behind; qpdf writes only what is reachable.
+      out = await window.openpdf.qpdf(out, { objectStreams: true, recompress: false, removeUnusedResources: false, linearise: false }).catch(() => out)
+      const saved = await window.openpdf.printSavePdf(out)
+      return saved
+    } catch (e) {
+      fallback = e instanceof Error ? e.message : String(e)
+    }
+  }
   const client = new PdfClient()
   const job = await window.openpdf.printBegin()
   try {
@@ -53,11 +69,12 @@ export async function printDocument(
         await window.openpdf.printPage(job, k, png, area.w, area.h)
         if (k === sheets.length - 1 || sheets[k + 1].page !== s.page) onProgress(++done, opts.pages.length)
       }
-      const { pages: _p, autoRotate: _a, tile: _t, ...runTiled } = opts
+      const { pages: _p, autoRotate: _a, tile: _t, vector: _v, ...runTiled } = opts
       void _p
       void _a
       void _t
-      return await window.openpdf.printRun(job, { ...runTiled, layout: { kind: 'single' }, scaling: { kind: 'fit' }, centre: true, count: sheets.length })
+      void _v
+      return { ...(await window.openpdf.printRun(job, { ...runTiled, layout: { kind: 'single' }, scaling: { kind: 'fit' }, centre: true, count: sheets.length })), fallback }
     }
     for (let n = 0; n < opts.pages.length; n++) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
@@ -73,10 +90,11 @@ export async function printDocument(
       await window.openpdf.printPage(job, n, png, turn ? size.height : size.width, turn ? size.width : size.height)
       onProgress(n + 1, opts.pages.length)
     }
-    const { pages, autoRotate: _rotate, tile: _tile, ...run } = opts
+    const { pages, autoRotate: _rotate, tile: _tile, vector: _vector, ...run } = opts
     void _tile
     void _rotate
-    return await window.openpdf.printRun(job, { ...run, count: pages.length })
+    void _vector
+    return { ...(await window.openpdf.printRun(job, { ...run, count: pages.length })), fallback }
   } catch (e) {
     await window.openpdf.printCancel(job)
     if (e instanceof DOMException && e.name === 'AbortError') return { ok: false }

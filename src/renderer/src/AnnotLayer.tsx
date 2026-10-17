@@ -17,11 +17,32 @@ import {
   calloutAttach,
   caretRectAfter,
   isMarkup,
+  noteGlyph,
   squigglePoints,
   type Annot
 } from './annotations'
 import { boundsOf } from './arrange'
 import { deltaToPage, type Rotation } from './viewRotation'
+
+/** The picture inside a note whose icon is not the plain comment: its strokes, shapes or letter in a unit square. */
+function NoteGlyphSvg({ icon }: { icon: NonNullable<Annot['icon']> }) {
+  const g = noteGlyph(icon)
+  return (
+    <svg viewBox="0 0 1 1" width="100%" height="100%" aria-hidden className="note-glyph">
+      {g.strokes.map((d, i) => (
+        <path key={`s${i}`} d={d} fill="none" stroke="#5a4800" strokeWidth={0.05} strokeLinecap="round" strokeLinejoin="round" />
+      ))}
+      {g.fills.map((d, i) => (
+        <path key={`f${i}`} d={d} fill="#5a4800" />
+      ))}
+      {g.text && (
+        <text x={0.5} y={0.78} textAnchor="middle" fontSize={0.74} fontWeight={700} fontFamily="Helvetica, Arial, sans-serif" fill="#5a4800">
+          {g.text}
+        </text>
+      )}
+    </svg>
+  )
+}
 
 interface Props {
   annots: Annot[]
@@ -298,7 +319,7 @@ export function AnnotLayer({
                 onMouseDown={(e) => begin(e, a, 'move')}
                 onDoubleClick={() => interactive && onEdit(a.id)}
               >
-                {!ghost && <span />}
+                {!ghost && (a.icon && a.icon !== 'Comment' ? <NoteGlyphSvg icon={a.icon} /> : <span />)}
               </div>
               {editing && (
                 <NoteEditor

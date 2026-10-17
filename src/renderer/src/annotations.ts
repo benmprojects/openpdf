@@ -44,10 +44,11 @@ export type AnnotKind =
 
 /**
  * What a measurement annotation carries. A count marker (`kind` count) is a small circle: `label` is its group
- * ("Door", "Pit"), `n` its number within the group, and `factor` and `unit` mean nothing.
+ * ("Door", "Pit"), `n` its number within the group, and `factor` and `unit` mean nothing. An angle (`kind` angle) is a
+ * polyline of three points, the vertex in the middle; `label` is the result in degrees, `factor` and `unit` mean nothing.
  */
 export interface MeasureInfo {
-  kind: 'distance' | 'perimeter' | 'area' | 'count'
+  kind: 'distance' | 'perimeter' | 'area' | 'count' | 'angle'
   factor: number
   unit: string
   ratio?: string
@@ -93,9 +94,60 @@ export interface ToolStyle {
   cloud?: number
   /** How the markup mixes with the page (see `blendOf`). */
   blend?: BlendMode
+  /** Note: the icon. */
+  icon?: NoteIcon
 }
 
 export const REVIEW_STATES: ReviewState[] = ['None', 'Accepted', 'Rejected', 'Cancelled', 'Completed']
+
+/** Icons a note (Text annotation) can have, written as its /Name. */
+export type NoteIcon = 'Comment' | 'Note' | 'Help' | 'Key' | 'Paragraph' | 'Insert'
+export const NOTE_ICONS: NoteIcon[] = ['Comment', 'Note', 'Help', 'Key', 'Paragraph', 'Insert']
+export const isNoteIcon = (s: unknown): s is NoteIcon => typeof s === 'string' && (NOTE_ICONS as string[]).includes(s)
+
+/** Kinds whose icon can be chosen. */
+export const canIcon = (k: AnnotKind) => k === 'note'
+
+/**
+ * What a note icon draws inside its box, in a unit square with y down: line strokes and filled shapes as SVG path
+ * data (absolute M, L, C and Z only), or one character in bold. The on-screen overlay and the PDF appearance share it.
+ */
+export interface NoteGlyph {
+  strokes: string[]
+  fills: string[]
+  text?: string
+}
+export function noteGlyph(icon: NoteIcon | undefined): NoteGlyph {
+  switch (icon) {
+    case 'Note':
+      return { strokes: ['M.25 .45 L.75 .45', 'M.25 .65 L.75 .65', 'M.58 .12 L.58 .32 L.82 .32'], fills: [] }
+    case 'Help':
+      return { strokes: [], fills: [], text: '?' }
+    case 'Paragraph':
+      return { strokes: [], fills: [], text: '¶' }
+    case 'Key':
+      return {
+        strokes: ['M.45 .5 C.45 .583 .383 .65 .3 .65 C.217 .65 .15 .583 .15 .5 C.15 .417 .217 .35 .3 .35 C.383 .35 .45 .417 .45 .5 Z', 'M.45 .5 L.88 .5', 'M.7 .5 L.7 .72', 'M.88 .5 L.88 .68'],
+        fills: []
+      }
+    case 'Insert':
+      return { strokes: [], fills: ['M.2 .78 L.5 .22 L.8 .78 L.5 .62 Z'] }
+    default:
+      return { strokes: ['M.2 .3 L.8 .3', 'M.2 .5 L.8 .5', 'M.2 .7 L.8 .7'], fills: [] }
+  }
+}
+
+/** SVG path data in the unit square (M, L, C, Z) as PDF path operators inside the box `r` (display space, y down). */
+export function glyphPathOps(d: string, r: Rect): string {
+  const num = (v: string, axis: 'x' | 'y') => String(Math.round((axis === 'x' ? r.x + Number(v) * r.w : r.y + Number(v) * r.h) * 1000) / 1000)
+  const out: string[] = []
+  for (const m of d.matchAll(/([MLCZ])([^MLCZ]*)/g)) {
+    const v = m[2].trim().split(/\s+/).filter(Boolean)
+    if (m[1] === 'Z') out.push('h')
+    else out.push(v.map((x, i) => num(x, i % 2 ? 'y' : 'x')).join(' ') + ' ' + m[1].toLowerCase())
+  }
+  return out.join(' ')
+}
 
 /** A reply in a comment's thread, or a change of its review state when `state` is set. */
 export interface Reply {
@@ -105,6 +157,8 @@ export interface Reply {
   /** ISO date-time. */
   date: string
   state?: ReviewState
+  /** The "checked" flag (state model Marked): a reply that only ticks or unticks the comment. */
+  mark?: 'Marked' | 'Unmarked'
   /** Set when the reply was already in the file: where to find it again (it is a Text annotation). */
   origin?: { index: number; subtype: number; rect: [number, number, number, number] }
 }
@@ -154,6 +208,12 @@ export interface Annot {
   linkUri?: string
   /** Link target: a zero-based page. */
   linkPage?: number
+  /** The subject (/Subj): a short heading for the comment. */
+  subject?: string
+  /** The layer the annotation belongs to (/OC): the layer's key as `readLayers` gives it. Unset: on every layer. */
+  layer?: string
+  /** Note: the icon (/Name). Comment when unset. */
+  icon?: NoteIcon
   /** Who made it (/T). */
   author?: string
   /** ISO date-times of creation and last change. */
@@ -191,6 +251,35 @@ export function reviewState(a: Annot): ReviewState {
   return s?.state ?? 'None'
 }
 
+/** Whether the comment is ticked as checked: the latest "checked" flag in its thread. */
+export function isChecked(a: Pick<Annot, 'replies'>): boolean {
+  const m = [...(a.replies ?? [])].reverse().find((r) => r.mark)
+  return m?.mark === 'Marked'
+}
+
+export interface HistoryEntry {
+  /** ISO date-time. */
+  when: string
+  author: string
+  kind: 'created' | 'modified' | 'status' | 'checked' | 'unchecked' | 'reply'
+  /** The reply text, or the new status. */
+  text: string
+}
+
+/** The review history of a comment: when it was made and changed, and each reply, status change and tick, oldest first. */
+export function reviewHistory(a: Pick<Annot, 'created' | 'modified' | 'author' | 'replies'>): HistoryEntry[] {
+  const out: HistoryEntry[] = []
+  if (a.created) out.push({ when: a.created, author: a.author ?? '', kind: 'created', text: '' })
+  for (const r of a.replies ?? []) {
+    if (r.mark) out.push({ when: r.date, author: r.author, kind: r.mark === 'Marked' ? 'checked' : 'unchecked', text: '' })
+    else if (r.state) out.push({ when: r.date, author: r.author, kind: 'status', text: r.state })
+    else out.push({ when: r.date, author: r.author, kind: 'reply', text: r.text })
+  }
+  if (a.modified && a.modified !== a.created) out.push({ when: a.modified, author: '', kind: 'modified', text: '' })
+  // Stable: entries with the same time keep their order.
+  return out.map((e, i) => ({ e, i })).sort((x, y) => x.e.when.localeCompare(y.e.when) || x.i - y.i).map((x) => x.e)
+}
+
 /** A PDF date string (D:YYYYMMDDHHmmSS+HH'mm') as ISO, or undefined if it cannot be read. */
 export function pdfDateToIso(s: string): string | undefined {
   const m = /^D?:?(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?([Zz+-])?(\d{2})?'?(\d{2})?/.exec(s.trim())
@@ -212,7 +301,7 @@ export function formatWhen(iso?: string): string {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.angle ?? 0, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.file ? a.file.name : null, a.lineStart ?? null, a.lineEnd ?? null, a.cloud ?? null, a.blend ?? null, a.flags ?? null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.angle ?? 0, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.file ? a.file.name : null, a.lineStart ?? null, a.lineEnd ?? null, a.cloud ?? null, a.blend ?? null, a.flags ?? null, a.subject ?? null, a.layer ?? null, a.icon ?? null])
 }
 
 export const NOTE_SIZE = 22

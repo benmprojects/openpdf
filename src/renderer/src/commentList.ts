@@ -1,8 +1,8 @@
 /** Pure logic behind the Comments pane: filtering, sorting, grouping and stepping through the comments. */
-import { annotLabel, formatWhen, isLocked, reviewState, type Annot, type ReviewState } from './annotations'
+import { annotLabel, formatWhen, isChecked, isLocked, reviewState, type Annot, type ReviewState } from './annotations'
 
-export type SortKey = 'page' | 'date' | 'author' | 'type' | 'status'
-export type GroupKey = 'none' | 'page' | 'author' | 'type' | 'colour' | 'date' | 'status'
+export type SortKey = 'page' | 'date' | 'author' | 'type' | 'status' | 'subject'
+export type GroupKey = 'none' | 'page' | 'author' | 'type' | 'colour' | 'date' | 'status' | 'subject' | 'checked'
 
 export interface CommentFilter {
   query: string
@@ -11,9 +11,15 @@ export interface CommentFilter {
   status: string
   /** `#rrggbb`, or empty for any. */
   colour: string
+  /** 'yes' for ticked comments only, 'no' for those not ticked, empty for both. */
+  checked?: '' | 'yes' | 'no'
+  /** An exact subject; the value `NO_SUBJECT` matches comments without one. Empty for any. */
+  subject?: string
 }
 
-export const NO_FILTER: CommentFilter = { query: '', kind: '', author: '', status: '', colour: '' }
+export const NO_FILTER: CommentFilter = { query: '', kind: '', author: '', status: '', colour: '', checked: '', subject: '' }
+/** Filter value for "no subject". */
+export const NO_SUBJECT = '\u0000none'
 
 /** Text an annotation shows in the list: its comment, or for a stamp or measurement its label. */
 export function commentText(a: Annot): string {
@@ -30,7 +36,9 @@ export function filterComments(annots: Annot[], f: CommentFilter): Annot[] {
       (!f.author || (a.author ?? '') === f.author) &&
       (!f.status || reviewState(a) === f.status) &&
       (!f.colour || a.color.toLowerCase() === f.colour.toLowerCase()) &&
-      (!q || commentText(a).toLowerCase().includes(q) || (a.author ?? '').toLowerCase().includes(q) || (a.replies ?? []).some((r) => r.text.toLowerCase().includes(q)))
+      (!f.checked || isChecked(a) === (f.checked === 'yes')) &&
+      (!f.subject || (f.subject === NO_SUBJECT ? !a.subject : a.subject === f.subject)) &&
+      (!q || (a.subject ?? '').toLowerCase().includes(q) || commentText(a).toLowerCase().includes(q) || (a.author ?? '').toLowerCase().includes(q) || (a.replies ?? []).some((r) => r.text.toLowerCase().includes(q)))
   )
 }
 
@@ -44,7 +52,8 @@ export function sortComments(list: Annot[], sort: SortKey): Annot[] {
     date: (x, y) => when(y).localeCompare(when(x)) || byPos(x, y),
     author: (x, y) => (x.author ?? '').localeCompare(y.author ?? '') || byPos(x, y),
     type: (x, y) => annotLabel(x.kind).localeCompare(annotLabel(y.kind)) || byPos(x, y),
-    status: (x, y) => STATUS_ORDER.indexOf(reviewState(x)) - STATUS_ORDER.indexOf(reviewState(y)) || byPos(x, y)
+    status: (x, y) => STATUS_ORDER.indexOf(reviewState(x)) - STATUS_ORDER.indexOf(reviewState(y)) || byPos(x, y),
+    subject: (x, y) => (x.subject ?? '').localeCompare(y.subject ?? '') || byPos(x, y)
   }
   return [...list].sort(by[sort])
 }
@@ -66,6 +75,10 @@ function groupOf(a: Annot, by: Exclude<GroupKey, 'none'>, pageName: (p: number) 
       return { key: annotLabel(a.kind), label: annotLabel(a.kind) }
     case 'colour':
       return { key: a.color.toLowerCase(), label: a.color.toUpperCase() }
+    case 'subject':
+      return { key: a.subject ?? '', label: a.subject || '(no subject)' }
+    case 'checked':
+      return isChecked(a) ? { key: '0', label: 'Checked' } : { key: '1', label: 'Not checked' }
     case 'status': {
       const s = reviewState(a)
       return { key: String(STATUS_ORDER.indexOf(s)), label: s === 'None' ? 'No status' : s }
@@ -111,3 +124,6 @@ export function stepComment(order: number[], current: number | null, dir: 1 | -1
 
 /** Comments that can be deleted: locked ones cannot. */
 export const deletable = (list: Annot[]): Annot[] => list.filter((a) => !isLocked(a))
+
+/** The distinct subjects used, sorted, for the filter list. */
+export const subjectsOf = (list: Annot[]): string[] => [...new Set(list.map((a) => a.subject).filter((x): x is string => !!x))].sort((x, y) => x.localeCompare(y))

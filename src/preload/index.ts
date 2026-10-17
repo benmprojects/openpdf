@@ -33,6 +33,10 @@ const api = {
   /** Overwrites the PDF at `path`. */
   saveFile: (path: string, data: Uint8Array): Promise<{ name: string; path: string }> =>
     ipcRenderer.invoke('file:save', path, data),
+  /** Renames a document's file in its own folder; never over another file. */
+  renameFile: (path: string, newName: string): Promise<{ ok: true; name: string; path: string } | { ok: false; error: string }> => ipcRenderer.invoke('file:rename', path, newName),
+  /** Moves a document's file to the Windows Recycle Bin (never a permanent delete). */
+  trashFile: (path: string): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke('file:trash', path),
   /** Shows a Save dialog; resolves null if cancelled. */
   saveFileAs: (suggestedName: string, data: Uint8Array): Promise<{ name: string; path: string } | null> =>
     ipcRenderer.invoke('file:save-as', suggestedName, data),
@@ -154,6 +158,8 @@ const api = {
     ipcRenderer.invoke('print:page', job, n, png, w, h),
   printRun: (job: string, opts: PrintRunOptions): Promise<{ ok: boolean; error?: string; pdfPath?: string }> =>
     ipcRenderer.invoke('print:run', job, opts),
+  /** Print to PDF as vector content: asks where to save (the file is never silently overwritten). */
+  printSavePdf: (data: Uint8Array): Promise<{ ok: boolean; error?: string; pdfPath?: string }> => ipcRenderer.invoke('print:save-pdf', data),
   /** The installed printers, for the Print dialog. */
   printPrinters: (): Promise<{ name: string; displayName: string; isDefault: boolean }[]> => ipcRenderer.invoke('print:printers'),
   printCancel: (job: string): Promise<void> => ipcRenderer.invoke('print:cancel', job),

@@ -158,6 +158,8 @@ export function toNorms(annots: Annot[], frames: Frame[]): Norm[] {
     }
     out.push(n)
     for (const r of a.replies ?? []) {
+      // The checked flag is not part of the interchange format.
+      if (r.mark) continue
       out.push({
         subtype: 'Text',
         page: a.page,

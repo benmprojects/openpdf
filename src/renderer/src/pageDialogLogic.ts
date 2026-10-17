@@ -1,3 +1,4 @@
+import type { InsertKeep } from './insertOptions'
 import { bookmarkRanges, parsePageRanges } from './pageOps'
 
 /** Pure logic behind the page-operation dialogs: range presets, insert positions, sizes, file names, split plans. */
@@ -246,7 +247,7 @@ export interface SourceItem {
 }
 
 export type PageDialogResult =
-  | { kind: 'insert'; at: number; count: number; items: SourceItem[]; blank: { count: number; width: number; height: number } | null }
+  | { kind: 'insert'; at: number; count: number; items: SourceItem[]; blank: { count: number; width: number; height: number } | null; keep?: InsertKeep }
   | { kind: 'extract'; pages: number[]; deleteAfter: boolean; openAfter: boolean; each: { pattern: string; dir: string | null } | null }
   | { kind: 'delete'; pages: number[] }
   | { kind: 'rotate'; pages: number[]; delta: 90 | -90 | 180 }
@@ -256,6 +257,7 @@ export type PageDialogResult =
   | { kind: 'duplicate'; pages: number[]; copies: number; where: 'block' | 'each' | 'end' }
   | { kind: 'move'; pages: number[]; before: number }
   | { kind: 'swap'; a: number; b: number }
+  | { kind: 'join'; pages: number[]; mode: 'side' | 'stack'; reversed: boolean }
 
 /** `deleteBlank` is a dialog that hands back a plain delete. */
 export type PageDialogKind = PageDialogResult['kind'] | 'deleteBlank'

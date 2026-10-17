@@ -16,6 +16,7 @@ import { HELP, loadAction, parseCli } from './cli'
 import { listPlaces } from './places'
 import { downloadPdf } from './download'
 import { exportSettings, parseSettingsImport } from './settingsIo'
+import { renameDocument, trashDocument } from './fileOps'
 import { userCatalogues } from './locales'
 import { checkForUpdates, downloadUpdate, installUpdate, updateStatus } from './updates'
 import type { Place } from '../shared/places'
@@ -251,6 +252,31 @@ async function writeDocument(path: string, data: Uint8Array) {
 }
 
 ipcMain.handle('file:save', (_e, path: string, data: Uint8Array) => writeDocument(path, data))
+
+/** Rename the open document's file in its own folder (never over another file). Resolves the new name and path, or the reason it failed. */
+ipcMain.handle('file:rename', async (_e, path: string, newName: string): Promise<{ ok: true; name: string; path: string } | { ok: false; error: string }> => {
+  try {
+    const r = await renameDocument(path, newName)
+    if (r.path !== path) {
+      await removeRecent(path).catch(() => {})
+      await addRecent(r.path).catch(() => {})
+    }
+    return { ok: true, ...r }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+/** Move the open document's file to the Windows Recycle Bin. It is never deleted for good. */
+ipcMain.handle('file:trash', async (_e, path: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+  try {
+    await trashDocument(path, (p) => shell.trashItem(p))
+    await removeRecent(path).catch(() => {})
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
 
 ipcMain.handle('file:save-as', async (e, suggestedName: string, data: Uint8Array) => {
   if (e2e && process.env.OPENPDF_E2E_SAVE) return writeDocument(process.env.OPENPDF_E2E_SAVE, data)
@@ -756,6 +782,21 @@ html, body { margin: 0; padding: 0; background: #fff }
 img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain${border ? '; outline: 0.5pt solid #777' : ''} }
 </style></head><body>${sheets}</body></html>`
 }
+
+/** Print to PDF with the text kept: the renderer builds the file; this asks where to put it. */
+ipcMain.handle('print:save-pdf', async (e, data: Uint8Array) => {
+  // Test hook: write to the named file instead of asking.
+  if (e2e && process.env.OPENPDF_E2E_PRINT) {
+    await writeFile(process.env.OPENPDF_E2E_PRINT, data)
+    return { ok: true, pdfPath: process.env.OPENPDF_E2E_PRINT }
+  }
+  const parent = BrowserWindow.fromWebContents(e.sender) ?? undefined
+  const saveOpts = { title: 'Print to PDF file', defaultPath: 'print.pdf', filters: [{ name: 'PDF', extensions: ['pdf'] }] }
+  const res = parent ? await dialog.showSaveDialog(parent, saveOpts) : await dialog.showSaveDialog(saveOpts)
+  if (res.canceled || !res.filePath) return { ok: false }
+  await writeFile(res.filePath, data)
+  return { ok: true, pdfPath: res.filePath }
+})
 
 const DUPLEX_MODE = { off: 'simplex', long: 'longEdge', short: 'shortEdge' } as const
 

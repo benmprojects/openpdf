@@ -3725,3 +3725,13 @@ button:not([class]):disabled {
   padding: 2px 4px;
   min-height: 22px;
 }
+
+/* Batch 1: checked flag, review history, note glyphs, docked panes */
+.annot-box.note .note-glyph { display: block; }
+.comment-check.on { color: var(--accent); }
+.comment-subject { padding: 0 8px; }
+.props-history { list-style: none; margin: 4px 0 8px; padding: 0; display: grid; gap: 4px; }
+.props-history li { display: grid; gap: 0; border-left: 2px solid var(--border, #c8c8c8); padding-left: 6px; }
+
+.stamp-picker.docked { position: static; width: auto; max-width: none; margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.stamps-dock { width: 340px; }

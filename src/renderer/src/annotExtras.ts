@@ -4,7 +4,7 @@
  * annotations, so more of what other tools write can be edited faithfully.
  */
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib'
-import { BLEND_MODES, type BlendMode } from './annotations'
+import { BLEND_MODES, isNoteIcon, type BlendMode, type NoteIcon } from './annotations'
 import { isLineEnd, type LineEnd } from './lineEnds'
 
 const textOf = (o: unknown) => (o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : undefined)
@@ -101,6 +101,29 @@ export function nameOf(d: PDFDict | undefined, key: string): string | undefined 
   return d?.lookupMaybe(PDFName.of(key), PDFName)?.decodeText()
 }
 
+
+/** The icon of a note (/Name), when it is one we offer. */
+export function noteIconOf(d: PDFDict | undefined): NoteIcon | undefined {
+  const n = nameOf(d, 'Name')
+  return isNoteIcon(n) ? n : undefined
+}
+
+/** The "num gen" key of a layer (optional content group) reference, as `readLayers` gives it. */
+export const layerKey = (r: PDFRef) => `${r.objectNumber} ${r.generationNumber}`
+
+/** The layer an annotation belongs to: its /OC group, or the first group of its membership dictionary. */
+export function layerKeyOf(d: PDFDict | undefined): string | undefined {
+  const oc = d?.get(PDFName.of('OC'))
+  if (!(oc instanceof PDFRef)) return undefined
+  const target = d!.context.lookupMaybe(oc, PDFDict)
+  if (!target) return undefined
+  if (nameOf(target, 'Type') !== 'OCMD') return layerKey(oc)
+  const groups = target.get(PDFName.of('OCGs'))
+  if (groups instanceof PDFRef) return layerKey(groups)
+  const arr = target.lookupMaybe(PDFName.of('OCGs'), PDFArray)
+  const first = arr && arr.size() ? arr.get(0) : undefined
+  return first instanceof PDFRef ? layerKey(first) : undefined
+}
 
 const ARROWS = new Set(['OpenArrow', 'ClosedArrow', 'ROpenArrow', 'RClosedArrow'])
 

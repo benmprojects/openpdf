@@ -23,6 +23,7 @@ import {
 } from './textLogic'
 import { GuideLayer, type Guide } from './GuideLayer'
 import { MeasureLayer, type MeasureKind, type Measurement } from './MeasureLayer'
+import { constrainToStep } from './measure'
 import { SnapIndex, type SnapHit, type SnapKinds } from './snap'
 import { RULER_SIZE, RulerStrip, type RulerUnit } from './Rulers'
 import { layoutRows, rowOfPage, type PageMode } from './pageLayout'
@@ -92,6 +93,7 @@ export type Tool =
   | 'measure-distance'
   | 'measure-perimeter'
   | 'measure-area'
+  | 'measure-angle'
   | 'measure-count'
   | 'calibrate'
   | 'polygon'
@@ -122,18 +124,15 @@ function isShapeTool(t: Tool): t is 'line' | 'arrow' | 'rectangle' | 'ellipse' |
   return t === 'line' || t === 'arrow' || t === 'rectangle' || t === 'ellipse' || t === 'ink'
 }
 
-/** Snap a drag to 45 degree steps (lines) or to a square (rectangles and ellipses). */
-function constrain(kind: string, a: Pt, b: Pt): Pt {
+/** Snap a drag to steps of 45 degrees, or 15 when chosen (lines) or to a square (rectangles and ellipses). */
+function constrain(kind: string, a: Pt, b: Pt, stepDeg = 45): Pt {
   const dx = b.x - a.x
   const dy = b.y - a.y
   if (kind === 'rectangle' || kind === 'ellipse') {
     const s = Math.max(Math.abs(dx), Math.abs(dy))
     return { x: a.x + Math.sign(dx || 1) * s, y: a.y + Math.sign(dy || 1) * s }
   }
-  const step = Math.PI / 4
-  const ang = Math.round(Math.atan2(dy, dx) / step) * step
-  const len = Math.hypot(dx, dy)
-  return { x: a.x + len * Math.cos(ang), y: a.y + len * Math.sin(ang) }
+  return constrainToStep(a, b, stepDeg)
 }
 
 export interface ViewAids {
@@ -162,6 +161,8 @@ interface Props {
   /** How page colours are shown: as they are, inverted for night reading, or high contrast. */
   pageColours: 'normal' | 'night' | 'contrast'
   measurements: Measurement[]
+  /** Degrees between the angles Shift allows while drawing a line (45 unless set). */
+  shiftStep?: number
   /** The crop tool: a box dragged on one page, in display space (the page as shown, before view rotation). */
   onCropRect: (page: number, rect: Rect) => void
   /** The redact tool: a box dragged on one page, in display space. */
@@ -243,6 +244,7 @@ export function Viewer({
   stampDrag,
   pageColours,
   measurements,
+  shiftStep,
   onMeasure,
   measureLabel,
   objectSnap,
@@ -304,6 +306,8 @@ export function Viewer({
   } | null>(null)
   const measureDraftRef = useRef(measureDraft)
   measureDraftRef.current = measureDraft
+  const shiftStepRef = useRef(shiftStep ?? 45)
+  shiftStepRef.current = shiftStep ?? 45
   // Measuring and the polygon, polyline and cloud tools all place points with clicks.
   const measureKind: MeasureKind | 'calibrate' | 'count' | 'polygon' | 'polyline' | 'cloud' | null =
     tool === 'measure-distance'
@@ -312,7 +316,9 @@ export function Viewer({
         ? 'perimeter'
         : tool === 'measure-area'
           ? 'area'
-          : tool === 'measure-count'
+          : tool === 'measure-angle'
+            ? 'angle'
+            : tool === 'measure-count'
             ? 'count'
             : tool === 'calibrate' || tool === 'polygon' || tool === 'polyline' || tool === 'cloud'
               ? tool
@@ -435,7 +441,7 @@ export function Viewer({
   const snapIndexes = useRef(new Map<number, SnapIndex | 'loading'>())
   useEffect(() => snapIndexes.current.clear(), [client])
   const [snapMark, setSnapMark] = useState<{ page: number; hit: SnapHit } | null>(null)
-  const snapsActive = measureKind === 'distance' || measureKind === 'perimeter' || measureKind === 'area' || measureKind === 'calibrate' || measureKind === 'count'
+  const snapsActive = measureKind === 'distance' || measureKind === 'perimeter' || measureKind === 'area' || measureKind === 'angle' || measureKind === 'calibrate' || measureKind === 'count'
   /** The snap at a pointer position over a page, or null (no geometry yet, switched off, nothing close). */
   const objectSnapAt = useCallback(
     (page: number, raw: Pt): SnapHit | null => {
@@ -567,7 +573,7 @@ export function Viewer({
       const raw = measurePoint(el, d.page, ev.clientX, ev.clientY, ev.ctrlKey)
       let p = { x: Math.min(size.width, Math.max(0, raw.x)), y: Math.min(size.height, Math.max(0, raw.y)) }
       const prev = d.points[d.points.length - 1]
-      if (prev && ev.shiftKey) p = constrain('line', prev, p)
+      if (prev && ev.shiftKey) p = constrain('line', prev, p, shiftStepRef.current)
       setMeasureDraft({ ...d, cursor: p })
     }
     const onKey = (ev: KeyboardEvent) => {
@@ -580,7 +586,7 @@ export function Viewer({
         ev.preventDefault()
         ev.stopImmediatePropagation()
         setMeasureDraft(d.points.length > 1 ? { ...d, points: d.points.slice(0, -1) } : null)
-      } else if (ev.key === 'Enter' && d.kind !== 'distance' && d.kind !== 'calibrate') {
+      } else if (ev.key === 'Enter' && d.kind !== 'distance' && d.kind !== 'calibrate' && d.kind !== 'angle') {
         ev.preventDefault()
         if (d.points.length >= (d.kind === 'perimeter' || d.kind === 'polyline' ? 2 : 3)) finishPoints(d.kind, d.page, d.points)
         setMeasureDraft(null)
@@ -759,22 +765,23 @@ export function Viewer({
         const raw = measurePoint(pageEl, page, e.clientX, e.clientY, e.ctrlKey)
         let p = { x: Math.min(size.width, Math.max(0, raw.x)), y: Math.min(size.height, Math.max(0, raw.y)) }
         const prev = d?.points[d.points.length - 1]
-        if (prev && e.shiftKey) p = constrain('line', prev, p)
+        if (prev && e.shiftKey) p = constrain('line', prev, p, shiftStepRef.current)
         // A count marker is dropped by one click.
         if (measureKind === 'count') {
           onMeasure('count', page, [p])
           return
         }
         const twoPoint = measureKind === 'distance' || measureKind === 'calibrate'
+        const threePoint = measureKind === 'angle'
         // A double click ends a perimeter or area (its second click already added the point).
-        if (e.detail >= 2 && d && !twoPoint) {
+        if (e.detail >= 2 && d && !twoPoint && !threePoint) {
           const need = measureKind === 'area' || measureKind === 'polygon' || measureKind === 'cloud' ? 3 : 2
           if (d.points.length >= need) finishPoints(measureKind, page, d.points)
           setMeasureDraft(null)
           return
         }
         const points = [...(d?.points ?? []), p]
-        if (twoPoint && points.length === 2) {
+        if ((twoPoint && points.length === 2) || (threePoint && points.length === 3)) {
           setMeasureDraft(null)
           finishPoints(measureKind, page, points)
           return
@@ -904,7 +911,7 @@ export function Viewer({
             if (Math.hypot(cur.x - last.x, cur.y - last.y) >= 1) trail.push(cur)
             end = cur
           } else {
-            end = ev.shiftKey ? constrain(kind, start, cur) : cur
+            end = ev.shiftKey ? constrain(kind, start, cur, shiftStepRef.current) : cur
           }
           setDraft({ ...make(end, trail), id: -1 })
         }

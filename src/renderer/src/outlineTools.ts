@@ -2,7 +2,7 @@
  * Bookmark tools beyond editing the tree: styles read from the file, expand and collapse, import and export as text
  * or CSV, and generating bookmarks from headings or pages. Pure apart from reading the styles with pdf-lib.
  */
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, type PDFObject } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, type PDFObject } from 'pdf-lib'
 import type { BookmarkNode, OutlineStyle } from './outlineEdit'
 
 /**
@@ -34,6 +34,7 @@ export async function readOutlineStyles(bytes: Uint8Array): Promise<OutlineStyle
       if ((n.lookupMaybe(PDFName.of('Count'), PDFNumber)?.asNumber() ?? 0) > 0) st.open = true
       let dest = n.lookup(PDFName.of('Dest'))
       if (!dest) dest = n.lookupMaybe(PDFName.of('A'), PDFDict)?.lookup(PDFName.of('D'))
+      if (dest instanceof PDFString || dest instanceof PDFHexString || dest instanceof PDFName) st.named = dest instanceof PDFName ? dest.decodeText() : dest.decodeText()
       if (dest instanceof PDFArray && dest.size() >= 5) {
         const kind = dest.lookup(1)
         if (kind instanceof PDFName && kind.decodeText() === 'XYZ') {

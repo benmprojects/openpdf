@@ -5,6 +5,7 @@ import { msg, t } from './i18n'
 import { getPageClip } from './pageClipboard'
 import { clipboardPicturePages, scannedPages, type PageSource } from './pageSources'
 import { ScanDialog } from './ScanDialog'
+import { applySubset, DEFAULT_KEEP, type InsertKeep, type SourceSubset } from './insertOptions'
 import {
   ALL_PRESETS,
   PAPER_MM,
@@ -138,6 +139,8 @@ export interface SourceFile {
   count: number
   /** Text of the source pages to take; empty means all. */
   range: string
+  /** Only the odd or even page numbers of that range. */
+  subset: SourceSubset
   error: string | null
 }
 
@@ -146,9 +149,9 @@ let nextFileId = 1
 async function readSource(f: { name: string; data: Uint8Array }): Promise<SourceFile> {
   try {
     const doc = await PDFDocument.load(f.data, { updateMetadata: false })
-    return { id: nextFileId++, name: f.name, data: f.data, count: doc.getPageCount(), range: '', error: null }
+    return { id: nextFileId++, name: f.name, data: f.data, count: doc.getPageCount(), range: '', subset: 'all', error: null }
   } catch {
-    return { id: nextFileId++, name: f.name, data: f.data, count: 0, range: '', error: t('could not be read (it may be damaged or need a password)') }
+    return { id: nextFileId++, name: f.name, data: f.data, count: 0, range: '', subset: 'all', error: t('could not be read (it may be damaged or need a password)') }
   }
 }
 
@@ -160,8 +163,10 @@ function sourceTotals(files: SourceFile[]): { total: number; error: string | nul
     if (f.error) return { total: 0, error: `${f.name}: ${f.error}`, items: [] }
     const r = parseSourceRange(f.range, f.count)
     if (r.error) return { total: 0, error: `${f.name}: ${r.error}`, items: [] }
-    total += r.pages ? r.pages.length : f.count
-    items.push({ data: f.data, pages: r.pages })
+    const pages = applySubset(r.pages, f.count, f.subset)
+    if (pages && !pages.length) return { total: 0, error: `${f.name}: ${t('there are no {kind} pages in that range', { kind: f.subset === 'odd' ? t('odd') : t('even') })}`, items: [] }
+    total += pages ? pages.length : f.count
+    items.push({ data: f.data, pages })
   }
   return { total, error: null, items }
 }
@@ -194,6 +199,16 @@ function FileList({ files, onChange }: { files: SourceFile[]; onChange: (f: Sour
                 disabled={!!f.error}
                 onChange={(e) => onChange(files.map((x) => (x.id === f.id ? { ...x, range: e.target.value } : x)))}
               />
+              <select
+                aria-label={t('Which pages of {name}', { name: f.name })}
+                value={f.subset}
+                disabled={!!f.error}
+                onChange={(e) => onChange(files.map((x) => (x.id === f.id ? { ...x, subset: e.target.value as SourceSubset } : x)))}
+              >
+                <option value="all">{t('All of them')}</option>
+                <option value="odd">{t('Odd pages only')}</option>
+                <option value="even">{t('Even pages only')}</option>
+              </select>
               <button type="button" aria-label={t('Move {name} up', { name: f.name })} disabled={i === 0} onClick={() => move(i, -1)}>
                 ↑
               </button>
@@ -268,6 +283,7 @@ export function InsertDialog({ ctx, onCancel, onSubmit, initialPage }: DialogPro
   const [orient, setOrient] = useState<'portrait' | 'landscape'>('portrait')
   const [custom, setCustom] = useState({ w: '210', h: '297' })
   const [where, setWhere] = useState<InsertWhere>({ side: 'after', target: 'page', page: Math.min(Math.max(1, initialPage), ctx.count) })
+  const [keep, setKeep] = useState<InsertKeep>(DEFAULT_KEEP)
 
   const loc = insertIndex(where, ctx.count)
   const cur = ctx.sizes[Math.min(ctx.current, ctx.sizes.length - 1)]
@@ -308,7 +324,8 @@ export function InsertDialog({ ctx, onCancel, onSubmit, initialPage }: DialogPro
           at: loc.index,
           count: n,
           items: source === 'file' ? items : source === 'clipboard' && clip ? [{ data: clip.bytes, pages: null }] : (source === 'picture' || source === 'scan') && made ? [{ data: made.data, pages: null }] : [],
-          blank: source === 'blank' ? { count: bn, width: size.width, height: size.height } : null
+          blank: source === 'blank' ? { count: bn, width: size.width, height: size.height } : null,
+          keep: source === 'file' || source === 'clipboard' ? keep : undefined
         })
       }
       wide
@@ -389,6 +406,35 @@ export function InsertDialog({ ctx, onCancel, onSubmit, initialPage }: DialogPro
             </span>
           )}
         </div>
+      )}
+      {(source === 'file' || source === 'clipboard') && (
+        <fieldset className="pod-group">
+          <legend>{t('With the inserted pages')}</legend>
+          <div className="pod-grid">
+            <label>
+              <span>{t('Comments')}</span>
+              <select aria-label={t('Comments on the inserted pages')} value={keep.comments} onChange={(e) => setKeep({ ...keep, comments: e.target.value as InsertKeep['comments'] })}>
+                <option value="keep">{t('Keep')}</option>
+                <option value="remove">{t('Leave out')}</option>
+              </select>
+            </label>
+            <label>
+              <span>{t('Form fields')}</span>
+              <select aria-label={t('Form fields on the inserted pages')} value={keep.fields} onChange={(e) => setKeep({ ...keep, fields: e.target.value as InsertKeep['fields'] })}>
+                <option value="keep">{t('Keep as fields')}</option>
+                <option value="flatten">{t('Make part of the page')}</option>
+                <option value="remove">{t('Leave out')}</option>
+              </select>
+            </label>
+            <label>
+              <span>{t('Bookmarks')}</span>
+              <select aria-label={t('Bookmarks of the inserted pages')} value={keep.bookmarks} onChange={(e) => setKeep({ ...keep, bookmarks: e.target.value as InsertKeep['bookmarks'] })}>
+                <option value="remove">{t('Leave out')}</option>
+                <option value="keep">{t('Bring them in')}</option>
+              </select>
+            </label>
+          </div>
+        </fieldset>
       )}
       <fieldset className="pod-group">
         <legend>{t('Location')}</legend>

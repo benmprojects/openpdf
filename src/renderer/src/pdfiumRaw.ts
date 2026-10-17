@@ -5,8 +5,8 @@
  */
 import type { PDFiumDocument, PDFiumLibrary, PDFiumPage } from '@hyzyla/pdfium'
 import type { PDFDict } from 'pdf-lib'
-import { arrowEnds, blendModeOf, cloudIntensityOf, dashStyle, lineEndStyles, measureOf, nameOf, numbers, linkTargetOf } from './annotExtras'
-import { pathBounds, type AnnotKind, type BlendMode, type MeasureInfo, type Pt } from './annotations'
+import { arrowEnds, blendModeOf, cloudIntensityOf, dashStyle, layerKeyOf, lineEndStyles, measureOf, nameOf, noteIconOf, numbers, linkTargetOf } from './annotExtras'
+import { pathBounds, type AnnotKind, type BlendMode, type MeasureInfo, type NoteIcon, type Pt } from './annotations'
 import type { LineEnd } from './lineEnds'
 import type { PathGeometry } from './snap'
 import type { Rect } from './textLogic'
@@ -180,6 +180,10 @@ export interface ImportedAnnot {
   cloud?: number
   blend?: BlendMode
   flags: number
+  /** /Subj, the layer (/OC) as its "num gen" key, and a note's icon (/Name). */
+  subject?: string
+  layer?: string
+  icon?: NoteIcon
 }
 
 /** A reply or review-state change: a Text annotation with /IRT pointing at another annotation on the page. */
@@ -192,6 +196,8 @@ export interface ImportedReply {
   /** PDF date string (/M, else /CreationDate). */
   date: string
   state?: string
+  /** The "checked" flag: a reply in the Marked state model. */
+  mark?: 'Marked' | 'Unmarked'
   rect: [number, number, number, number]
 }
 
@@ -257,6 +263,7 @@ export function readPageAnnots(
   const keyState = cString(m, 'State')
   const keyStateModel = cString(m, 'StateModel')
   const keyCA = cString(m, 'CA')
+  const keyOpAngle = cString(m, 'OPAngle')
   const replies: ImportedReply[] = []
   const out: ImportedAnnot[] = []
 
@@ -302,6 +309,7 @@ export function readPageAnnots(
                 text: readString(annot, keyContents),
                 date: readString(annot, keyM) || readString(annot, keyCreated),
                 state: model === 'Review' || (!model && readString(annot, keyState)) ? readString(annot, keyState) || undefined : undefined,
+                mark: model === 'Marked' ? (readString(annot, keyState) === 'Marked' ? 'Marked' : 'Unmarked') : undefined,
                 rect: [Math.min(r[0], r[2]), Math.min(r[1], r[3]), Math.max(r[0], r[2]), Math.max(r[1], r[3])]
               })
               continue
@@ -328,6 +336,10 @@ export function readPageAnnots(
         } else if (kind === 'ellipse' && m._FPDFAnnot_HasKey(annot, keyOpCount)) {
           // A count marker of ours: a small circle numbered within its group.
           measure = { kind: 'count', factor: 1, unit: '', label: readString(annot, keyContents), n: Number(readString(annot, keyOpCount)) || 1 }
+        }
+        else if (kind === 'polyline' && m._FPDFAnnot_HasKey(annot, keyOpAngle)) {
+          // An angle measurement of ours: three points, the vertex in the middle.
+          measure = { kind: 'angle', factor: 1, unit: '°', label: readString(annot, keyContents) }
         }
         if (measure && m._FPDFAnnot_HasKey(annot, keyOpName)) measure.name = readString(annot, keyOpName)
         if (!m._FPDFAnnot_GetRect(annot, scratch)) continue
@@ -534,7 +546,10 @@ export function readPageAnnots(
           lineEnd,
           cloud,
           blend: kind === 'foreign' || kind === 'link' ? undefined : blendModeOf(dict),
-          flags
+          flags,
+          subject: readString(annot, keySubj) || undefined,
+          layer: layerKeyOf(dict),
+          icon: kind === 'note' ? noteIconOf(dict) : undefined
         })
       } finally {
         m._FPDFPage_CloseAnnot(annot)
@@ -552,7 +567,7 @@ export function readPageAnnots(
     m.wasmExports.free(keyOpName)
     m.wasmExports.free(keyOpCount)
     m.wasmExports.free(keyInfo)
-    for (const k of [keyT, keyM, keyCreated, keyIRT, keyRT, keyState, keyStateModel, keyCA]) m.wasmExports.free(k)
+    for (const k of [keyT, keyM, keyCreated, keyIRT, keyRT, keyState, keyStateModel, keyCA, keyOpAngle]) m.wasmExports.free(k)
   }
   return { annots: out, replies }
 }
@@ -749,6 +764,24 @@ export function setPageAnnotRect(lib: PDFiumLibrary, page: PDFiumPage, currentIn
     } finally {
       m.wasmExports.free(buf)
     }
+  } finally {
+    m._FPDFPage_CloseAnnot(annot)
+  }
+}
+
+/**
+ * Switches the Hidden flag of an annotation in the in-memory document, so PDFium stops (or starts again) drawing it.
+ * The file itself is untouched. Returns false if the annotation is not found.
+ */
+export function setPageAnnotHidden(lib: PDFiumLibrary, page: PDFiumPage, currentIndex: number, subtype: number, hidden: boolean): boolean {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const annot = m._FPDFPage_GetAnnot(p, currentIndex)
+  if (!annot) return false
+  try {
+    if (m._FPDFAnnot_GetSubtype(annot) !== subtype) return false
+    const flags = m._FPDFAnnot_GetFlags(annot)
+    return m._FPDFAnnot_SetFlags(annot, hidden ? flags | FLAG_HIDDEN : flags & ~FLAG_HIDDEN) !== 0
   } finally {
     m._FPDFPage_CloseAnnot(annot)
   }

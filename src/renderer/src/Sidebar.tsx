@@ -4,6 +4,13 @@ import {
   Bold,
   Bookmark,
   BookmarkPlus,
+  ClipboardPaste,
+  Copy as CopyIcon,
+  FileOutput,
+  ListChecks,
+  Link2,
+  Printer,
+  Scissors,
   ChevronsDownUp,
   ChevronsUpDown,
   Crosshair,
@@ -33,6 +40,9 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import { indentAt, insertAfter, moveAt, nodeAt, outdentAt, removeAt, updateAt, type BookmarkNode, type Path } from './outlineEdit'
+import { bookmarkPages, copyAt, cutAt, getBookmarkClip, hasBookmarkClip, pasteAfter, setBookmarkClip } from './outlineClip'
+import type { NamedDestination } from './outlineRead'
+import { BookmarkActionDialog, ValidateBookmarksDialog } from './BookmarkTools'
 import type { Layer } from './layers'
 import type { MediaItem } from './media'
 import { msg, t } from './i18n'
@@ -101,6 +111,10 @@ interface Props {
   onExportBookmarks?: (format: 'text' | 'csv') => void
   /** The top-left of what is on screen: a page and a point on it, in points from the page's top-left. */
   getView?: () => { page: number; x: number; y: number } | null
+  /** Extracts or prints the pages a bookmark covers (0-based, inclusive). */
+  onBookmarkPages?: (range: { first: number; last: number }, action: 'extract' | 'print', title: string) => void
+  /** The document's named destinations (read when asked for). */
+  getNamedDestinations?: () => Promise<NamedDestination[]>
 }
 
 const TABS: [SidebarTab, string, LucideIcon][] = [
@@ -139,7 +153,7 @@ export function Sidebar(props: Props) {
           labels={labels}
         />
       ) : tab === 'bookmarks' ? (
-        <Bookmarks outline={outline} onGoTo={onGoTo} currentPage={currentPage} onEdit={props.onEditOutline} tools={props} />
+        <Bookmarks outline={outline} onGoTo={onGoTo} currentPage={currentPage} onEdit={props.onEditOutline} tools={props} pageCount={pages.length} />
       ) : tab === 'comments' ? (
         props.comments
       ) : tab === 'measure' ? (
@@ -536,19 +550,24 @@ function Bookmarks({
   onGoTo,
   currentPage,
   onEdit,
-  tools
+  tools,
+  pageCount
 }: {
+  pageCount: number
   outline: BookmarkNode[] | null
   onGoTo: (p: number) => void
   currentPage: number
   /** Saves an edited bookmark tree into the document. */
   onEdit?: (tree: BookmarkNode[]) => void
-  tools: Pick<Props, 'onGenerateBookmarks' | 'onImportBookmarks' | 'onExportBookmarks' | 'getView'>
+  tools: Pick<Props, 'onGenerateBookmarks' | 'onImportBookmarks' | 'onExportBookmarks' | 'getView' | 'onBookmarkPages' | 'getNamedDestinations'>
 }) {
   // Expand all or collapse all: the twisties open or close to match each time this changes.
   const [openAll, setOpenAll] = useState<{ open: boolean; tick: number } | null>(null)
   const [sel, setSel] = useState<Path | null>(null)
   const [renaming, setRenaming] = useState<Path | null>(null)
+  const [clipTick, setClipTick] = useState(0)
+  const [checking, setChecking] = useState<{ names: NamedDestination[] | null } | null>(null)
+  const [actionFor, setActionFor] = useState<{ path: Path; names: NamedDestination[] } | null>(null)
   // The edited tree, shown until the document has been rewritten and its outline read back the same.
   const [pending, setPending] = useState<BookmarkNode[] | null>(null)
   const settled = pending !== null && outline !== null && sameTree(pending, outline)
@@ -565,6 +584,34 @@ function Bookmarks({
     setSel(Array.isArray(next) ? (path ?? null) : next.path)
   }
   const node = sel ? nodeAt(tree, sel) : undefined
+  const covers = sel && node ? bookmarkPages(tree, sel, pageCount) : null
+  const doCopy = () => {
+    const c = sel ? copyAt(tree, sel) : null
+    if (c) {
+      setBookmarkClip([c])
+      setClipTick(clipTick + 1)
+    }
+  }
+  const doCut = () => {
+    const r = sel ? cutAt(tree, sel) : null
+    if (!r) return
+    setBookmarkClip([r.node])
+    setClipTick(clipTick + 1)
+    apply(r.tree, null)
+  }
+  const doPaste = () => {
+    if (!hasBookmarkClip()) return
+    apply(pasteAfter(tree, sel, getBookmarkClip(), pageCount))
+  }
+  const openAction = async () => {
+    if (!sel) return
+    const names = await (tools.getNamedDestinations?.() ?? Promise.resolve([])).catch(() => [])
+    setActionFor({ path: sel, names })
+  }
+  const openCheck = async () => {
+    const names = await (tools.getNamedDestinations?.() ?? Promise.resolve(null)).catch(() => null)
+    setChecking({ names })
+  }
   const add = () => {
     const r = insertAfter(tree, sel ?? [], { title: 'New bookmark', page: currentPage, children: [] })
     apply(r)
@@ -577,7 +624,13 @@ function Bookmarks({
       tabIndex={-1}
       onKeyDown={(e) => {
         if (!sel || renaming || !onEdit) return
-        if (e.key === 'F2') {
+        const typing = (e.target as HTMLElement).tagName === 'INPUT'
+        if ((e.ctrlKey || e.metaKey) && !typing && (e.key === 'c' || e.key === 'x' || e.key === 'v')) {
+          e.preventDefault()
+          if (e.key === 'c') doCopy()
+          else if (e.key === 'x') doCut()
+          else doPaste()
+        } else if (e.key === 'F2') {
           e.preventDefault()
           setRenaming(sel)
         } else if (e.key === 'Delete') {
@@ -594,7 +647,7 @@ function Bookmarks({
           <button className="icon-btn" disabled={!node} onClick={() => sel && setRenaming(sel)} aria-label="Rename bookmark" title="Rename (F2)">
             <PencilLine size={15} aria-hidden />
           </button>
-          <button className="icon-btn" disabled={!node} onClick={() => sel && apply(updateAt(tree, sel, { page: currentPage }), sel)} aria-label="Set to current page" title="Point the bookmark at the current page">
+          <button className="icon-btn" disabled={!node} onClick={() => sel && apply(updateAt(tree, sel, { page: currentPage, named: undefined }), sel)} aria-label="Set to current page" title="Point the bookmark at the current page">
             <Crosshair size={15} aria-hidden />
           </button>
           <button
@@ -602,7 +655,7 @@ function Bookmarks({
             disabled={!node}
             onClick={() => {
               const v = tools.getView?.()
-              if (sel && v) apply(updateAt(tree, sel, { page: v.page, view: { x: v.x, y: v.y }, dest: undefined }), sel)
+              if (sel && v) apply(updateAt(tree, sel, { page: v.page, view: { x: v.x, y: v.y }, dest: undefined, named: undefined }), sel)
             }}
             aria-label="Set to current view"
             title="Point the bookmark at what is on screen now (the page and the place on it)"
@@ -641,6 +694,27 @@ function Bookmarks({
           </button>
           <button className="icon-btn" disabled={!tree.length || !tools.onExportBookmarks} onClick={() => tools.onExportBookmarks?.('csv')} aria-label="Export bookmarks as CSV" title="Save the bookmarks as a CSV file (level, title, page)">
             <Download size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={doCut} aria-label={t('Cut bookmark')} title={t('Cut the bookmark and its children (Ctrl+X)')}>
+            <Scissors size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={doCopy} aria-label={t('Copy bookmark')} title={t('Copy the bookmark and its children (Ctrl+C)')}>
+            <CopyIcon size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!hasBookmarkClip() || clipTick < 0} onClick={doPaste} aria-label={t('Paste bookmark')} title={t('Paste after the selected bookmark (Ctrl+V); into another document too')}>
+            <ClipboardPaste size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} onClick={() => void openAction()} aria-label={t('Bookmark action')} title={t('Go to a page or a named destination')}>
+            <Link2 size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!covers || !tools.onBookmarkPages} onClick={() => covers && node && tools.onBookmarkPages?.(covers, 'extract', node.title)} aria-label={t('Extract the pages of this bookmark')} title={t('Save the pages this bookmark covers as a new file')}>
+            <FileOutput size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!covers || !tools.onBookmarkPages} onClick={() => covers && node && tools.onBookmarkPages?.(covers, 'print', node.title)} aria-label={t('Print the pages of this bookmark')} title={t('Print the pages this bookmark covers')}>
+            <Printer size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!tree.length} onClick={() => void openCheck()} aria-label={t('Check bookmarks')} title={t('List bookmarks that point nowhere')}>
+            <ListChecks size={15} aria-hidden />
           </button>
           <button className="icon-btn" disabled={!node} onClick={() => sel && apply(moveAt(tree, sel, -1))} aria-label="Move up" title="Move up">
             <ArrowUp size={15} aria-hidden />
@@ -682,6 +756,37 @@ function Bookmarks({
             />
           ))}
         </div>
+      )}
+      {checking && (
+        <ValidateBookmarksDialog
+          tree={tree}
+          pageCount={pageCount}
+          names={checking.names}
+          onGoTo={(p) => {
+            setSel(p)
+            const n = nodeAt(tree, p)
+            if (n && n.page >= 0) onGoTo(n.page)
+            setChecking(null)
+          }}
+          onDelete={(next) => {
+            setChecking(null)
+            apply(next, null)
+          }}
+          onClose={() => setChecking(null)}
+        />
+      )}
+      {actionFor && nodeAt(tree, actionFor.path) && (
+        <BookmarkActionDialog
+          node={nodeAt(tree, actionFor.path)!}
+          pageCount={pageCount}
+          names={actionFor.names}
+          onApply={(c) => {
+            const p = actionFor.path
+            setActionFor(null)
+            apply(updateAt(tree, p, { page: c.page, named: c.named, dest: undefined, view: undefined }), p)
+          }}
+          onClose={() => setActionFor(null)}
+        />
       )}
     </div>
   )

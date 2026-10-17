@@ -1,11 +1,11 @@
 /** The measurements list: one row per measurement or count marker, totals, and CSV. Pure. */
 import type { Annot } from './annotations'
-import { pathLength, polygonArea } from './measure'
+import { angleAt, pathLength, polygonArea } from './measure'
 import { pdfUnit } from './measureScale'
 
-export type MeasureType = 'distance' | 'perimeter' | 'area' | 'count'
+export type MeasureType = 'distance' | 'perimeter' | 'area' | 'count' | 'angle'
 
-export const MEASURE_TYPE_NAMES: Record<MeasureType, string> = { distance: 'Distance', perimeter: 'Perimeter', area: 'Area', count: 'Count' }
+export const MEASURE_TYPE_NAMES: Record<MeasureType, string> = { distance: 'Distance', perimeter: 'Perimeter', area: 'Area', count: 'Count', angle: 'Angle' }
 
 export interface MeasureRow {
   id: number
@@ -36,6 +36,10 @@ export function measureRows(annots: Annot[], labels: string[] | null): MeasureRo
       continue
     }
     const pts = a.points?.[0] ?? []
+    if (m.kind === 'angle') {
+      rows.push({ id: a.id, page: a.page, pageLabel, type: 'angle', value: pts.length >= 3 ? angleAt(pts[0], pts[1], pts[2]) : 0, unit: '°', result: m.label, label: m.name ?? '' })
+      continue
+    }
     const value = m.kind === 'area' ? polygonArea(pts) * m.factor * m.factor : pathLength(pts) * m.factor
     const unit = pdfUnit(m.unit)
     rows.push({ id: a.id, page: a.page, pageLabel, type: m.kind, value, unit: m.kind === 'area' ? `${unit}²` : unit, result: m.label, label: m.name ?? '' })
@@ -56,6 +60,8 @@ export interface MeasureTotal {
 export function measureTotals(rows: MeasureRow[]): MeasureTotal[] {
   const out = new Map<string, MeasureTotal>()
   for (const r of rows) {
+    // Angles do not add up.
+    if (r.type === 'angle') continue
     const key = r.type === 'count' ? `count\u0000${r.label}` : `${r.type}\u0000${r.unit}`
     const t = out.get(key) ?? { type: r.type, label: r.type === 'count' ? r.label : '', unit: r.unit, value: 0, items: 0 }
     t.value += r.value

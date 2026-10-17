@@ -18,7 +18,9 @@ import {
   canBlend,
   canCloud,
   canLineEnds,
+  canIcon,
   isLocked,
+  isChecked,
   FLAG_LOCKED,
   FLAG_PRINT,
   withFlag,
@@ -37,8 +39,12 @@ import {
 import { writeAnnotations, type DeletedAnnot } from './annotWrite'
 import { deletePages, extractPages, insertPagesFrom, mergeDocuments, movePages, rotatePages } from './pageOps'
 import { DeleteDialog, DuplicateDialog, ExtractDialog, InsertDialog, MergeDialog, MoveDialog, ReplaceDialog, RotateDialog, SplitDialog } from './PageOpsDialogs'
-import type { DocContext, PageDialogKind, PageDialogResult } from './pageDialogLogic'
+import { safeName, type DocContext, type PageDialogKind, type PageDialogResult } from './pageDialogLogic'
 import { DeleteBlankDialog, SwapDialog } from './BlankPagesDialog'
+import { JoinPagesDialog } from './JoinPagesDialog'
+import { ConfirmDialog, NewDocumentDialog, RenameDialog } from './FileManageDialogs'
+import { newBlankDocument } from './newDocument'
+import { FilePlus as IconNewDoc, PenLine as IconRename, Trash as IconBin, Undo2 as IconRevert } from 'lucide-react'
 import { applyDialogEdit, buildExtractFiles, buildSplitFiles, doneMessage } from './pageDialogRun'
 import { CommentsDialog, ExportTextDialog, FlattenDialog, SaveAsDialog, type CommentFormat, type ExportOptions, type CommentsDialogResult, type SaveAsChoice } from './CommandDialogs'
 import { applyFilter, type CommentFilter } from './commentFilter'
@@ -91,7 +97,9 @@ import { PrintDialog, type PrintJob } from './PrintDialog'
 import type { SearchJump } from './SearchPanel'
 import { Presentation } from './Presentation'
 import { annotsFromImported } from './importMap'
-import { addBackground, addHeaderFooter, addWatermark, cropPages, marksPresent, removeMarks, resizePages, uncropPages, type MarkKind } from './pageMarks'
+import { addBackground, addHeaderFooter, addWatermark, cropPages, cropPagesEach, marksPresent, removeMarks, resizePages, uncropPages, type MarkKind } from './pageMarks'
+import type { MarkPreset } from '../../shared/markPresets'
+import { readNamedDestinations } from './outlineRead'
 import { PageMarksDialog, type MarksMode, type MarksRequest } from './PageMarksDialog'
 import { readLabelRanges, writeLabelRanges, writeOutline, type BookmarkNode, type LabelRange } from './outlineEdit'
 import { mergeOutlineStyles, outlineToCsv, outlineToText, parseOutline, readOutlineStyles } from './outlineTools'
@@ -142,7 +150,7 @@ import { compareAnnots, takeTheirs, type Comparison } from './compareAnnots'
 import { ComparePanel } from './ComparePanel'
 import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
 import { CommentsPane } from './CommentsPane'
-import { applyStyle as applyStyleTo, cleanStyle, styleOf } from './commentStyle'
+import { applyStyle as applyStyleTo, cleanStyle, exportStyleSet, mergeStyleSets, parseStyleSet, styleOf } from './commentStyle'
 import { commentsCsv, commentSummaryPdf } from './commentReport'
 import { fromFdf, fromNorms, fromXfdf, pageFrames, toFdf, toNorms, toXfdf } from './interchange'
 import { StampPicker } from './StampPicker'
@@ -150,14 +158,17 @@ import { useStamps } from './useStamps'
 import { useSignatures } from './useSignatures'
 import { Reader, type ReaderState } from './readAloud'
 import type { MeasureKind } from './MeasureLayer'
-import { calibrate, formatArea, formatLength, pathLength, PAPER_MM, polygonArea, readViewports, resultLabel, scaleAt, type Scale, type Viewport } from './measure'
+import { angleLabel, calibrate, formatArea, formatLength, pathLength, PAPER_MM, polygonArea, readViewports, resultLabel, scaleAt, type Scale, type Viewport } from './measure'
 import { ScaleDialog } from './ScaleDialog'
 import { MeasurePane } from './MeasurePane'
 import { measureCsv, measureRows, nextCount } from './measureList'
 import { writePageScales } from './measureWrite'
 import { ALL_SNAPS, type SnapKinds } from './snap'
-import type { ScalePreset } from './measureScale'
-import { readLayers, withHiddenLayers, type Layer } from './layers'
+import { exportScaleList, mergeScaleLists, parseScaleList, type ScalePreset } from './measureScale'
+import { sortComments, stepComment } from './commentList'
+import { buildCorrection } from './textCorrection'
+import { copyable, pasteAnnots } from './annotClipboard'
+import { printHiddenLayers, readLayers, withHiddenLayers, type Layer, type PrintLayers } from './layers'
 import {
   ArrowLeftRight,
   BookOpen,
@@ -168,6 +179,7 @@ import {
   GalleryVertical,
   ScanSearch,
   Palette,
+  DraftingCompass,
   FileX,
   Bookmark,
   ChevronDown,
@@ -312,7 +324,8 @@ const MAX_MATCHES = 5000
 export interface DocMeta {
   dirty?: boolean
   name?: string
-  path?: string
+  /** The file's path; null when the file is gone and the document carries on without one. */
+  path?: string | null
 }
 
 interface Props {
@@ -1195,7 +1208,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       ...(canLineEnds(kind) && s.lineStart ? { lineStart: s.lineStart } : {}),
       ...(canLineEnds(kind) && s.lineEnd ? { lineEnd: s.lineEnd } : {}),
       ...(canCloud(kind) && s.cloud !== undefined ? { cloud: s.cloud } : {}),
-      ...(canBlend(kind) && s.blend ? { blend: s.blend } : {})
+      ...(canBlend(kind) && s.blend ? { blend: s.blend } : {}),
+      ...(canIcon(kind) && s.icon ? { icon: s.icon } : {})
     }
   }
 
@@ -1570,6 +1584,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   // ---- Properties panel and tool presets ------------------------------------------------------------
   const [propsOpen, setPropsOpen] = useState(false)
+  /** The stamp palette kept open in a pane beside the page. */
+  const [stampDock, setStampDock] = useState(false)
   const panelStyle: ToolStyle & { color: string } = selected
     ? { lineWidth: selected.lineWidth, fontSize: selected.fontSize, ...styleOf(selected) }
     : { ...(styleMap[swatchKind] ?? {}), color: colors[swatchKind], fill: fills[swatchKind], dash: dashes[swatchKind], lineWidth: styleMap[swatchKind]?.lineWidth ?? drawWidth }
@@ -1605,6 +1621,31 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     if (!selected || isLocked(selected)) return
     touch(selected.id)
     history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, author: author || undefined } : a)))
+  }
+  const setSubjectOf = (subject: string) => {
+    if (!selected || isLocked(selected)) return
+    touch(selected.id)
+    history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, subject: subject || undefined } : a)))
+  }
+  const setLayerOf = (key: string) => {
+    if (!selected || isLocked(selected)) return
+    touch(selected.id)
+    history.commit((list) => list.map((a) => (a.id === selected.id ? { ...a, layer: key || undefined } : a)))
+  }
+  const exportStyles = async () => {
+    const saved = await window.openpdf.saveText('Comment styles.json', exportStyleSet(toolPresets), { name: 'Comment styles (JSON)', ext: 'json' })
+    if (saved) setNotice({ kind: 'info', text: `Styles exported to ${saved}` })
+  }
+  const importStyles = async () => {
+    const file = await window.openpdf.pickFile({ name: 'Comment styles (JSON)', ext: ['json'] })
+    if (!file) return
+    try {
+      const list = parseStyleSet(new TextDecoder().decode(file.data), () => crypto.randomUUID())
+      onSettings({ toolPresets: mergeStyleSets(toolPresets, list) })
+      setNotice({ kind: 'info', text: `Added ${list.length} style${list.length === 1 ? '' : 's'} from ${file.name}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: e instanceof Error ? e.message : String(e) })
+    }
   }
   const makeDefault = () => {
     onSettings({ toolDefaults: { ...toolDefaults, [swatchKind]: cleanStyle(panelStyle) } })
@@ -1646,11 +1687,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // ---- Comments list: show/hide on the page (the view only), bulk status, deleting, selecting ----
   const [hiddenComments, setHiddenComments] = useState<ReadonlySet<number>>(() => new Set())
   const setCommentsHidden = (ids: number[], hide: boolean) => {
-    // Annotations of other tools that we only keep as they are ("foreign") stay drawn by PDFium, so they cannot be hidden.
-    const foreign = new Set(annotsRef.current.filter((a) => a.kind === 'foreign').map((a) => a.id))
-    const target = ids.filter((id) => !foreign.has(id))
+    // An annotation of another tool that we only keep as it is ("foreign") is drawn by PDFium: it is hidden there
+    // (in memory only, so it still prints), and shown again the same way.
+    const foreign = annotsRef.current.filter((a) => a.kind === 'foreign' && a.origin && ids.includes(a.id))
+    if (foreign.length && clientRef.current) {
+      Promise.all(foreign.map((a) => clientRef.current!.setAnnotHidden(a.page, a.origin!.index, a.origin!.subtype, hide)))
+        .then(() => setEpoch((e) => e + 1))
+        .catch(() => {})
+    }
+    const target = ids
     // An imported comment is drawn by PDFium until touched, so hiding one hands it to our overlay first.
-    if (hide) target.forEach(touch)
+    if (hide) target.filter((id) => !foreign.some((a) => a.id === id)).forEach(touch)
     setHiddenComments((h) => {
       const next = new Set(h)
       for (const id of target) {
@@ -1665,6 +1712,85 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     const set = new Set(ids)
     history.commit((list) => list.map((a) => (set.has(a.id) ? { ...a, replies: [...(a.replies ?? []), reply()] } : a)))
   }
+  /** Ticks or unticks the "checked" flag of comments: a reply in the Marked state model, saved with them. */
+  const setCheckedMany = (ids: number[], on: boolean) => {
+    const set = new Set(ids)
+    const targets = new Set(annotsRef.current.filter((a) => set.has(a.id) && isChecked(a) !== on).map((a) => a.id))
+    if (!targets.size) return
+    const mark = (): Reply => ({ id: nextAnnotId.current++, author: authorRef.current, text: '', date: new Date().toISOString(), mark: on ? 'Marked' : 'Unmarked' })
+    history.commit((list) => list.map((a) => (targets.has(a.id) ? { ...a, replies: [...(a.replies ?? []), mark()] } : a)))
+  }
+
+  // Text correction: the selected text struck out, with its replacement and one thread.
+  const [correction, setCorrection] = useState<{ parts: { page: number; rects: Annot['rects'] }[]; mode: 'delete' | 'replace'; replacement: string; comment: string } | null>(null)
+  const openCorrection = async () => {
+    const parts = (await viewer.current?.selectionRects()) ?? []
+    if (!parts.length) return
+    setCorrection({ parts, mode: 'replace', replacement: '', comment: '' })
+  }
+  const applyCorrection = () => {
+    if (!correction) return
+    const made = buildCorrection(correction.parts, {
+      replacement: correction.mode === 'replace' ? correction.replacement : '',
+      comment: correction.comment,
+      author: authorRef.current,
+      now: new Date().toISOString(),
+      make: (page, rects) => newAnnot('strikeout', page, rects),
+      newId: () => nextAnnotId.current++
+    })
+    setCorrection(null)
+    if (!made.length) return
+    history.commit((list) => [...list, ...made])
+    setSelectedAnnot(made[made.length - 1].id)
+    viewer.current?.clearSelection()
+  }
+
+  // Cut, copy and paste of annotations.
+  const annotClip = useRef<Annot[]>([])
+  const pasteTimes = useRef(0)
+  const copyAnnots = (): boolean => {
+    const ids = selIdsRef.current
+    const list = copyable(annotsRef.current.filter((a) => ids.has(a.id)))
+    if (!list.length) return false
+    annotClip.current = list
+    pasteTimes.current = 1
+    setNotice({ kind: 'info', text: `Copied ${list.length} annotation${list.length === 1 ? '' : 's'}. Paste puts them on the current page.` })
+    return true
+  }
+  const cutAnnots = () => {
+    if (!copyAnnots()) return
+    const ids = selIdsRef.current
+    const gone = annotsRef.current.filter((a) => ids.has(a.id) && !isLocked(a) && a.kind !== 'foreign').map((a) => a.id)
+    pasteTimes.current = 0
+    if (gone.length) removeMany(new Set(gone))
+  }
+  const pasteAnnotsHere = () => {
+    if (!annotClip.current.length || !pages.length) return
+    const at = Math.min(currentPage, pages.length - 1)
+    const made = pasteAnnots(annotClip.current, { page: at, pages, nudge: 12 * pasteTimes.current, newId: () => nextAnnotId.current++, author: authorRef.current || undefined, now: new Date().toISOString() })
+    if (!made.length) return
+    pasteTimes.current++
+    // Count markers carry on the numbering of their label.
+    const all = [...annotsRef.current]
+    const numbered = made.map((a) => {
+      const out = a.measure?.kind === 'count' ? { ...a, measure: { ...a.measure, n: nextCount(all, a.measure.label) } } : a
+      all.push(out)
+      return out
+    })
+    history.commit((list) => [...list, ...numbered])
+    setSelectedAnnot(numbered[0].id)
+    setExtraSel(new Set(numbered.slice(1).map((a) => a.id)))
+    setNotice({ kind: 'info', text: `Pasted ${numbered.length} annotation${numbered.length === 1 ? '' : 's'} on page ${at + 1}` })
+  }
+  /** Next or previous comment in page order (the whole document), wherever the keyboard focus is. */
+  const stepCommentGlobal = (dir: 1 | -1) => {
+    const order = sortComments(annotsRef.current.filter((a) => a.kind !== 'link' && !hiddenComments.has(a.id)), 'page').map((a) => a.id)
+    const id = stepComment(order, selectedAnnot, dir)
+    if (id !== null) focusComment(id)
+  }
+  const kbRef = useRef({ cut: cutAnnots, copy: copyAnnots, paste: pasteAnnotsHere, step: stepCommentGlobal })
+  kbRef.current = { cut: cutAnnots, copy: copyAnnots, paste: pasteAnnotsHere, step: stepCommentGlobal }
+
   const selectComments = (ids: number[]) => {
     setSelectedAnnot(ids[0] ?? null)
     setExtraSel(new Set(ids.slice(1)))
@@ -1677,7 +1803,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     setDashes((m) => ({ ...m, [k]: p.style.dash }))
     setStyleMap((m) => ({
       ...m,
-      [k]: { ...m[k], lineWidth: p.style.lineWidth, opacity: p.style.opacity, fontFamily: p.style.fontFamily, fontSize: p.style.fontSize, lineStart: p.style.lineStart, lineEnd: p.style.lineEnd, cloud: p.style.cloud, blend: p.style.blend }
+      [k]: { ...m[k], lineWidth: p.style.lineWidth, opacity: p.style.opacity, fontFamily: p.style.fontFamily, fontSize: p.style.fontSize, lineStart: p.style.lineStart, lineEnd: p.style.lineEnd, cloud: p.style.cloud, blend: p.style.blend, icon: p.style.icon }
     }))
     setSelectedAnnot(null)
     if (!isMarkup(k)) setTool(k as Tool)
@@ -1729,6 +1855,72 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     },
     [saving, locked, protection, annots, deleted, annotsDirty, formValues, zDirty, bytes, path, name, onMeta, history.reset] // eslint-disable-line react-hooks/exhaustive-deps
   )
+
+  // ---- File: new, revert to saved, rename, move to the Recycle Bin ------------------------------------
+  const [fileDialog, setFileDialog] = useState<'new' | 'revert' | 'rename' | 'trash' | null>(null)
+  const createBlank = async (size: { width: number; height: number }, count: number) => {
+    setFileDialog(null)
+    try {
+      onNewDoc('Untitled.pdf', await newBlankDocument(size, count))
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not create the document: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+  /** Reloads the whole document from its file (after the confirmation); every change since the last save is dropped. */
+  const revertToSaved = async () => {
+    setFileDialog(null)
+    if (!path || saving || busy) return
+    setBusy(true)
+    try {
+      const f = await window.openpdf.readFile(path)
+      let plain = f.data
+      let next: Protection = { kind: 'none' }
+      if (mightBeEncrypted(f.data)) {
+        const pw = protection.kind === 'copy' ? protection.password : ''
+        const info = await window.openpdf.encryptionInfo(f.data, pw)
+        if (info.state !== 'open') throw new Error('The file now needs a different password. Close it and open it again.')
+        plain = await window.openpdf.decryptPdf(f.data, pw)
+        next = { kind: 'copy', original: f.data, password: pw }
+      }
+      baseline.current = new Map()
+      history.reset([])
+      setZDirty(false)
+      setProtection(next)
+      setProtectionDirty(false)
+      setScaleDirty(false)
+      setFormValues(new Map())
+      setExtraSel(new Set())
+      setSelectedAnnot(null)
+      setEditingAnnot(null)
+      setPageUndo([])
+      setPageRedo([])
+      setSavedBytes(plain)
+      setBytes(plain)
+      setNotice({ kind: 'info', text: `Went back to the saved version of ${f.name}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not revert: ${e instanceof Error ? e.message : String(e)}` })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const renameFile = async (newName: string) => {
+    setFileDialog(null)
+    if (!path) return
+    const r = await window.openpdf.renameFile(path, newName)
+    if (!r.ok) return setNotice({ kind: 'error', text: `Could not rename the file: ${r.error}` })
+    onMeta({ name: r.name, path: r.path })
+    setNotice({ kind: 'info', text: `Renamed the file to ${r.name}` })
+  }
+  /** Moves the file to the Recycle Bin (never a permanent delete); the document stays open as an unsaved one. */
+  const trashFile = async () => {
+    setFileDialog(null)
+    if (!path) return
+    const r = await window.openpdf.trashFile(path)
+    if (!r.ok) return setNotice({ kind: 'error', text: `Could not move the file to the Recycle Bin: ${r.error}` })
+    setSavedBytes(new Uint8Array(0)) // nothing on disk any more: the document counts as unsaved
+    onMeta({ path: null })
+    setNotice({ kind: 'info', text: `Moved ${name} to the Recycle Bin. The document is still open: Save as puts it back on disk.` })
+  }
 
   // ---- Page organisation ----------------------------------------------------------------------------
   const swapBytes = useCallback((next: Uint8Array) => {
@@ -2013,6 +2205,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         : await window.openpdf.saveText(`${base} (bookmarks).txt`, outlineToText(outline), { name: 'Text outline', ext: 'txt' })
     if (saved) setNotice({ kind: 'info', text: `Saved the bookmarks to ${saved}.` })
   }
+  /** Extracts the pages a bookmark covers to a new file, or opens Print with them chosen. */
+  const bookmarkPagesAction = async (r: { first: number; last: number }, action: 'extract' | 'print', title: string) => {
+    const list = Array.from({ length: r.last - r.first + 1 }, (_, i) => r.first + i)
+    const range = r.first === r.last ? String(r.first + 1) : `${r.first + 1}-${r.last + 1}`
+    if (action === 'print') return openPrint(range)
+    try {
+      const src = annotsDirty ? await applyEdits(bytes) : bytes
+      const out = await extractPages(src, list)
+      const stem = name.replace(/\.pdf$/i, '')
+      const saved = await window.openpdf.saveFileAs(`${stem} (${safeName(title) || `pages ${range}`}).pdf`, out)
+      if (saved) setNotice({ kind: 'info', text: `Extracted ${list.length} page${list.length === 1 ? '' : 's'} (${range}) to ${saved.name}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: `Could not extract the pages: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
   useEffect(() => {
     const t = outlineWant.current
     if (!t || busy || saving) return
@@ -2185,9 +2392,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     const count = (p: number[]) => `${p.length} page${p.length === 1 ? '' : 's'}`
     if (r.mode === 'headerfooter' || r.mode === 'pagenumbers' || r.mode === 'bates')
       return applyPageEdit((b) => addHeaderFooter(b, r.spec, info), `Added ${r.mode === 'bates' ? 'Bates numbers' : r.mode === 'pagenumbers' ? 'page numbers' : 'a header and footer'} to ${count(r.spec.pages)}`)
-    if (r.mode === 'watermark') return applyPageEdit((b) => addWatermark(b, r.spec), `Added a watermark to ${count(r.spec.pages)}`)
+    if (r.mode === 'watermark') return applyPageEdit((b) => addWatermark(b, r.spec, info), `Added a watermark to ${count(r.spec.pages)}`)
     if (r.mode === 'background') return applyPageEdit((b) => addBackground(b, r.spec), `Added a background to ${count(r.spec.pages)}`)
-    if (r.mode === 'crop') return applyPageEdit((b) => cropPages(b, r.pages, r.margins), `Cropped ${count(r.pages)}`)
+    if (r.mode === 'crop') {
+      const opts = { removeContent: r.removeContent }
+      return applyPageEdit((b) => (r.plan ? cropPagesEach(b, r.plan, opts) : cropPages(b, r.pages, r.margins, opts)), `Cropped ${count(r.plan ? r.plan.map((x) => x.page) : r.pages)}${r.removeContent ? ' and removed the cropped area' : ''}`)
+    }
     if (r.mode === 'uncrop') return applyPageEdit((b) => uncropPages(b, r.pages), `Removed cropping from ${count(r.pages)}`)
     if (r.mode === 'resize') return applyPageEdit((b) => resizePages(b, r.pages, r.width, r.height, r.fit), `Resized ${count(r.pages)}`)
     if (r.mode !== 'remove') return
@@ -2199,6 +2409,28 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       return out.bytes
     })
     setNotice({ kind: 'info', text: removed ? `Removed ${removed} mark${removed === 1 ? '' : 's'}` : 'There were no such marks to remove' })
+  }
+  // Saved settings for the marks dialogs live with the program's settings.
+  const [markPresets, setMarkPresets] = useState<MarkPreset[]>([])
+  useEffect(() => {
+    void window.openpdf.getSettings().then((st) => setMarkPresets(st.markPresets ?? []))
+  }, [])
+  const changeMarkPresets = (next: MarkPreset[]) => {
+    setMarkPresets(next)
+    void window.openpdf.setSettings({ markPresets: next }).then((st) => setMarkPresets(st.markPresets))
+  }
+  /** The part of each page that is not white, from a small render of it (for trimming margins). */
+  const measureContent = async (list: number[]): Promise<(Frac | null)[]> => {
+    const c = clientRef.current
+    if (!c) throw new Error('The document is not ready.')
+    const out: (Frac | null)[] = []
+    for (const p of list) {
+      const size = pages[p]
+      const scale = Math.min(1.5, 500 / Math.max(size.width, size.height))
+      const r = await c.render(p, scale)
+      out.push(trimBox(r.data, r.width, r.height))
+    }
+    return out
   }
   const cropToRect = (page: number, rect: { x: number; y: number; w: number; h: number }) => {
     setTool('select')
@@ -2307,7 +2539,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       return
     }
     // Into the open document: scan first, then insert as one undoable page edit.
-    let got: Awaited<ReturnType<typeof scannedPages>> = null
+    let got: Awaited<ReturnType<typeof scannedPages>>
     setBusy(true)
     try {
       got = await scannedPages(r, progress)
@@ -2696,7 +2928,24 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     setScalePresets(next)
     void window.openpdf.setSettings({ scalePresets: next }).then((st) => setScalePresets(st.scalePresets))
   }
+  const exportScales = async () => {
+    const saved = await window.openpdf.saveText('Scales.json', exportScaleList(scalePresets), { name: 'Scale list (JSON)', ext: 'json' })
+    if (saved) setNotice({ kind: 'info', text: `Saved scales exported to ${saved}` })
+  }
+  const importScales = async () => {
+    const file = await window.openpdf.pickFile({ name: 'Scale list (JSON)', ext: ['json'] })
+    if (!file) return
+    try {
+      const list = parseScaleList(new TextDecoder().decode(file.data), () => crypto.randomUUID())
+      changeScalePresets(mergeScaleLists(scalePresets, list))
+      setNotice({ kind: 'info', text: `Added ${list.length} scale${list.length === 1 ? '' : 's'} from ${file.name}` })
+    } catch (e) {
+      setNotice({ kind: 'error', text: e instanceof Error ? e.message : String(e) })
+    }
+  }
   const [snapOn, setSnapOn] = useState(true)
+  /** Degrees between the angles Shift allows while drawing a line or measuring. */
+  const [shiftStep, setShiftStep] = useState<45 | 15>(45)
   const [snapKinds, setSnapKinds] = useState<SnapKinds>(ALL_SNAPS)
   const [countLabel, setCountLabel] = useState('Count')
   const [viewports, setViewports] = useState<Viewport[][]>([])
@@ -2723,6 +2972,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const measureScale = useCallback((page: number, at: Pt) => scaleAt(at, viewports[page], pageScales[page] ?? calibrated), [viewports, calibrated, pageScales])
   const measureLabel = useCallback(
     (kind: MeasureKind, points: Pt[], page: number) => {
+      if (kind === 'angle') return angleLabel(points)
       const s = measureScale(page, points[0])
       if (kind === 'area') return formatArea(polygonArea(points), s)
       return formatLength(pathLength(points), s)
@@ -2746,6 +2996,18 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         measure: { kind: 'count', factor: 1, unit: '', label: group, n: nextCount(annotsRef.current, group) }
       }
       history.commit((list) => [...list, marker])
+      return
+    }
+    if (kind === 'angle') {
+      // Three points, the vertex in the middle; the result is in degrees whatever the scale.
+      const angle = withBounds({
+        ...newAnnot('polyline', page, [], ''),
+        color: MEASURE_COLOR,
+        lineWidth: 1,
+        points: [points],
+        measure: { kind: 'angle', factor: 1, unit: '°', label: angleLabel(points) }
+      })
+      history.commit((list) => [...list, angle])
       return
     }
     const s = scaleAt(points[0], viewportsRef.current[page], pageScalesRef.current[page] ?? calibratedRef.current)
@@ -2778,10 +3040,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     setScaleDialog(false)
     if (updateExisting) {
       const on = new Set(pageList)
-      annotsRef.current.filter((a) => a.measure && a.measure.kind !== 'count' && on.has(a.page) && a.points?.[0]).forEach((a) => touch(a.id))
+      annotsRef.current.filter((a) => a.measure && a.measure.kind !== 'count' && a.measure.kind !== 'angle' && on.has(a.page) && a.points?.[0]).forEach((a) => touch(a.id))
       history.commit((list) =>
         list.map((a) => {
-          if (!a.measure || a.measure.kind === 'count' || !on.has(a.page) || !a.points?.[0]) return a
+          if (!a.measure || a.measure.kind === 'count' || a.measure.kind === 'angle' || !on.has(a.page) || !a.points?.[0]) return a
           return { ...a, measure: { ...a.measure, factor: scale.factor, unit: scale.unit, ratio: scale.label, label: resultLabel(a.measure.kind, a.points[0], scale) } }
         })
       )
@@ -2826,7 +3088,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // ---- Print ----------------------------------------------------------------------------------------
   const [printDialog, setPrintDialog] = useState<{ viewRange: [number, number] | null; defaults: PrintDefaults | null } | null>(null)
   const [printing, setPrinting] = useState<{ done: number; total: number; ctrl: AbortController } | null>(null)
-  const openPrint = useCallback(() => {
+  const openPrint = useCallback((rangeText?: unknown) => {
     if (!pages.length || printing || permissions?.print === 'none') return
     // The pages showing in the view now: those whose box overlaps the scrolling area.
     let viewRange: [number, number] | null = null
@@ -2844,14 +3106,20 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     void readViewPrefs(bytes).then(
       (v) => printDefaults(v, pages.length, pages[0]),
       () => null
-    ).then((defaults) => setPrintDialog((d) => d ?? { viewRange, defaults }))
+    ).then((defaults) => {
+      // A page range given (the pages of a bookmark) wins over the document's own print presets.
+      const wanted = typeof rangeText === 'string' ? rangeText : ''
+      const start = wanted ? { ...(defaults ?? { copies: 1, duplex: 'off' as const, scaling: 'fit' as const, paper: null, any: false }), rangeText: wanted } : defaults
+      setPrintDialog((d) => d ?? { viewRange, defaults: start })
+    })
   }, [pages, printing, permissions, bytes])
 
   /** The document as it prints: pending annotation edits written into a copy (so the printout matches what Save would write), and layers hidden in the view hidden on paper too. */
-  const preparePrint = async () => {
+  const preparePrint = async (layerMode: PrintLayers = 'visible') => {
     let src = bytes
     if (annotsDirty && !locked) src = await applyEdits(bytes)
-    if (hiddenLayers) src = await withHiddenLayers(src, hiddenLayers)
+    const hide = printHiddenLayers(layerMode, hiddenLayers)
+    if (hide) src = await withHiddenLayers(src, hide)
     return src
   }
 
@@ -2870,7 +3138,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         ctrl.signal
       )
       if (res.error) setNotice({ kind: 'error', text: `Could not print: ${res.error}` })
-      else if (res.pdfPath) setNotice({ kind: 'info', text: `Print output written to ${res.pdfPath}` })
+      else if (res.pdfPath) setNotice({ kind: 'info', text: res.fallback ? `Print output written to ${res.pdfPath} as pictures (the text could not be kept: ${res.fallback})` : `Print output written to ${res.pdfPath}` })
       else if (res.ok) setNotice({ kind: 'info', text: `Sent ${list.length} page${list.length === 1 ? '' : 's'} to the printer` })
     } catch (e) {
       setNotice({ kind: 'error', text: `Could not print: ${e instanceof Error ? e.message : String(e)}` })
@@ -3049,6 +3317,17 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       } else if (ctrl && e.key.toLowerCase() === 'c' && !inField && viewer.current?.hasSelection()) {
         e.preventDefault()
         void viewer.current.copySelection()
+      } else if (ctrl && !e.shiftKey && k === 'c' && !inField && selectedAnnot !== null) {
+        if (kbRef.current.copy()) e.preventDefault()
+      } else if (ctrl && !e.shiftKey && k === 'x' && !inField && selectedAnnot !== null) {
+        e.preventDefault()
+        kbRef.current.cut()
+      } else if (ctrl && !e.shiftKey && k === 'v' && !inField && !(e.target as HTMLElement | null)?.closest?.('.thumbs')) {
+        e.preventDefault()
+        kbRef.current.paste()
+      } else if (e.altKey && !ctrl && !inField && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault()
+        kbRef.current.step(e.key === 'ArrowDown' ? 1 : -1)
       } else if (ctrl && e.shiftKey && (e.key === '+' || e.key === '=' || e.code === 'Equal' || e.code === 'NumpadAdd')) {
         e.preventDefault()
         rotateView(1)
@@ -3262,6 +3541,14 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Combine} label={t('Combine files')} onClick={() => setCombineOpen(true)} title={t('Combine PDFs, pictures and Office files into one PDF')} />
                 <RB big icon={X} label={t('Close')} onClick={onCloseDoc} title={t('Close this document (Ctrl+W)')} />
               </RGroup>
+              <RGroup label={t('File')}>
+                <RB big icon={IconNewDoc} label={t('New')} onClick={() => setFileDialog('new')} title={t('Start a new blank document: choose the page size and number of pages')} />
+                <RB big icon={IconRevert} label={t('Revert to saved')} onClick={() => setFileDialog('revert')} disabled={!path || saving || busy} title={t('Reload the document from its file, dropping every change since it was saved (asks first)')} />
+                <RStack>
+                  <RB icon={IconRename} label={t('Rename…')} onClick={() => setFileDialog('rename')} disabled={!path || saving || busy} title={t('Rename the file on disk, in its own folder')} />
+                  <RB icon={IconBin} label={t('Move to Recycle Bin…')} onClick={() => setFileDialog('trash')} disabled={!path || saving || busy} title={t('Move the file to the Windows Recycle Bin (asks first; the document stays open)')} />
+                </RStack>
+              </RGroup>
               <RGroup label={t('Comments')}>
                 <RB big icon={FileInput} label={t('Import')} onClick={() => setCmdDialog({ kind: 'comments', mode: 'import', format: 'xfdf' })} disabled={!pages.length} title={t('Import comments from an XFDF or FDF file')} />
                 <RStack>
@@ -3328,7 +3615,15 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
                 <RStack>
                   <RB icon={Replace} label={t('Replace text')} onClick={() => void markSelection('strikeout', true)} disabled={!hasTextSelection} title={t('Strike out the selected text and type its replacement')} />
+                  <RB icon={PenLine} label={t('Text correction')} onClick={() => void openCorrection()} disabled={!hasTextSelection || locked} title={t('Mark the selected text for deletion or replacement, with a comment, as one linked correction')} />
                   <RB icon={TextCursorInput} label={t('Insert text')} onClick={() => setTool(tool === 'caret' ? 'select' : 'caret')} disabled={!pages.length} pressed={tool === 'caret'} title={t('Mark where text should be inserted: click in the text, then type it')} />
+                </RStack>
+              </RGroup>
+              <RGroup label={t('Clipboard')}>
+                <RStack>
+                  <RB icon={Scissors} label={t('Cut')} onClick={cutAnnots} disabled={selectedAnnot === null || locked} title={t('Cut the selected annotations (Ctrl+X)')} />
+                  <RB icon={Copy} label={t('Copy')} onClick={() => void copyAnnots()} disabled={selectedAnnot === null} title={t('Copy the selected annotations (Ctrl+C)')} />
+                  <RB icon={ClipboardPaste} label={t('Paste')} onClick={pasteAnnotsHere} disabled={!pages.length || locked} title={t('Paste the copied annotations on the current page (Ctrl+V)')} />
                 </RStack>
               </RGroup>
               <RGroup label={t('Notes')}>
@@ -3373,6 +3668,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                     />
                   )}
                 </div>
+                <RB icon={Palette} label={t('Dock palette')} onClick={() => setStampDock((d) => !d)} pressed={stampDock} title={t('Keep the stamp palette open in a pane beside the page')} />
                 <RB icon={CopyPlus} label={t('To pages…')} onClick={stamps.copySelected} disabled={selected?.kind !== 'stamp'} title={t('Copy the selected stamp to other pages, in the same place')} />
               </RGroup>
               {styleAndEdit}
@@ -3406,8 +3702,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Ruler} label={t('Distance')} onClick={() => setTool(tool === 'measure-distance' ? 'select' : 'measure-distance')} disabled={!pages.length} pressed={tool === 'measure-distance'} title={t('Measure a distance: click two points. Shift keeps 45 degree steps')} />
                 <RB big icon={Spline} label={t('Perimeter')} onClick={() => setTool(tool === 'measure-perimeter' ? 'select' : 'measure-perimeter')} disabled={!pages.length} pressed={tool === 'measure-perimeter'} title={t('Measure a path: click points, double-click or Enter to finish, Backspace to undo a point')} />
                 <RB big icon={Pentagon} label={t('Area')} onClick={() => setTool(tool === 'measure-area' ? 'select' : 'measure-area')} disabled={!pages.length} pressed={tool === 'measure-area'} title={t('Measure an area: click the corners, double-click or Enter to finish')} />
+                <RB big icon={DraftingCompass} label={t('Angle')} onClick={() => setTool(tool === 'measure-angle' ? 'select' : 'measure-angle')} disabled={!pages.length} pressed={tool === 'measure-angle'} title={t('Measure an angle: click a point on one arm, the corner, then a point on the other arm')} />
                 <RB big icon={Hash} label={t('Count')} onClick={() => setTool(tool === 'measure-count' ? 'select' : 'measure-count')} disabled={!pages.length} pressed={tool === 'measure-count'} title={t('Count: click to drop numbered markers, numbered within the label')} />
                 <RStack>
+                  <select className="rselect" aria-label={t('Shift angle step')} value={shiftStep} onChange={(e) => setShiftStep(Number(e.target.value) === 15 ? 15 : 45)} title={t('The angle steps Shift allows while you draw a line or measure')}>
+                    <option value={45}>{t('Shift: 45° steps')}</option>
+                    <option value={15}>{t('Shift: 15° steps')}</option>
+                  </select>
                   <input className="rinput" aria-label={t('Count label')} value={countLabel} onChange={(e) => setCountLabel(e.target.value)} title={t('Label for the markers you drop: each label is numbered and totalled on its own')} />
                 </RStack>
               </RGroup>
@@ -3453,6 +3754,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Trash2} label={t('Delete')} onClick={() => openPageDialog('delete')} disabled={!pages.length || busy || pages.length < 2} title={t('Delete the selected pages')} />
                 <RB big icon={ArrowUpDown} label={t('Move')} onClick={() => openPageDialog('move')} disabled={!pages.length || busy || pages.length < 2} title={t('Move pages to another place in the document')} />
                 <RB big icon={ArrowLeftRight} label={t('Swap')} onClick={() => openPageDialog('swap')} disabled={!pages.length || busy || pages.length < 2} title={t('Exchange two pages')} />
+                <RB big icon={Columns2} label={t('Join pages')} onClick={() => openPageDialog('join')} disabled={!pages.length || busy || pages.length < 2} title={t('Join two half pages into one page, side by side or stacked')} />
                 <RB big icon={FileX} label={t('Delete blank')} onClick={() => openPageDialog('deleteBlank')} disabled={!pages.length || busy || pages.length < 2 || !client} title={t('Find blank pages and delete them, after looking at the list')} />
               </RGroup>
               <RGroup label={t('Copy')}>
@@ -3964,6 +4266,31 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         />
       )}
 
+      {fileDialog === 'new' && <NewDocumentDialog onCreate={(s, n) => void createBlank(s, n)} onClose={() => setFileDialog(null)} />}
+      {fileDialog === 'revert' && (
+        <ConfirmDialog
+          title={t('Revert to saved')}
+          message={t('Go back to the saved version of {name}?', { name })}
+          detail={dirty ? t('Every change since the last save will be lost.') : t('The document is reloaded from its file.')}
+          confirm={t('Revert')}
+          danger
+          onConfirm={() => void revertToSaved()}
+          onClose={() => setFileDialog(null)}
+        />
+      )}
+      {fileDialog === 'rename' && <RenameDialog fileName={name} onRename={(n) => void renameFile(n)} onClose={() => setFileDialog(null)} />}
+      {fileDialog === 'trash' && (
+        <ConfirmDialog
+          title={t('Move to Recycle Bin')}
+          message={t('Move {name} to the Recycle Bin?', { name })}
+          detail={t('The file is not deleted for good: restore it from the Recycle Bin. This document stays open here as an unsaved one.')}
+          confirm={t('Move to Recycle Bin')}
+          danger
+          onConfirm={() => void trashFile()}
+          onClose={() => setFileDialog(null)}
+        />
+      )}
+
       {marksMode && (
         <PageMarksDialog
           mode={marksMode}
@@ -3972,6 +4299,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           selected={pageSel}
           present={presentMarks}
           onPickImage={async () => (await window.openpdf.pickFile({ name: 'Pictures', ext: ['png', 'jpg', 'jpeg'] }))?.data ?? null}
+          sizes={pages}
+          measure={measureContent}
+          presets={markPresets}
+          onPresetsChange={changeMarkPresets}
           onApply={(r) => void applyMarks(r)}
           onClose={() => setMarksMode(null)}
         />
@@ -4275,8 +4606,47 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           onApply={applyScale}
           onSavePreset={(p) => changeScalePresets([...scalePresets.filter((x) => x.id !== p.id), p])}
           onDeletePreset={(id) => changeScalePresets(scalePresets.filter((x) => x.id !== id))}
+          onExportList={() => void exportScales()}
+          onImportList={() => void importScales()}
           onClose={() => setScaleDialog(false)}
         />
+      )}
+
+      {correction && (
+        <Modal title={t('Text correction')} onClose={() => setCorrection(null)}>
+          <form
+            className="marks-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              applyCorrection()
+            }}
+          >
+            <fieldset>
+              <legend>{t('What should happen to the selected text?')}</legend>
+              <label>
+                <input type="radio" name="correction-mode" checked={correction.mode === 'delete'} onChange={() => setCorrection({ ...correction, mode: 'delete' })} />
+                {t('Delete it')}
+              </label>
+              <label>
+                <input type="radio" name="correction-mode" checked={correction.mode === 'replace'} onChange={() => setCorrection({ ...correction, mode: 'replace' })} />
+                {t('Replace it with')}
+              </label>
+              <input aria-label={t('Replacement text')} value={correction.replacement} disabled={correction.mode !== 'replace'} onChange={(e) => setCorrection({ ...correction, replacement: e.target.value })} autoFocus />
+            </fieldset>
+            <label>
+              {t('Comment (optional)')}
+              <textarea aria-label={t('Comment')} rows={3} value={correction.comment} onChange={(e) => setCorrection({ ...correction, comment: e.target.value })} />
+            </label>
+            <div className="marks-actions">
+              <button type="button" onClick={() => setCorrection(null)}>
+                {t('Cancel')}
+              </button>
+              <button className="primary" type="submit">
+                {t('Mark correction')}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {calibrating && (
@@ -4330,6 +4700,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           defaults={printDialog.defaults}
           selected={pageSel}
           prepare={preparePrint}
+          layerCount={layers.length}
           onPrint={(job) => void runPrint(job)}
           onClose={() => setPrintDialog(null)}
         />
@@ -4468,6 +4839,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             return <DeleteBlankDialog {...common} client={client!} pageLabel={(i) => pageLabels?.[i] || String(i + 1)} />
           case 'swap':
             return <SwapDialog {...common} />
+          case 'join':
+            return <JoinPagesDialog {...common} />
         }
       })()}
 
@@ -4555,6 +4928,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onGenerateBookmarks={locked ? undefined : () => setGenerateOpen(true)}
                 onImportBookmarks={locked ? undefined : () => void importBookmarks()}
                 onExportBookmarks={(f) => void exportBookmarks(f)}
+                onBookmarkPages={(r, action, title) => void bookmarkPagesAction(r, action, title)}
+                getNamedDestinations={async () => readNamedDestinations(annotsDirty ? await applyEdits(bytes) : bytes)}
                 getView={() => viewer.current?.viewPoint() ?? null}
                 measurements={
                   <MeasurePane
@@ -4582,6 +4957,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                     onStatusMany={setStatusMany}
                     onDeleteMany={(ids) => removeMany(new Set(ids))}
                     onSelectMany={selectComments}
+                    onChecked={setCheckedMany}
                   />
                 }
               />
@@ -4625,6 +5001,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               stampDrag={tool === 'stamp' && stamps.opts.drag}
               pageColours={pageColours}
               measurements={[]}
+              shiftStep={shiftStep}
               onMeasure={onMeasure}
               measureLabel={measureLabel}
               objectSnap={snapOn ? snapKinds : null}
@@ -4728,6 +5105,38 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 onClose={() => setComparison(null)}
               />
             )}
+            {stampDock && (
+              <aside className="props-panel stamps-dock" aria-label={t('Stamp palette')}>
+                <div className="search-panel-head">
+                  <h2>{t('Stamps')}</h2>
+                  <button className="icon-btn" onClick={() => setStampDock(false)} aria-label={t('Close the stamp palette')} title={t('Close the stamp palette')}>
+                    <X size={16} strokeWidth={1.8} aria-hidden />
+                  </button>
+                </div>
+                <div className="props-body">
+                  <StampPicker
+                    docked
+                    choice={stamps.choice}
+                    dated={stamps.dated}
+                    stamps={stamps.stamps}
+                    recent={stamps.meta.recent}
+                    counters={stamps.meta.counters}
+                    author={author}
+                    opts={stamps.opts}
+                    onOpts={stamps.setOpts}
+                    onPick={stamps.pick}
+                    onDated={stamps.setDated}
+                    onNew={stamps.newStamp}
+                    onEdit={stamps.edit}
+                    onDelete={(s) => void stamps.remove(s)}
+                    onPages={stamps.arm}
+                    onImport={() => void stamps.importCollection()}
+                    onExport={() => void stamps.exportCollection()}
+                    onClose={() => setStampDock(false)}
+                  />
+                </div>
+              </aside>
+            )}
             {propsOpen && (
               <PropertiesPanel
                 annot={selected}
@@ -4744,6 +5153,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 selectedCount={selectedIds.size}
                 onPresetDefault={presetAsDefault}
                 onFlags={setFlags}
+                onSubject={setSubjectOf}
+                layers={layers}
+                onLayer={setLayerOf}
+                onExportStyles={() => void exportStyles()}
+                onImportStyles={() => void importStyles()}
                 onClose={() => setPropsOpen(false)}
               />
             )}

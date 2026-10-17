@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { readLayers, withHiddenLayers } from './layers'
+import { printHiddenLayers, readLayers, withHiddenLayers } from './layers'
 
 const dir = mkdtempSync(join(tmpdir(), 'openpdf-layers-'))
 const file = join(dir, 'feature.pdf')
@@ -29,5 +29,15 @@ describe('layers', () => {
     const plain = join(dir, 'plain.pdf')
     execFileSync('python', ['scripts/make-test-pdf.py', plain])
     expect(await readLayers(new Uint8Array(readFileSync(plain)))).toEqual([])
+  })
+})
+
+describe('printHiddenLayers', () => {
+  it('prints the view, every layer, or the file as it opens', () => {
+    const hidden = new Set(['5 0'])
+    expect(printHiddenLayers('visible', hidden)).toBe(hidden)
+    expect(printHiddenLayers('visible', null)).toBeNull()
+    expect([...(printHiddenLayers('all', hidden) ?? ['x'])]).toEqual([])
+    expect(printHiddenLayers('file', hidden)).toBeNull()
   })
 })

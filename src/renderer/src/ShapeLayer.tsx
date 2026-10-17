@@ -1,5 +1,6 @@
 import { blendCss, blendOf, cloudCurves, cloudLevel, cloudOutline, dashArray, isVertexKind, lineEndsOf, translated, withBounds, type Annot, type Pt } from './annotations'
 import { pathEnds } from './lineEnds'
+import { measureCaption, measureLabelAt } from './measure'
 
 /** SVG path data for a scalloped border along `pts`. */
 function cloudPath(pts: Pt[], lw: number, level: number): string {
@@ -233,13 +234,10 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
       )
     } else if (a.measure && a.points?.[0]?.length && !ghost) {
       const pts = a.points[0]
-      const at =
-        a.measure.kind === 'area'
-          ? { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length }
-          : { x: (pts[Math.floor((pts.length - 1) / 2)].x + pts[Math.ceil((pts.length - 1) / 2) || 1].x) / 2, y: (pts[Math.floor((pts.length - 1) / 2)].y + pts[Math.ceil((pts.length - 1) / 2) || 1].y) / 2 }
+      const at = measureLabelAt(a.measure.kind, pts)
       label = (
         <text className="measure-annot-label" x={at.x} y={at.y - 4} textAnchor="middle" fontSize={9} fill={a.color} paintOrder="stroke" stroke="#fff" strokeWidth={3}>
-          {a.measure.label}
+          {measureCaption(a.measure)}
         </text>
       )
     }

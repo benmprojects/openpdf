@@ -1,4 +1,6 @@
 import { expandPattern, pagesWord, type PageDialogResult } from './pageDialogLogic'
+import { insertWithOptions } from './insertOptions'
+import { joinPages } from './pageMerge'
 import { deletePages, duplicatePages, extractPages, insertBlankPages, insertMany, movePages, replacePages, rotatePages, splitByRanges, splitBySize, swapPages } from './pageOps'
 
 /** Runs a dialog's result that changes this document's bytes. Extract, split and a merge into a new document are not these. */
@@ -6,7 +8,7 @@ export async function applyDialogEdit(r: PageDialogResult, base: Uint8Array): Pr
   switch (r.kind) {
     case 'insert':
       if (r.blank) return insertBlankPages(base, r.at, r.blank.count, r.blank)
-      return (await insertMany(base, r.at, r.items)).bytes
+      return (r.keep ? await insertWithOptions(base, r.at, r.items, r.keep) : await insertMany(base, r.at, r.items)).bytes
     case 'merge':
       return (await insertMany(base, r.at, r.items)).bytes
     case 'delete':
@@ -21,6 +23,8 @@ export async function applyDialogEdit(r: PageDialogResult, base: Uint8Array): Pr
       return movePages(base, r.pages, r.before)
     case 'swap':
       return swapPages(base, r.a, r.b)
+    case 'join':
+      return (await joinPages(base, r.pages, r.mode, r.reversed)).bytes
     default:
       throw new Error('This operation does not change the document.')
   }
@@ -45,6 +49,8 @@ export function doneMessage(r: PageDialogResult): string | undefined {
       return `Moved ${pagesWord(r.pages.length)}`
     case 'swap':
       return `Swapped page ${r.a + 1} and page ${r.b + 1}`
+    case 'join':
+      return `Joined ${pagesWord(r.pages.length - (r.pages.length % 2))} into ${pagesWord(Math.floor(r.pages.length / 2))}`
     default:
       return undefined
   }

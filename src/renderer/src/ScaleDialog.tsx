@@ -15,6 +15,9 @@ interface Props {
   onApply: (scale: Scale, pages: number[], updateExisting: boolean) => void
   onSavePreset: (preset: ScalePreset) => void
   onDeletePreset: (id: string) => void
+  /** Saves the list of saved scales as a file, and reads such a file into the list. */
+  onExportList?: () => void
+  onImportList?: () => void
   onClose: () => void
 }
 
@@ -22,7 +25,7 @@ interface Props {
  * The Scale dialog: a ratio (named or typed, or "X mm on paper = Y m"), the units results are shown in, their
  * precision, and which pages it applies to. Scales can be saved as presets.
  */
-export function ScaleDialog({ pageCount, currentPage, selectedPages, presets, onApply, onSavePreset, onDeletePreset, onClose }: Props) {
+export function ScaleDialog({ pageCount, currentPage, selectedPages, presets, onApply, onSavePreset, onDeletePreset, onExportList, onImportList, onClose }: Props) {
   const [mode, setMode] = useState<'ratio' | 'custom'>('ratio')
   const [choice, setChoice] = useState('100')
   const [typed, setTyped] = useState('1:75')
@@ -220,6 +223,21 @@ export function ScaleDialog({ pageCount, currentPage, selectedPages, presets, on
             {t('Save scale')}
           </button>
         </div>
+
+        {(onExportList || onImportList) && (
+          <div className="marks-row">
+            {onExportList && (
+              <button type="button" disabled={!presets.length} onClick={onExportList} title={t('Save the list of saved scales as a file to share')}>
+                {t('Export saved scales…')}
+              </button>
+            )}
+            {onImportList && (
+              <button type="button" onClick={onImportList} title={t('Add the scales from a file; a scale with the same name is replaced')}>
+                {t('Import saved scales…')}
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="marks-actions">
           <button type="button" onClick={onClose}>

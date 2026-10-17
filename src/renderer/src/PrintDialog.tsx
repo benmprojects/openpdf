@@ -27,6 +27,7 @@ import {
 } from '../../shared/printPlan'
 import { tileArea, type PrintOptions } from './print'
 import type { PrintDefaults } from './viewPrefs'
+import type { PrintLayers } from './layers'
 import { bestPrintLandscape, clampTileScale, mmToPt, tileLabel, tileSheets, type TileOptions } from '../../shared/tiling'
 
 /** Everything DocView needs to run a print job. */
@@ -45,7 +46,9 @@ interface Props {
   /** The thumbnail selection (0-based). */
   selected: number[]
   /** The document as it should print: edits written in, hidden layers applied. */
-  prepare: () => Promise<Uint8Array>
+  prepare: (layers: PrintLayers) => Promise<Uint8Array>
+  /** Layers (optional content groups) the document has; the choice of layers is offered only when there are some. */
+  layerCount?: number
   onPrint: (job: PrintJob) => void
   onClose: () => void
   /** What the document's own print presets ask the dialog to start with. */
@@ -59,7 +62,7 @@ const FILE = '\u0000file'
 /** The longest side of the preview sheet in CSS pixels. */
 const PREVIEW_BOX = { w: 330, h: 400 }
 
-export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected, prepare, onPrint, onClose, defaults }: Props) {
+export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected, prepare, layerCount = 0, onPrint, onClose, defaults }: Props) {
   const [printers, setPrinters] = useState<{ name: string; displayName: string; isDefault: boolean }[] | null>(null)
   const [printer, setPrinter] = useState<PrinterChoice>('')
   const [copies, setCopies] = useState(defaults?.copies ?? 1)
@@ -84,6 +87,9 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
   const [binding, setBinding] = useState<'left' | 'right'>('left')
   const [sides, setSides] = useState<'both' | 'front' | 'back'>('both')
   const [what, setWhat] = useState<PrintWhat>('comments')
+  const [layerMode, setLayerMode] = useState<PrintLayers>('visible')
+  // Save as PDF keeps the text (vector) unless this is turned off.
+  const [keepText, setKeepText] = useState(true)
   // Tiling a large page over several sheets (replaces the scaling choice and pages per sheet while on).
   const [tileOn, setTileOn] = useState(false)
   const [tileScale, setTileScale] = useState(100)
@@ -168,14 +174,19 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
   const printCopies = useRef(new Map<PrintWhat, Uint8Array>())
   useEffect(() => {
     let live = true
-    prepare().then(
-      (b) => live && setFull(b),
+    setLoaded(null)
+    prepare(layerMode).then(
+      (b) => {
+        if (!live) return
+        printCopies.current.clear()
+        setFull(b)
+      },
       (e) => live && setProblem(e instanceof Error ? e.message : String(e))
     )
     return () => {
       live = false
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [layerMode]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!full) return
     let live = true
@@ -237,6 +248,7 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
         collate,
         autoRotate: autoRotate && !tileOn,
         tile: tileOpts,
+        vector: toFile && keepText && !tileOn,
         deviceName: toFile ? undefined : printer || undefined,
         toFile
       }
@@ -495,6 +507,23 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
             <Row label="">
               <span className="muted small">{t('Comments marked as not printable (Properties panel) are left out.')}</span>
             </Row>
+            {layerCount > 0 && (
+              <Row label={t('Layers')}>
+                <select aria-label={t('Layers to print')} value={layerMode} onChange={(e) => setLayerMode(e.target.value as PrintLayers)}>
+                  <option value="visible">{t('Visible layers (as shown now)')}</option>
+                  <option value="all">{t('All layers')}</option>
+                  <option value="file">{t('Layers as set in the file')}</option>
+                </select>
+              </Row>
+            )}
+            {toFile && (
+              <Row label="">
+                <label title={t('Write the pages as vector content so the text stays text. Turn off to print the pages as pictures.')}>
+                  <input type="checkbox" checked={keepText && !tileOn} disabled={tileOn} onChange={(e) => setKeepText(e.target.checked)} />
+                  {t('Keep text searchable (vector)')}
+                </label>
+              </Row>
+            )}
           </fieldset>
         </div>
 

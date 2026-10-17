@@ -1,7 +1,7 @@
-import { ChevronDown, ChevronRight, ChevronUp, Download, Eye, EyeOff, FileText, Lock, MessageSquare, Trash2 } from 'lucide-react'
+import { Check, CheckCheck, ChevronDown, ChevronRight, ChevronUp, Download, Eye, EyeOff, FileText, Lock, MessageSquare, Trash2 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
-import { annotLabel, formatWhen, isLocked, isPrintable, REVIEW_STATES, reviewState, type Annot, type ReviewState } from './annotations'
-import { deletable, filterComments, flatten, groupComments, NO_FILTER, sortComments, stepComment, commentText, type CommentFilter, type GroupKey, type SortKey } from './commentList'
+import { annotLabel, formatWhen, isChecked, isLocked, isPrintable, REVIEW_STATES, reviewState, type Annot, type ReviewState } from './annotations'
+import { deletable, filterComments, flatten, groupComments, NO_FILTER, NO_SUBJECT, sortComments, stepComment, subjectsOf, commentText, type CommentFilter, type GroupKey, type SortKey } from './commentList'
 import { plural, t } from './i18n'
 
 export { commentText }
@@ -26,6 +26,8 @@ interface Props {
   onDeleteMany?: (ids: number[]) => void
   /** Selects these comments on the page (the first is the main one). */
   onSelectMany?: (ids: number[]) => void
+  /** Ticks or unticks the "checked" flag of comments (saved in the file). */
+  onChecked?: (ids: number[], on: boolean) => void
 }
 
 /** Every annotation as a comment: filter, group, sort, read and answer threads, set review status, show and hide. */
@@ -43,7 +45,8 @@ export function CommentsPane({
   onSetHidden,
   onStatusMany,
   onDeleteMany,
-  onSelectMany
+  onSelectMany,
+  onChecked
 }: Props) {
   const [filter, setFilter] = useState<CommentFilter>(NO_FILTER)
   const [sort, setSort] = useState<SortKey>('page')
@@ -57,6 +60,7 @@ export function CommentsPane({
 
   const kinds = useMemo(() => [...new Set(annots.map((a) => a.kind))].sort(), [annots])
   const authors = useMemo(() => [...new Set(annots.map((a) => a.author ?? ''))].sort(), [annots])
+  const subjects = useMemo(() => subjectsOf(annots), [annots])
   const colours = useMemo(() => [...new Set(annots.map((a) => a.color.toLowerCase()))].sort(), [annots])
 
   const pageName = (p: number) => (labels?.[p] ? t('Page {n}', { n: labels[p] }) : t('Page {n}', { n: p + 1 }))
@@ -149,6 +153,22 @@ export function CommentsPane({
           </select>
         </div>
         <div className="comments-filters">
+          <select aria-label={t('Filter by checked')} value={filter.checked ?? ''} onChange={(e) => set({ checked: e.target.value as CommentFilter['checked'] })}>
+            <option value="">{t('Checked or not')}</option>
+            <option value="yes">{t('Checked')}</option>
+            <option value="no">{t('Not checked')}</option>
+          </select>
+          <select aria-label={t('Filter by subject')} value={filter.subject ?? ''} onChange={(e) => set({ subject: e.target.value })}>
+            <option value="">{t('Any subject')}</option>
+            <option value={NO_SUBJECT}>{t('(no subject)')}</option>
+            {subjects.map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="comments-filters">
           <select aria-label={t('Group comments')} value={group} onChange={(e) => setGroup(e.target.value as GroupKey)}>
             <option value="none">{t('No grouping')}</option>
             <option value="page">{t('Group by page')}</option>
@@ -157,6 +177,8 @@ export function CommentsPane({
             <option value="colour">{t('Group by colour')}</option>
             <option value="date">{t('Group by date')}</option>
             <option value="status">{t('Group by status')}</option>
+            <option value="subject">{t('Group by subject')}</option>
+            <option value="checked">{t('Group by checked')}</option>
           </select>
           <select aria-label={t('Sort comments')} value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
             <option value="page">{t('By page')}</option>
@@ -164,6 +186,7 @@ export function CommentsPane({
             <option value="author">{t('By author')}</option>
             <option value="type">{t('By type')}</option>
             <option value="status">{t('By status')}</option>
+            <option value="subject">{t('By subject')}</option>
           </select>
         </div>
         <div className="comments-actions">
@@ -197,6 +220,16 @@ export function CommentsPane({
               </button>
               <button className="icon-btn" disabled={!hidden.size} onClick={() => onSetHidden(annots.filter((a) => hidden.has(a.id) && (!checkedIds.length || checked.has(a.id))).map((a) => a.id), false)} aria-label={t('Show hidden comments on the page')} title={t('Show the hidden comments again (the selected ones, or all of them when none is selected)')}>
                 <Eye size={16} strokeWidth={1.8} aria-hidden />
+              </button>
+            </>
+          )}
+          {onChecked && (
+            <>
+              <button className="icon-btn" disabled={!checkedIds.length} onClick={() => onChecked(checkedIds, true)} aria-label={t('Mark selected comments as checked')} title={t('Tick the selected comments as checked')}>
+                <CheckCheck size={16} strokeWidth={1.8} aria-hidden />
+              </button>
+              <button className="btn small" disabled={!checkedIds.length} onClick={() => onChecked(checkedIds, false)} title={t('Remove the check from the selected comments')}>
+                {t('Uncheck')}
               </button>
             </>
           )}
@@ -251,7 +284,7 @@ export function CommentsPane({
             ),
             ...g.items.map((a) => {
               const st = reviewState(a)
-              const replies = (a.replies ?? []).filter((r) => !r.state)
+              const replies = (a.replies ?? []).filter((r) => !r.state && !r.mark)
               const expanded = open.has(a.id) || a.id === selectedId
               const isHidden = hidden.has(a.id)
               return (
@@ -277,12 +310,18 @@ export function CommentsPane({
                       {!isPrintable(a) && <span className="muted small">{t('Not printed')}</span>}
                       {st !== 'None' && <span className={`comment-state ${st.toLowerCase()}`}>{st}</span>}
                     </button>
+                    {onChecked && (
+                      <button className={`icon-btn tiny comment-check${isChecked(a) ? ' on' : ''}`} onClick={() => onChecked([a.id], !isChecked(a))} aria-pressed={isChecked(a)} aria-label={isChecked(a) ? t('Checked: click to uncheck') : t('Not checked: click to mark as checked')} title={isChecked(a) ? t('Checked') : t('Mark as checked')}>
+                        <Check size={12} strokeWidth={isChecked(a) ? 3 : 1.5} aria-hidden />
+                      </button>
+                    )}
                     {onSetHidden && (
                       <button className="icon-btn tiny" onClick={() => onSetHidden([a.id], !isHidden)} aria-label={isHidden ? t('Show this comment on the page') : t('Hide this comment on the page')} aria-pressed={isHidden} title={isHidden ? t('Show on the page') : t('Hide on the page (the view only)')}>
                         {isHidden ? <EyeOff size={12} aria-hidden /> : <Eye size={12} aria-hidden />}
                       </button>
                     )}
                   </div>
+                  {a.subject && <div className="muted small comment-subject">{a.subject}</div>}
                   {commentText(a) && <div className="comment-text">{commentText(a)}</div>}
                   <button className="comment-toggle muted small" onClick={() => toggle(a.id)} aria-expanded={expanded}>
                     {expanded ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}

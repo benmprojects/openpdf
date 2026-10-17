@@ -27,6 +27,8 @@ interface Props {
   onImport: () => void
   onExport: () => void
   onClose: () => void
+  /** Shown in a side pane: it stays open when a stamp is picked or the page is clicked. */
+  docked?: boolean
 }
 
 /** The text a stamp would show if placed now (the next number is shown but not used up). */
@@ -36,7 +38,7 @@ export function previewLines(s: StampDef, author: string, counters: Counters): {
 }
 
 /** The stamp palette: search, recently used, categories with thumbnails, my own stamps, and placement options. */
-export function StampPicker({ choice, dated, stamps, recent, counters, author, opts, onOpts, onPick, onDated, onNew, onEdit, onDelete, onPages, onImport, onExport, onClose }: Props) {
+export function StampPicker({ choice, dated, stamps, recent, counters, author, opts, onOpts, onPick, onDated, onNew, onEdit, onDelete, onPages, onImport, onExport, onClose, docked }: Props) {
   const panel = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   const [menu, setMenu] = useState<{ s: StampDef; x: number; y: number } | null>(null)
@@ -45,9 +47,11 @@ export function StampPicker({ choice, dated, stamps, recent, counters, author, o
       if (e instanceof KeyboardEvent) {
         if (e.key !== 'Escape') return
         if (menu) setMenu(null)
-        else onClose()
-      } else if (!panel.current?.contains(e.target as Node)) onClose()
-      else if (menu && !(e.target as HTMLElement).closest('.stamp-menu')) setMenu(null)
+        else if (!docked) onClose()
+      } else if (!panel.current?.contains(e.target as Node)) {
+        if (!docked) onClose()
+        else if (menu) setMenu(null)
+      } else if (menu && !(e.target as HTMLElement).closest('.stamp-menu')) setMenu(null)
     }
     // Wait a tick so the click that opened the picker does not close it.
     const timer = setTimeout(() => {
@@ -59,7 +63,7 @@ export function StampPicker({ choice, dated, stamps, recent, counters, author, o
       window.removeEventListener('mousedown', away)
       window.removeEventListener('keydown', away)
     }
-  }, [onClose, menu])
+  }, [onClose, menu, docked])
 
   const found = useMemo(() => searchStamps(stamps, query), [stamps, query])
   const cats = useMemo(() => categoriesOf(stamps), [stamps])
@@ -89,7 +93,7 @@ export function StampPicker({ choice, dated, stamps, recent, counters, author, o
   const ariaOf = (s: StampDef) => (s.kind === 'image' ? `Image stamp ${s.name}` : s.builtin ? s.title : `Stamp ${s.name}`)
 
   return (
-    <div ref={panel} className="stamp-picker" role="dialog" aria-label="Stamps">
+    <div ref={panel} className={docked ? 'stamp-picker docked' : 'stamp-picker'} role={docked ? 'region' : 'dialog'} aria-label="Stamps">
       <label className="stamp-search">
         <Search size={14} aria-hidden />
         <input type="search" aria-label={t('Search stamps')} placeholder={t('Search stamps')} value={query} onChange={(e) => setQuery(e.target.value)} />

@@ -76,3 +76,18 @@ export async function withHiddenLayers(bytes: Uint8Array, hidden: ReadonlySet<st
   props.set(PDFName.of('D'), d)
   return doc.save({ useObjectStreams: false })
 }
+
+// ---- Printing -----------------------------------------------------------------------------------------------
+
+/** Which layers a printout shows: as the view has them now, all of them, or as the file opens (its default state). */
+export type PrintLayers = 'visible' | 'all' | 'file'
+
+/**
+ * The layers to hide in the printed copy: a set to apply with {@link withHiddenLayers}, or null to leave the file's
+ * own default state alone. `viewHidden` is what the view has switched off (null when the view has not been changed).
+ */
+export function printHiddenLayers(mode: PrintLayers, viewHidden: ReadonlySet<string> | null): ReadonlySet<string> | null {
+  if (mode === 'all') return new Set()
+  if (mode === 'visible') return viewHidden
+  return null
+}

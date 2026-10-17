@@ -18,6 +18,7 @@ import {
   readImagePixels,
   removePageAnnot,
   setPageAnnotRect,
+  setPageAnnotHidden,
   renderRegion,
   type AttachmentInfo,
   type ImportedAnnot,
@@ -37,6 +38,7 @@ export type WorkerRequest =
   | { id: number; type: 'text'; page: number }
   | { id: number; type: 'annots' }
   | { id: number; type: 'hideAnnot'; page: number; index: number; subtype: number }
+  | { id: number; type: 'setAnnotHidden'; page: number; index: number; subtype: number; hidden: boolean }
   | { id: number; type: 'setAnnotRect'; page: number; index: number; subtype: number; rect: { x: number; y: number; w: number; h: number } }
   | { id: number; type: 'attachments' }
   | { id: number; type: 'attachmentData'; index: number; page?: number }
@@ -58,6 +60,7 @@ export type WorkerResponse =
   | { id: number; ok: true; type: 'annots'; pages: { page: number; annots: ImportedAnnot[]; replies: ImportedReply[] }[] }
   | { id: number; ok: true; type: 'hideAnnot'; hidden: boolean }
   | { id: number; ok: true; type: 'setAnnotRect'; done: boolean }
+  | { id: number; ok: true; type: 'setAnnotHidden'; done: boolean }
   | { id: number; ok: true; type: 'attachments'; attachments: AttachmentInfo[] }
   | { id: number; ok: true; type: 'attachmentData'; data: Uint8Array }
   | { id: number; ok: true; type: 'labels'; labels: string[] }
@@ -208,6 +211,13 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         if (ok) hidden.set(msg.page, [...gone, msg.index])
         reply({ id: msg.id, ok: true, type: 'hideAnnot', hidden: ok })
       }
+    } else if (msg.type === 'setAnnotHidden') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const gone = hidden.get(msg.page) ?? []
+      const page = doc.getPage(msg.page)
+      const done = setPageAnnotHidden(library, page, msg.index - gone.filter((i) => i < msg.index).length, msg.subtype, msg.hidden)
+      page.close()
+      reply({ id: msg.id, ok: true, type: 'setAnnotHidden', done })
     } else if (msg.type === 'setAnnotRect') {
       if (!doc || !library) throw new Error('No document loaded')
       const gone = hidden.get(msg.page) ?? []

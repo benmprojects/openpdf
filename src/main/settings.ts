@@ -2,6 +2,7 @@ import { app, nativeTheme, session } from 'electron'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isPaperId } from '../shared/printPlan'
+import { cleanMarkPresets, type MarkPreset } from '../shared/markPresets'
 
 export type Theme = 'system' | 'dark' | 'light'
 
@@ -24,6 +25,8 @@ export interface Settings {
   toolPresets: ToolPreset[]
   /** Saved drawing scales for the Measure tab's Scale dialog. */
   scalePresets: ScalePreset[]
+  /** Saved settings for the header and footer, page number, Bates, watermark and crop dialogs. */
+  markPresets: MarkPreset[]
   /** Update checks: off unless turned on, and only to the address given. */
   updates: { check: boolean; feed: string }
   /** `system`, or a language code such as en-AU or fr. */
@@ -109,6 +112,7 @@ const defaults = (): Settings => ({
   toolDefaults: {},
   toolPresets: [],
   scalePresets: [],
+  markPresets: [],
   updates: { check: false, feed: '' },
   // Tests always start in Australian English, whatever the machine's language.
   language: process.env.OPENPDF_E2E === '1' ? 'en-AU' : 'system',
@@ -166,6 +170,7 @@ function sanitise(raw: Partial<Settings>): Settings {
             ...(typeof p.fraction === 'number' && p.fraction >= 2 && p.fraction <= 64 ? { fraction: Math.round(p.fraction) } : typeof p.decimals === 'number' && p.decimals >= 0 && p.decimals <= 6 ? { decimals: Math.floor(p.decimals) } : {})
           }))
       : [],
+    markPresets: cleanMarkPresets(raw.markPresets),
     updates: {
       check: typeof raw.updates?.check === 'boolean' ? raw.updates.check : false,
       feed: typeof raw.updates?.feed === 'string' ? raw.updates.feed.trim().slice(0, 300) : ''

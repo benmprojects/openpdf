@@ -6,7 +6,7 @@
  * exports), or plain paper size in millimetres.
  */
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFString, PDFHexString } from 'pdf-lib'
-import type { Pt } from './annotations'
+import type { MeasureInfo, Pt } from './annotations'
 import { formatAreaQuantity, formatQuantity, type Precision } from './measureScale'
 
 export interface Scale {
@@ -43,6 +43,79 @@ export function polygonArea(points: Pt[]): number {
     s += a.x * b.y - b.x * a.y
   }
   return Math.abs(s) / 2
+}
+
+/** The angle at `vertex` between the rays to `a` and `b`, in degrees from 0 to 180. 0 when a ray has no length. */
+export function angleAt(a: Pt, vertex: Pt, b: Pt): number {
+  const ux = a.x - vertex.x
+  const uy = a.y - vertex.y
+  const vx = b.x - vertex.x
+  const vy = b.y - vertex.y
+  const lu = Math.hypot(ux, uy)
+  const lv = Math.hypot(vx, vy)
+  if (!lu || !lv) return 0
+  const cos = Math.max(-1, Math.min(1, (ux * vx + uy * vy) / (lu * lv)))
+  return (Math.acos(cos) * 180) / Math.PI
+}
+
+/** An angle as text with one decimal place, for example "37.5°". */
+export function formatAngle(deg: number): string {
+  const v = Math.round(deg * 10) / 10
+  return `${v.toLocaleString('en-AU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}°`
+}
+
+/** The result text of an angle measurement from its three points (the vertex is the middle one). */
+export function angleLabel(points: Pt[]): string {
+  return points.length >= 3 ? formatAngle(angleAt(points[0], points[1], points[2])) : ''
+}
+
+/** `to` moved so the line from `from` runs at a whole multiple of `stepDeg` degrees, keeping its length. */
+export function constrainToStep(from: Pt, to: Pt, stepDeg: number): Pt {
+  const step = (Math.max(1, stepDeg) * Math.PI) / 180
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const ang = Math.round(Math.atan2(dy, dx) / step) * step
+  const len = Math.hypot(dx, dy)
+  return { x: from.x + len * Math.cos(ang), y: from.y + len * Math.sin(ang) }
+}
+
+/**
+ * Where a measurement's text goes (before the small lift above it): the middle of the middle segment, the centre of an
+ * area, or for an angle a point out along the bisector from the vertex so the text sits inside the opening.
+ */
+export function measureLabelAt(kind: MeasureInfo['kind'], pts: Pt[]): Pt {
+  if (kind === 'angle' && pts.length >= 3) {
+    const v = pts[1]
+    const unit = (p: Pt) => {
+      const l = Math.hypot(p.x - v.x, p.y - v.y) || 1
+      return { x: (p.x - v.x) / l, y: (p.y - v.y) / l }
+    }
+    const a = unit(pts[0])
+    const b = unit(pts[2])
+    let bx = a.x + b.x
+    let by = a.y + b.y
+    const l = Math.hypot(bx, by)
+    if (l < 1e-6) {
+      // A straight angle: out along the normal.
+      bx = -a.y
+      by = a.x
+    } else {
+      bx /= l
+      by /= l
+    }
+    return { x: v.x + bx * 24, y: v.y + by * 24 }
+  }
+  if (kind === 'area' && pts.length > 2) return { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length }
+  const i = Math.max(0, Math.floor((pts.length - 1) / 2))
+  const a = pts[i]
+  const b = pts[Math.min(pts.length - 1, i + 1)]
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+/** The text drawn beside a measurement on the page: the person's label (if any) in front of the result. */
+export function measureCaption(m: Pick<MeasureInfo, 'kind' | 'label' | 'name'>): string {
+  const name = m.name?.trim()
+  return name && m.kind !== 'count' ? `${name}: ${m.label}` : m.label
 }
 
 /** A number with sensible precision for its size: 1234 → "1,234", 12.345 → "12.35", 0.01234 → "0.0123". */

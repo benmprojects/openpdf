@@ -32,6 +32,8 @@ import {
   dashArray,
   caretRectAfter,
   hexToRgb,
+  glyphPathOps,
+  noteGlyph,
   squigglePoints,
   LINE_WIDTH,
   STRIKEOUT_AT,
@@ -41,6 +43,8 @@ import {
   type Annot
 } from './annotations'
 import { pathEnds, type EndPath } from './lineEnds'
+import { layerKeyOf } from './annotExtras'
+import { angleAt, measureCaption, measureLabelAt } from './measure'
 import { pdfUnit } from './measureScale'
 import { SIGNATURE_SUBJECT } from './signatureLogic'
 import { normAngle, rotatedBounds } from './stampLogic'
@@ -325,7 +329,9 @@ export async function writeAnnotations(
           CreationDate: when,
           IRT: parent,
           RT: 'R',
-          ...(r.state ? { State: PDFHexString.fromText(r.state), StateModel: PDFHexString.fromText('Review') } : {})
+          ...(r.state ? { State: PDFHexString.fromText(r.state), StateModel: PDFHexString.fromText('Review') } : {}),
+          // The "checked" flag: the Marked state model (ISO 32000 12.5.6.3)
+          ...(!r.state && r.mark ? { State: PDFHexString.fromText(r.mark), StateModel: PDFHexString.fromText('Marked') } : {})
         } as never)
       )
       let list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)
@@ -339,6 +345,14 @@ export async function writeAnnotations(
 
   /** Each annotation's object in the file, for putting them in stacking order at the end. */
   const refOf = new Map<number, PDFRef>()
+
+  /** The layer (optional content group) with this "num gen" key, if the document still has it. */
+  const ocgRef = (key: string): PDFRef | null => {
+    const [num, gen] = key.split(' ').map(Number)
+    if (!Number.isInteger(num) || !Number.isInteger(gen)) return null
+    const ref = PDFRef.of(num, gen)
+    return ctx.lookupMaybe(ref, PDFDict) ? ref : null
+  }
 
   for (const a of annots) {
     if (a.page < 0 || a.page >= pdf.getPageCount() || !a.rects.length) continue
@@ -486,15 +500,24 @@ export async function writeAnnotations(
       }
     } else if (a.kind === 'note') {
       const r = a.rects[0]
-      const lines = [0.3, 0.5, 0.7]
-        .map((t) => `${n(r.x + r.w * 0.2)} ${n(r.y + r.h * t)} m ${n(r.x + r.w * 0.8)} ${n(r.y + r.h * t)} l S`)
-        .join(' ')
-      const body = `${rgb(a.color)} rg 0.35 0.28 0 RG 0.8 w ${n(r.x)} ${n(r.y)} ${n(r.w)} ${n(r.h)} re B 0.35 0.28 0 RG 0.7 w ${lines}`
-      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
+      const glyph = noteGlyph(a.icon)
+      const ink = '0.35 0.28 0'
+      const strokes = glyph.strokes.map((d) => `${glyphPathOps(d, r)} S`).join(' ')
+      const fills = glyph.fills.map((d) => `${glyphPathOps(d, r)} f`).join(' ')
+      let letter = ''
+      let resources: Lit = {}
+      if (glyph.text) {
+        const fnt = await getBold()
+        const size = r.h * 0.74
+        letter = ` BT /HelvB ${n(size)} Tf ${ink} rg 1 0 0 -1 ${n(r.x + (r.w - fnt.widthOfTextAtSize(glyph.text, size)) / 2)} ${n(r.y + r.h * 0.78)} Tm ${fnt.encodeText(glyph.text).toString()} Tj ET`
+        resources = { Font: { HelvB: fnt.ref } }
+      }
+      const body = `${rgb(a.color)} rg ${ink} RG 0.8 w ${n(r.x)} ${n(r.y)} ${n(r.w)} ${n(r.h)} re B ${ink} RG 0.7 w 1 J 1 j ${strokes} ${ink} rg ${fills}${letter}`
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, resources)
       dict = {
         ...base,
         Subtype: 'Text',
-        Name: 'Comment',
+        Name: a.icon ?? 'Comment',
         Open: false,
         // (NoZoom/NoRotate would make viewers re-anchor the icon on rotated pages, so the flags are only Print and Locked.)
         Contents: PDFHexString.fromText(a.text),
@@ -735,6 +758,11 @@ export async function writeAnnotations(
       }
     }
 
+    // The subject and layer the person gave it. (A visual signature keeps the subject that marks it as one.)
+    if (a.subject !== undefined && !a.signature) dict.Subj = PDFHexString.fromText(a.subject)
+    const layerRef = a.layer ? ocgRef(a.layer) : null
+    if (layerRef && (!a.origin || layerKeyOf(findExisting(page, a.origin)?.dict) !== a.layer)) dict.OC = layerRef
+
     const translucent = a.opacity !== undefined && a.opacity < 1
     // A blend mode other than Normal goes in the appearance (a highlight has its own graphics state for it).
     const blend = a.kind !== 'highlight' && a.blend && a.blend !== 'Normal' ? a.blend : undefined
@@ -756,6 +784,52 @@ export async function writeAnnotations(
       }
     }
 
+    // Measurements (ISO 32000 12.9): the intent, a rectilinear /Measure dictionary, and the result drawn in.
+    if (a.measure && (a.kind === 'line' || a.kind === 'polyline' || a.kind === 'polygon')) {
+      const m = a.measure
+      const angle = m.kind === 'angle'
+      const fmt = (u: string, c: number) => ({ Type: 'NumberFormat', U: PDFHexString.fromText(u), C: c, D: 100, RT: PDFString.of(''), SS: PDFString.of('') })
+      const unit = pdfUnit(m.unit)
+      if (m.name) dict.OPName = PDFHexString.fromText(m.name)
+      if (angle) {
+        // Our own angle measurement: a polyline of three points; the result in degrees is kept as /OPAngle.
+        const p = a.points![0]
+        const deg = p.length >= 3 ? angleAt(p[0], p[1], p[2]) : 0
+        dict.OPAngle = Math.round(deg * 1000) / 1000
+        dict.Subj = PDFHexString.fromText('Angle')
+      } else {
+        dict.IT = m.kind === 'distance' ? 'LineDimension' : m.kind === 'perimeter' ? 'PolyLineDimension' : 'PolygonDimension'
+        dict.Measure = {
+          Type: 'Measure',
+          Subtype: 'RL',
+          R: PDFHexString.fromText(m.ratio ?? `1 pt = ${m.factor} ${m.unit}`),
+          X: [fmt(unit, m.factor)],
+          D: [fmt(unit, 1)],
+          A: [fmt(`${unit}²`, 1)]
+        }
+      }
+      dict.Contents = PDFHexString.fromText(m.label)
+      if (a.kind === 'line' && !angle) {
+        dict.Cap = true
+        dict.CP = 'Top'
+      }
+      // Redraw the appearance with the label added.
+      const fnt = await getFont()
+      const pts = a.points![0]
+      const at = measureLabelAt(m.kind, pts)
+      const label = winAnsiSafe(fnt, measureCaption(m).replace('²', '2'))
+      const size = MEASURE_LABEL_SIZE
+      const w = fnt.widthOfTextAtSize(label, size)
+      const box = { x: at.x - w / 2 - 2, y: at.y - size - 4, w: w + 4, h: size + 3 }
+      const old = (dict.AP as { N: PDFRef }).N
+      const oldStream = ctx.lookup(old) as unknown as { getContents(): Uint8Array }
+      const prev = new TextDecoder('latin1').decode(oldStream.getContents())
+      const text = `q ${cm(f)} 1 g ${n(box.x)} ${n(box.y)} ${n(box.w)} ${n(box.h)} re f BT /Helv ${n(size)} Tf ${rgb(a.color)} rg 1 0 0 -1 ${n(box.x + 2)} ${n(box.y + size)} Tm ${fnt.encodeText(label).toString()} Tj ET Q`
+      const all = userBounds(f, [...a.rects, box])
+      dict.Rect = all
+      ctx.delete(old)
+      dict.AP = { N: makeForm(ctx, all, `${prev} ${text}`, { Font: { Helv: fnt.ref } }) }
+    }
     if (a.origin) {
       const existing = findExisting(page, a.origin)
       if (existing) {
@@ -763,6 +837,8 @@ export async function writeAnnotations(
         // A link's target is either /A or /Dest: drop the old one so the new one is the only target.
         if (a.kind === 'link') for (const k of ['A', 'Dest']) existing.dict.delete(PDFName.of(k))
         // Settings that were switched off are dropped rather than left from before.
+        if (a.subject === undefined && !a.signature) existing.dict.delete(PDFName.of('Subj'))
+        if (!a.layer && existing.dict.has(PDFName.of('OC'))) existing.dict.delete(PDFName.of('OC'))
         if (a.blend === undefined && a.kind !== 'foreign') existing.dict.delete(PDFName.of('BM'))
         if ((a.kind === 'polygon' || a.kind === 'cloud' || a.kind === 'rectangle') && !('BE' in dict)) existing.dict.delete(PDFName.of('BE'))
         for (const [key, value] of fresh.entries()) existing.dict.set(key, value)
@@ -779,46 +855,6 @@ export async function writeAnnotations(
     if (groupWith) {
       dict.IRT = groupWith
       dict.RT = 'Group'
-    }
-    // Measurements (ISO 32000 12.9): the intent, a rectilinear /Measure dictionary, and the result drawn in.
-    if (a.measure && (a.kind === 'line' || a.kind === 'polyline' || a.kind === 'polygon')) {
-      const m = a.measure
-      const fmt = (u: string, c: number) => ({ Type: 'NumberFormat', U: PDFHexString.fromText(u), C: c, D: 100, RT: PDFString.of(''), SS: PDFString.of('') })
-      const unit = pdfUnit(m.unit)
-      if (m.name) dict.OPName = PDFHexString.fromText(m.name)
-      dict.IT = m.kind === 'distance' ? 'LineDimension' : m.kind === 'perimeter' ? 'PolyLineDimension' : 'PolygonDimension'
-      dict.Measure = {
-        Type: 'Measure',
-        Subtype: 'RL',
-        R: PDFHexString.fromText(m.ratio ?? `1 pt = ${m.factor} ${m.unit}`),
-        X: [fmt(unit, m.factor)],
-        D: [fmt(unit, 1)],
-        A: [fmt(`${unit}²`, 1)]
-      }
-      dict.Contents = PDFHexString.fromText(m.label)
-      if (a.kind === 'line') {
-        dict.Cap = true
-        dict.CP = 'Top'
-      }
-      // Redraw the appearance with the label added.
-      const fnt = await getFont()
-      const pts = a.points![0]
-      const at =
-        m.kind === 'area'
-          ? { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length }
-          : { x: (pts[Math.floor((pts.length - 1) / 2)].x + pts[Math.ceil((pts.length - 1) / 2) || 1]?.x) / 2, y: (pts[Math.floor((pts.length - 1) / 2)].y + pts[Math.ceil((pts.length - 1) / 2) || 1]?.y) / 2 }
-      const label = winAnsiSafe(fnt, m.label.replace('²', '2'))
-      const size = MEASURE_LABEL_SIZE
-      const w = fnt.widthOfTextAtSize(label, size)
-      const box = { x: at.x - w / 2 - 2, y: at.y - size - 4, w: w + 4, h: size + 3 }
-      const old = (dict.AP as { N: PDFRef }).N
-      const oldStream = ctx.lookup(old) as unknown as { getContents(): Uint8Array }
-      const prev = new TextDecoder('latin1').decode(oldStream.getContents())
-      const text = `q ${cm(f)} 1 g ${n(box.x)} ${n(box.y)} ${n(box.w)} ${n(box.h)} re f BT /Helv ${n(size)} Tf ${rgb(a.color)} rg 1 0 0 -1 ${n(box.x + 2)} ${n(box.y + size)} Tm ${fnt.encodeText(label).toString()} Tj ET Q`
-      const all = userBounds(f, [...a.rects, box])
-      dict.Rect = all
-      ctx.delete(old)
-      dict.AP = { N: makeForm(ctx, all, `${prev} ${text}`, { Font: { Helv: fnt.ref } }) }
     }
     const ref = ctx.register(ctx.obj(dict as never))
     let list = page.node.lookupMaybe(PDFName.of('Annots'), PDFArray)

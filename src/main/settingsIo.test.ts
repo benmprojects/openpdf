@@ -15,6 +15,7 @@ const base = {
   toolDefaults: { line: { color: '#ff0000' } },
   toolPresets: [],
   scalePresets: [],
+  markPresets: [],
   updates: { check: true, feed: 'https://updates.example.test/feed.json' },
   language: 'en-AU',
   printer: 'Office printer',

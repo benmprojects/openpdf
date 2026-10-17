@@ -239,8 +239,10 @@ export function App() {
   const updateMeta = useCallback((id: number, meta: DocMeta) => {
     setTabs((list) => {
       const t = list.find((x) => x.id === id)
-      if (!t || (meta.dirty ?? t.dirty) === t.dirty && (meta.name ?? t.name) === t.name && (meta.path ?? t.path) === t.path) return list
-      return list.map((x) => (x.id === id ? { ...x, ...meta } : x))
+      // A path of null means the file is gone (moved to the Recycle Bin): the document carries on as an unsaved one.
+      const path = meta.path === null ? undefined : (meta.path ?? t?.path)
+      if (!t || ((meta.dirty ?? t.dirty) === t.dirty && (meta.name ?? t.name) === t.name && path === t.path)) return list
+      return list.map((x) => (x.id === id ? { ...x, ...meta, path } : x))
     })
   }, [])
 

@@ -1,4 +1,4 @@
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRef } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import { writeAnnotations } from './annotWrite'
 import { stampSize, withBounds, type Annot, type AnnotKind } from './annotations'
@@ -312,5 +312,81 @@ describe('writeAnnotations', () => {
     expect(d.lookup(PDFName.of('OPRot'), PDFArray).size()).toBe(3)
     expect(d.get(PDFName.of('Contents'))).toBeUndefined()
     expect((d.lookup(PDFName.of('CA')) as unknown as { asNumber(): number }).asNumber()).toBeCloseTo(0.5)
+  })
+})
+
+describe('writeAnnotations: checked flag, subject, layer, note icons and angles', () => {
+  const text = (d: PDFDict, k: string) => (d.lookup(PDFName.of(k)) as unknown as { decodeText(): string }).decodeText()
+  const num = (d: PDFDict, k: string) => (d.lookup(PDFName.of(k)) as unknown as { asNumber(): number }).asNumber()
+
+  it('writes the checked flag as a reply in the Marked state model', async () => {
+    const parent = annot('highlight', {
+      rects: [{ x: 50, y: 50, w: 100, h: 12 }],
+      replies: [
+        { id: 1000, author: 'Checker', text: '', date: '2026-10-16T01:00:00.000Z', mark: 'Marked' },
+        { id: 1001, author: 'Checker', text: '', date: '2026-10-16T02:00:00.000Z', mark: 'Unmarked' }
+      ]
+    })
+    const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), [parent]))
+    const list = annotsOf(doc)
+    expect(list.map(subtype)).toEqual(['Highlight', 'Text', 'Text'])
+    expect(text(list[1], 'State')).toBe('Marked')
+    expect(text(list[1], 'StateModel')).toBe('Marked')
+    expect(text(list[2], 'State')).toBe('Unmarked')
+    expect(list[1].lookup(PDFName.of('IRT'))).toBe(list[0])
+  })
+
+  it('writes each note icon as /Name, with an appearance of its own', async () => {
+    const icons = ['Comment', 'Note', 'Help', 'Key', 'Paragraph', 'Insert'] as const
+    const notes = icons.map((icon, i) => annot('note', { rects: [{ x: 40 + i * 30, y: 40, w: 22, h: 22 }], text: icon, icon }))
+    const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), notes))
+    const list = annotsOf(doc)
+    expect(list.map((d) => d.lookup(PDFName.of('Name'), PDFName).decodeText())).toEqual([...icons])
+    const streams = list.map((d) => {
+      const ap = d.lookup(PDFName.of('AP'), PDFDict).get(PDFName.of('N')) as PDFRef
+      return new TextDecoder('latin1').decode((doc.context.lookup(ap) as unknown as { getContents(): Uint8Array }).getContents())
+    })
+    expect(new Set(streams).size).toBe(icons.length)
+  })
+
+  it('writes the subject, and drops it from an annotation in the file when it is cleared', async () => {
+    const first = await writeAnnotations(await blankPdf(), [annot('rectangle', { rects: [{ x: 50, y: 50, w: 80, h: 40 }], subject: 'Pit lid' })])
+    const doc = await PDFDocument.load(first)
+    expect(text(annotsOf(doc)[0], 'Subj')).toBe('Pit lid')
+    const r = annotsOf(doc)[0].lookup(PDFName.of('Rect'), PDFArray)
+    const rect = [0, 1, 2, 3].map((i) => (r.lookup(i) as unknown as { asNumber(): number }).asNumber()) as [number, number, number, number]
+    const again = annot('rectangle', { rects: [{ x: 50, y: 50, w: 80, h: 40 }], origin: { index: 0, subtype: 5, rect } })
+    const out = await PDFDocument.load(await writeAnnotations(first, [again], [], new Set([again.id])))
+    // The kind still writes its own default subject, but not the cleared one.
+    expect(text(annotsOf(out)[0], 'Subj')).toBe('Rectangle')
+  })
+
+  it('moves an annotation to a layer by writing /OC, and ignores a layer the file does not have', async () => {
+    const base = await PDFDocument.create()
+    base.addPage([595, 842])
+    const ocg = base.context.register(base.context.obj({ Type: 'OCG', Name: 'Services' } as never))
+    base.catalog.set(PDFName.of('OCProperties'), base.context.obj({ OCGs: [ocg], D: { Order: [ocg] } } as never))
+    const bytes = await base.save()
+    const key = `${ocg.objectNumber} ${ocg.generationNumber}`
+    const on = annot('rectangle', { rects: [{ x: 50, y: 50, w: 80, h: 40 }], layer: key })
+    const off = annot('rectangle', { rects: [{ x: 50, y: 150, w: 80, h: 40 }], layer: '999 0' })
+    const doc = await PDFDocument.load(await writeAnnotations(bytes, [on, off]))
+    const [a, b] = annotsOf(doc)
+    expect((a.get(PDFName.of('OC')) as PDFRef).objectNumber).toBe(ocg.objectNumber)
+    expect(b.get(PDFName.of('OC'))).toBeUndefined()
+  })
+
+  it('writes an angle as a polyline with its degrees in /OPAngle and no /Measure', async () => {
+    const pts = [{ x: 100, y: 100 }, { x: 100, y: 200 }, { x: 200, y: 200 }]
+    const a = annot('polyline', { points: [pts], lineWidth: 1, measure: { kind: 'angle', factor: 1, unit: '°', label: '90.0°', name: 'Kerb return' } })
+    const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), [a]))
+    const d = annotsOf(doc)[0]
+    expect(subtype(d)).toBe('PolyLine')
+    expect(num(d, 'OPAngle')).toBeCloseTo(90)
+    expect(text(d, 'Subj')).toBe('Angle')
+    expect(text(d, 'Contents')).toBe('90.0°')
+    expect(text(d, 'OPName')).toBe('Kerb return')
+    expect(d.get(PDFName.of('Measure'))).toBeUndefined()
+    expect(d.get(PDFName.of('IT'))).toBeUndefined()
   })
 })

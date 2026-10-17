@@ -59,7 +59,17 @@ test('Fit visible, the loupe and a split view', async () => {
     await expect(second.locator('[data-split-page]')).toHaveCount(6)
     await expect(win.getByRole('button', { name: 'Split vertically' })).toHaveAttribute('aria-pressed', 'true')
     await expect(second).toHaveClass(/vertical/)
-    const before = await zoomNow(win)
+    // The first view fits its now narrower width: wait until its zoom has settled.
+    let before = await zoomNow(win)
+    await expect
+      .poll(async () => {
+        await win.waitForTimeout(300)
+        const now = await zoomNow(win)
+        const same = now === before
+        before = now
+        return same
+      }, { timeout: 10_000 })
+      .toBe(true)
     await second.getByLabel('Second view zoom').selectOption('2')
     await expect(second.locator('[data-split-page="0"]')).toHaveAttribute('data-zoom', '2')
     expect(await zoomNow(win)).toBe(before) // the first view's zoom is its own

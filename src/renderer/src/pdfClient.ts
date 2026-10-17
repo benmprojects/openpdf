@@ -159,6 +159,12 @@ export class PdfClient {
     return res.ok && res.type === 'hideAnnot' && res.hidden
   }
 
+  /** Hides or shows an annotation already in the file (in memory only: the file is untouched, and it still prints). */
+  async setAnnotHidden(page: number, index: number, subtype: number, hidden: boolean): Promise<boolean> {
+    const res = await this.call({ type: 'setAnnotHidden', page, index, subtype, hidden })
+    return res.ok && res.type === 'setAnnotHidden' && res.done
+  }
+
   /** Moves or resizes an annotation already in the file, in memory, so PDFium draws it in its new place. */
   async setAnnotRect(page: number, index: number, subtype: number, rect: { x: number; y: number; w: number; h: number }): Promise<boolean> {
     const res = await this.call({ type: 'setAnnotRect', page, index, subtype, rect })

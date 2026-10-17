@@ -14,7 +14,7 @@ export function commentsCsv(annots: Annot[], labels: string[] | null): string {
     const ref = `#${i + 1}`
     rows.push([pageOf(a, labels), annotLabel(a.kind), a.author ?? '', formatWhen(a.modified ?? a.created), reviewState(a), commentText(a), ''].map(q).join(','))
     for (const r of a.replies ?? []) {
-      rows.push([pageOf(a, labels), r.state ? 'Status' : 'Reply', r.author, formatWhen(r.date), r.state ?? '', r.text, ref].map(q).join(','))
+      rows.push([pageOf(a, labels), r.mark ? (r.mark === 'Marked' ? 'Checked' : 'Unchecked') : r.state ? 'Status' : 'Reply', r.author, formatWhen(r.date), r.state ?? '', r.text, ref].map(q).join(','))
     }
   })
   return rows.join('\r\n') + '\r\n'
@@ -101,7 +101,7 @@ export async function commentSummaryPdf(annots: Annot[], labels: string[] | null
       y -= 13
     }
     for (const r of a.replies ?? []) {
-      const lines = wrap(font, safe(font, r.state ? `Status set to ${r.state}` : r.text), 9, W - 2 * M - 40)
+      const lines = wrap(font, safe(font, r.mark ? (r.mark === 'Marked' ? 'Marked as checked' : 'Check removed') : r.state ? `Status set to ${r.state}` : r.text), 9, W - 2 * M - 40)
       need(14 + lines.length * 12)
       text(`${r.author || '(no author)'} · ${formatWhen(r.date)}`, bold, 8.5, M + 30, rgb(0.4, 0.42, 0.47))
       y -= 12

@@ -17,6 +17,8 @@ export interface OutlineStyle {
   dest?: { left: number | null; top: number | null }
   /** A destination set here: a point on the page in points from the top-left of the page as shown. Wins over `dest`. */
   view?: { x: number; y: number }
+  /** The bookmark goes to a named destination (kept as the name, so renaming or moving the destination moves the bookmark). Wins over the page. */
+  named?: string
 }
 
 export interface BookmarkNode extends OutlineStyle {
@@ -129,7 +131,9 @@ export async function writeOutline(bytes: Uint8Array, tree: BookmarkNode[]): Pro
       const dict: Record<string, unknown> = { Title: PDFHexString.fromText(n.title), Parent: parent }
       if (i > 0) dict.Prev = refs[i - 1]
       if (i < list.length - 1) dict.Next = refs[i + 1]
-      if (n.page >= 0 && n.page < pageRefs.length) {
+      if (n.named) {
+        dict.A = { S: 'GoTo', D: PDFString.of(n.named) }
+      } else if (n.page >= 0 && n.page < pageRefs.length) {
         const at = n.view ? viewToUser(doc, n.page, n.view) : n.dest ? [n.dest.left, n.dest.top] : [null, null]
         dict.Dest = [pageRefs[n.page], 'XYZ', at[0], at[1], null]
       }
