@@ -30,7 +30,7 @@ import fontkit from '@pdf-lib/fontkit'
 import { frameFor } from './annotWrite'
 import type { Rect } from './textLogic'
 import { readBarcodeMeta, setBarcodeAppearance, type BarcodeFieldMeta } from './barcodeWrite'
-import { dataUrlToImage, setButtonImage, storedImageValue } from './formImage'
+import { clearButtonImage, dataUrlToImage, setButtonImage, storedImageValue } from './formImage'
 import { docScriptsOf, joinDocScripts } from './docScripts'
 
 /** What a push button does when pressed. */
@@ -341,6 +341,7 @@ export async function applyFormValues(
       // An image field: the picture the filler chose (a data URL) becomes the button's look.
       const img = dataUrlToImage(value)
       if (img) await setButtonImage(doc, f, img)
+      else if (value === '' && f.acroField.dict.has(PDFName.of('OpenPDFImage'))) await clearButtonImage(doc, f)
     } else if (f instanceof PDFTextField && typeof value === 'string') {
       const max = f.getMaxLength()
       // Automatic size on a multiline field is 12 pt, as in Acrobat (pdf-lib would size it to the box).

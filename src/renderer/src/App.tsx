@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Place } from '../../shared/places'
 import type { RecoveryEntry, Settings } from '../../preload'
-import { Cloud, CircleHelp, FileSearch, FileText, FolderOpen, History, Plus, Settings2, X } from 'lucide-react'
+import { Cloud, CircleHelp, FileSearch, FileText, FolderOpen, History, Settings2 } from 'lucide-react'
 import { SettingsDialog, ShortcutsDialog } from './AppDialogs'
 import type { SearchSource } from './multiSearch'
 import { SearchPanel, type SearchJump } from './SearchPanel'
@@ -9,6 +9,10 @@ import { Logo } from './Logo'
 import { OpenUrlDialog } from './FileDialogs'
 import { IconButton } from './Ribbon'
 import { DocView, type DocMeta } from './DocView'
+import { prefsFrom, useStable } from './appPrefs'
+import { DocTabs, TAB_MIME, type TabActions } from './DocTabs'
+import { addToGroup, idsToClose, moveTab, nextGroupColour, nextGroupId, freshGroupName, pruneGroups, removeFromGroup, type CloseScope, type TabGroup } from './tabGroups'
+import { setRenderJobs } from './pdfClient'
 import { addCatalogues, setLanguage, t, useLanguage } from './i18n'
 
 interface Tab {
@@ -21,6 +25,8 @@ interface Tab {
   recovered?: boolean
   /** A search-in-files result to show: set the find bar and go to that match. */
   jump?: SearchJump
+  /** The tab group it belongs to. */
+  group?: number
 }
 
 interface Incoming {
@@ -119,6 +125,9 @@ export function App() {
   const [places, setPlaces] = useState<Place[] | null>(null)
   const [recovery, setRecovery] = useState<RecoveryEntry[]>([])
   const [searchPanel, setSearchPanel] = useState(false)
+  const [groups, setGroups] = useState<TabGroup[]>([])
+  // A window opened for a moved tab has its own tabs only: it neither restores nor saves the session, and does not offer crash recovery.
+  const secondary = useRef(new URLSearchParams(window.location.search).has('secondary')).current
   useLanguage() // re-render everything below when the language changes
   const [catalogues, setCatalogues] = useState(false)
   useEffect(() => {
@@ -128,6 +137,8 @@ export function App() {
   useEffect(() => {
     if (settings && catalogues) setLanguage(settings.language)
   }, [settings?.language, catalogues]) // eslint-disable-line react-hooks/exhaustive-deps
+  const prefs = useStable(prefsFrom(settings))
+  useEffect(() => setRenderJobs(prefs.performance.renderJobs), [prefs.performance.renderJobs])
   const jumpKey = useRef(1)
   const nextId = useRef(1)
   const tabsRef = useRef(tabs)
@@ -191,7 +202,7 @@ export function App() {
   // Settings, files opened from Explorer while running, and documents left over from a crash.
   useEffect(() => {
     window.openpdf.getSettings().then(setSettings)
-    window.openpdf.recoveryList().then(setRecovery)
+    if (!secondary) window.openpdf.recoveryList().then(setRecovery)
     return window.openpdf.onOpenFiles((files) => {
       addFiles(files)
       window.openpdf.getSettings().then(setSettings)
@@ -256,6 +267,73 @@ export function App() {
     if (activeRef.current === id) setActiveId(rest.length ? rest[Math.min(idx, rest.length - 1)].id : null)
   }, [])
 
+  /** Closes several tabs at once, asking once when some have unsaved changes. */
+  const closeIds = useCallback((ids: number[]) => {
+    const list = tabsRef.current
+    const doomed = list.filter((t) => ids.includes(t.id))
+    if (!doomed.length) return
+    const dirty = doomed.filter((t) => t.dirty)
+    if (dirty.length && !window.confirm(dirty.length === 1 ? `${dirty[0].name} has unsaved changes. Close it and discard them?` : `${dirty.length} documents have unsaved changes. Close them and discard the changes?`)) return
+    const rest = list.filter((t) => !ids.includes(t.id))
+    setTabs(rest)
+    if (activeRef.current !== null && ids.includes(activeRef.current)) {
+      // The nearest tab that stays: the next one along, else the one before.
+      const at = list.findIndex((t) => t.id === activeRef.current)
+      const next = list.slice(at).find((t) => !ids.includes(t.id)) ?? [...list.slice(0, at)].reverse().find((t) => !ids.includes(t.id))
+      setActiveId(next?.id ?? null)
+    }
+  }, [])
+
+  // Groups with no tabs left go away.
+  useEffect(() => {
+    setGroups((g) => {
+      const kept = pruneGroups(tabs, g)
+      return kept.length === g.length ? g : kept
+    })
+  }, [tabs])
+
+  /** A saved document moves to a window of its own (and leaves this one). */
+  const toNewWindow = useCallback(async (id: number) => {
+    const tab = tabsRef.current.find((t) => t.id === id)
+    if (!tab) return
+    if (!tab.path) return setError(`${tab.name} has not been saved yet. Save it first, then open it in a new window.`)
+    if (tab.dirty) return setError(`${tab.name} has unsaved changes. Save it first, then open it in a new window.`)
+    setError(null)
+    try {
+      await window.openpdf.openInNewWindow({ name: tab.name, path: tab.path })
+      setTabs((list) => list.filter((t) => t.id !== id))
+      if (activeRef.current === id) {
+        const rest = tabsRef.current.filter((t) => t.id !== id)
+        setActiveId(rest.length ? rest[Math.min(tabsRef.current.findIndex((t) => t.id === id), rest.length - 1)].id : null)
+      }
+    } catch {
+      setError(`${tab.name} could not be opened in a new window.`)
+    }
+  }, [])
+
+  const tabActions: TabActions = {
+    onActivate: setActiveId,
+    onClose: (id) => close(id),
+    onNew: () => void open(),
+    onMove: (id, before) => setTabs((list) => moveTab(list, id, before)),
+    onNewWindow: (id) => void toNewWindow(id),
+    onCloseMany: (id, scope: CloseScope) => closeIds(idsToClose(tabsRef.current, id, scope)),
+    onAddToGroup: (id, group) => {
+      let target = group
+      if (target === null) {
+        target = nextGroupId(groups)
+        setGroups((g) => [...g, { id: target as number, name: freshGroupName(g, t('Group')), colour: nextGroupColour(g), collapsed: false }])
+      }
+      setTabs((list) => addToGroup(list, [id], target as number))
+    },
+    onRemoveFromGroup: (id) => setTabs((list) => removeFromGroup(list, id)),
+    onToggleGroup: (group) => setGroups((g) => g.map((x) => (x.id === group ? { ...x, collapsed: !x.collapsed } : x))),
+    onRenameGroup: (group, name) => setGroups((g) => g.map((x) => (x.id === group ? { ...x, name } : x))),
+    onGroupColour: (group, colour) => setGroups((g) => g.map((x) => (x.id === group ? { ...x, colour } : x))),
+    onUngroup: (group) => setTabs((list) => list.reduce<Tab[]>((out, tb) => (tb.group === group ? [...out, removeFromGroup([tb], tb.id)[0]] : [...out, tb]), [])),
+    onCloseGroup: (group) => closeIds(tabsRef.current.filter((tb) => tb.group === group).map((tb) => tb.id))
+  }
+
   const anyDirty = tabs.some((t) => t.dirty)
   useEffect(() => {
     if (!anyDirty) return
@@ -305,7 +383,7 @@ export function App() {
       const [initial, s] = await Promise.all([window.openpdf.initialFiles(), window.openpdf.getSettings()])
       setPreviousSession(s.lastSession)
       let restored: Incoming[] = []
-      if (s.restoreSession) {
+      if (s.restoreSession && !secondary) {
         const r = await readSession(s.lastSession.filter((p) => !initial.some((f) => f.path === p)))
         restored = r.files
         if (r.missing) setError(`${r.missing} of the documents from the last session could not be found, so ${r.missing === 1 ? 'it was' : 'they were'} left out.`)
@@ -317,7 +395,7 @@ export function App() {
 
   // Keep the saved list of open documents current (only once the start-up restore has run, so it cannot erase itself).
   useEffect(() => {
-    if (!sessionReady) return
+    if (!sessionReady || secondary) return
     void window.openpdf.setSettings({ lastSession: tabsRef.current.flatMap((t) => (t.path ? [t.path] : [])) })
   }, [pathsKey, sessionReady])
   const [urlDialog, setUrlDialog] = useState(false)
@@ -368,6 +446,9 @@ export function App() {
     <div
       className="app"
       onDragOver={(e) => {
+        // A tab being dragged is not a file arriving: no drop overlay, and the window is not a drop target for it
+        // (so letting go outside the strip reads as "dragged out").
+        if (e.dataTransfer.types.includes(TAB_MIME)) return
         e.preventDefault()
         setDragging(true)
       }}
@@ -380,35 +461,7 @@ export function App() {
         <div className="brand" aria-hidden>
           <Logo size={18} />
         </div>
-        <div className="tabs" role="tablist" aria-label="Open documents">
-          {tabs.map((t) => (
-            <div
-              key={t.id}
-              className={t.id === activeId ? 'tab active' : 'tab'}
-              role="tab"
-              aria-selected={t.id === activeId}
-              title={t.path ?? t.name}
-              onClick={() => setActiveId(t.id)}
-              onAuxClick={(e) => e.button === 1 && close(t.id)}
-            >
-              <FileText className="tab-icon" size={14} strokeWidth={1.8} aria-hidden />
-              <span className="tab-name">{t.name}</span>
-              {t.dirty && <span className="tab-dirty" title="Unsaved changes" aria-label="Unsaved changes" />}
-              <button
-                className="tab-close"
-                aria-label={`Close ${t.name}`}
-                title="Close (Ctrl+W)"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  close(t.id)
-                }}
-              >
-                <X size={13} strokeWidth={2} aria-hidden />
-              </button>
-            </div>
-          ))}
-          <IconButton icon={Plus} className="tab-new" label={t('Open file')} title={t('Open (Ctrl+O)')} onClick={open} />
-        </div>
+        <DocTabs tabs={tabs} groups={groups} activeId={activeId} actions={tabActions} />
         <div className="menu-anchor">
           <button
             className="strip-btn"
@@ -507,6 +560,8 @@ export function App() {
             toolDefaults={settings?.toolDefaults ?? NO_DEFAULTS}
             toolPresets={settings?.toolPresets ?? NO_PRESETS}
             onSettings={changeSettings}
+            prefs={prefs}
+            onOpenRecovered={(name, path, data) => addFiles([{ name, path, data, recovered: true }])}
           />
         ))}
         {!tabs.length && (

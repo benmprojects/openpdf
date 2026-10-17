@@ -2192,6 +2192,8 @@ button.compare-item:hover {
 }
 .sidebar-tabs {
   display: flex;
+  /* There are more panes than fit in one row of a narrow pane: the icons wrap onto a second row rather than spilling out. */
+  flex-wrap: wrap;
   gap: 2px;
   padding: 6px 6px 0;
   border-bottom: 1px solid var(--border);
@@ -2202,8 +2204,8 @@ button.compare-item:hover {
   justify-content: center;
   gap: 6px;
   flex: 1 1 auto;
-  min-width: 30px;
-  padding: 6px 4px 7px;
+  min-width: 26px;
+  padding: 6px 3px 7px;
   color: var(--muted);
   background: transparent;
   border: none;
@@ -3735,3 +3737,495 @@ button:not([class]):disabled {
 
 .stamp-picker.docked { position: static; width: auto; max-width: none; margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
 .stamps-dock { width: 340px; }
+
+/* Batch 3: selecting fields by dragging a box, clearing an image field, the script console and document actions. */
+.form-marquee {
+  position: absolute;
+  border: 1px dashed var(--focus);
+  background: color-mix(in srgb, var(--focus) 12%, transparent);
+  pointer-events: none;
+  z-index: 4;
+}
+.form-clear-btn {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  z-index: 3;
+}
+.console-log {
+  min-height: 160px;
+  max-height: 320px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+.console-log .console-err {
+  color: var(--accent);
+}
+.action-code {
+  width: 100%;
+  min-height: 70px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* Transparency grid: a chequerboard behind pages drawn with a clear background. */
+.tgrid .page {
+  background-color: #fff;
+  background-image: linear-gradient(45deg, #cfd2d8 25%, transparent 25%, transparent 75%, #cfd2d8 75%), linear-gradient(45deg, #cfd2d8 25%, transparent 25%, transparent 75%, #cfd2d8 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+.split-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.split-host.split.quad {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+.split-host.split.quad > .viewer-frame,
+.split-host.split.quad > .scroller {
+  grid-column: 1;
+  grid-row: 1;
+}
+.split-pane.quad {
+  border-top: none;
+  border-left: 3px solid var(--border-strong);
+}
+.split-host.split.quad > .split-pane.quad:nth-of-type(n + 2) {
+  border-top: 3px solid var(--border-strong);
+}
+.readout {
+  display: inline-flex;
+  gap: 12px;
+  margin-right: 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.readout-pos {
+  min-width: 150px;
+}
+
+/* Pan and zoom window */
+.panzoom {
+  position: fixed;
+  right: 28px;
+  bottom: 44px;
+  z-index: 20;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+.panzoom-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.panzoom-page {
+  position: relative;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+  touch-action: none;
+  cursor: crosshair;
+}
+.panzoom-view {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  background: rgba(200, 30, 40, 0.12);
+  cursor: move;
+}
+.panzoom-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 1px solid #fff;
+  cursor: nwse-resize;
+}
+
+/* Presentation: control bar for transition and automatic advance. */
+.presentation-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  transform: translateX(-50%);
+  color: #fff;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 8px;
+  font-size: 12px;
+  transition: opacity 0.3s;
+}
+.presentation-bar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.presentation.idle .presentation-bar {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Document tab groups, drag to reorder, and the tab context menu. */
+.tab-slot {
+  display: contents;
+}
+.tab-end {
+  display: flex;
+  align-items: flex-end;
+  flex: 1 0 auto;
+  align-self: stretch;
+  min-width: 28px;
+  -webkit-app-region: no-drag;
+}
+.tab-end.drop-before {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.tab.drop-before {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.tab.dragging {
+  opacity: 0.5;
+}
+.tab.grouped {
+  border-top: 3px solid var(--group, transparent);
+}
+.tab.grouped.active::before {
+  display: none;
+}
+.tab-group {
+  flex: none;
+  align-self: center;
+  max-width: 120px;
+  height: 22px;
+  padding: 0 8px;
+  overflow: hidden;
+  color: #fff;
+  background: var(--group, var(--muted));
+  border: none;
+  border-radius: 11px;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tab-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 200px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  -webkit-app-region: no-drag;
+}
+.tab-menu button[role='menuitem'] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 10px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.tab-menu button[role='menuitem']:hover:not(:disabled) {
+  background: var(--panel-3);
+}
+.tab-menu button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.tab-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+.tab-menu-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.tab-menu-colours {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+}
+.swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.swatch.on {
+  border-color: var(--text);
+}
+.swatch.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: none;
+}
+
+/* Destinations and Recovery panes */
+.dest-add input {
+  flex: 1;
+  min-width: 0;
+}
+.dest-list,
+.recovery-list {
+  margin: 6px 0;
+  padding: 0 6px;
+  list-style: none;
+}
+.dest-list li,
+.recovery-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.dest-go,
+.recovery-name {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 4px 8px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  text-align: left;
+  cursor: pointer;
+}
+.dest-go:hover,
+.recovery-name:hover {
+  background: var(--panel-3);
+}
+.dest-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dest-actions {
+  display: flex;
+  flex: none;
+}
+.dest-rename {
+  flex: 1;
+  min-width: 0;
+}
+.recovery-preview {
+  padding: 4px 8px 8px;
+}
+.recovery-preview canvas {
+  display: block;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+/* Quick-access toolbar (on the ribbon's tab row) and the ribbon customisation dialog. */
+.ribbon-tabs {
+  align-items: center;
+  position: relative;
+}
+.qat {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-right: 4px;
+}
+.qat .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+.qat-menu {
+  position: absolute;
+  top: 100%;
+  right: 4px;
+  z-index: 40;
+  width: 280px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+.qat-menu ul,
+.ribbon-custom ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.qat-menu li,
+.ribbon-custom li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 0;
+}
+.qat-menu label,
+.ribbon-custom label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.qat-order {
+  display: flex;
+  gap: 2px;
+}
+.qat-order button {
+  min-width: 24px;
+  padding: 0 4px;
+}
+.qat-foot {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.ribbon-custom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.ribbon-custom h3 {
+  margin: 0 0 6px;
+}
+
+/* The side pane floating over the page. */
+.sidebar.floating {
+  position: fixed;
+  z-index: 30;
+  min-width: 220px;
+  min-height: 160px;
+  overflow: hidden;
+  resize: both;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+}
+.float-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 2px 4px 2px 10px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  cursor: move;
+  touch-action: none;
+}
+.ribbon-tabs > .rtab {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.qat {
+  flex: none;
+}
+
+/* Settings: category strip and the preference sections. */
+.pref-nav {
+  position: sticky;
+  top: -16px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: -4px -4px 8px;
+  padding: 6px 4px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.pref-nav button {
+  padding: 3px 10px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pref-nav button:hover {
+  background: var(--panel-3);
+}
+.modal section + section,
+.modal #pref-transfer,
+.modal #pref-updates {
+  margin-top: 14px;
+}
+.pref-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.pref-list {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+}
+.pref-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+}
+.pref-list-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The side pane's tabs are compact: with a dozen panes the icons share two short rows rather than spilling out of a narrow pane. */
+.sidebar .sidebar-tabs button {
+  min-width: 26px;
+  padding: 4px 5px;
+}

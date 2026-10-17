@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { UpdateStatus } from '../../main/updates'
 import type { Settings } from '../../preload'
-import { languages, plural, t } from './i18n'
+import { languages, msg, plural, t } from './i18n'
+import { IdentitySettings, LaunchSettings, PageDisplaySettings, PerformanceSettings, ResetSettings, SearchProviderSettings } from './PreferenceSections'
+
+/** The preference categories, in the order they appear in the Settings dialog: the id of each section and its name. */
+const CATEGORIES: [string, string][] = [
+  ['pref-general', msg('General')],
+  ['pref-display', msg('Page display')],
+  ['pref-search', msg('Search providers')],
+  ['pref-identity', msg('Identity')],
+  ['pref-launch', msg('Launch applications')],
+  ['pref-performance', msg('Performance')],
+  ['pref-transfer', msg('Move settings')],
+  ['pref-updates', msg('Updates and privacy')]
+]
 
 /** A centred modal panel. Esc and a click on the backdrop close it. */
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
@@ -180,49 +193,71 @@ export function SettingsDialog({
   onImported?: (s: Settings) => void
   onClose: () => void
 }) {
+  const go = (id: string) => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   return (
-    <Modal title={t('Settings')} onClose={onClose}>
-      <div className="form-grid">
-        <label htmlFor="set-theme">Theme</label>
-        <select id="set-theme" value={settings.theme} onChange={(e) => onChange({ theme: e.target.value as Settings['theme'] })}>
-          <option value="system">Same as Windows</option>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
-        <label htmlFor="set-language">{t('Language')}</label>
-        <select id="set-language" value={settings.language} onChange={(e) => onChange({ language: e.target.value })}>
-          <option value="system">{t('Same as Windows')}</option>
-          {languages().map((l) => (
-            <option key={l.code} value={l.code}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="set-author">Author name for comments</label>
-        <input id="set-author" value={settings.author} onChange={(e) => onChange({ author: e.target.value })} />
-        <label htmlFor="set-autosave">Recovery snapshot of unsaved work</label>
-        <select id="set-autosave" value={settings.autosaveMinutes} onChange={(e) => onChange({ autosaveMinutes: Number(e.target.value) })}>
-          <option value={0}>Off</option>
-          {[1, 2, 5, 10].map((m) => (
-            <option key={m} value={m}>
-              Every {m} minute{m === 1 ? '' : 's'}
-            </option>
-          ))}
-          {![0, 1, 2, 5, 10].includes(settings.autosaveMinutes) && <option value={settings.autosaveMinutes}>Every {settings.autosaveMinutes} minutes</option>}
-        </select>
+    <Modal title={t('Settings')} onClose={onClose} wide>
+      <nav className="pref-nav" aria-label={t('Settings categories')}>
+        {CATEGORIES.map(([id, name]) => (
+          <button key={id} type="button" onClick={() => go(id)}>
+            {t(name)}
+          </button>
+        ))}
+      </nav>
+      <section id="pref-general" aria-label={t('General')}>
+        <div className="form-grid">
+          <label htmlFor="set-theme">Theme</label>
+          <select id="set-theme" value={settings.theme} onChange={(e) => onChange({ theme: e.target.value as Settings['theme'] })}>
+            <option value="system">Same as Windows</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+          <label htmlFor="set-language">{t('Language')}</label>
+          <select id="set-language" value={settings.language} onChange={(e) => onChange({ language: e.target.value })}>
+            <option value="system">{t('Same as Windows')}</option>
+            {languages().map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          <label htmlFor="set-author">Author name for comments</label>
+          <input id="set-author" value={settings.author} onChange={(e) => onChange({ author: e.target.value })} />
+          <label htmlFor="set-autosave">Recovery snapshot of unsaved work</label>
+          <select id="set-autosave" value={settings.autosaveMinutes} onChange={(e) => onChange({ autosaveMinutes: Number(e.target.value) })}>
+            <option value={0}>Off</option>
+            {[1, 2, 5, 10].map((m) => (
+              <option key={m} value={m}>
+                Every {m} minute{m === 1 ? '' : 's'}
+              </option>
+            ))}
+            {![0, 1, 2, 5, 10].includes(settings.autosaveMinutes) && <option value={settings.autosaveMinutes}>Every {settings.autosaveMinutes} minutes</option>}
+          </select>
+        </div>
+        <div className="pref-checks">
+          <label className="inline">
+            <input type="checkbox" checked={settings.spellcheck} onChange={(e) => onChange({ spellcheck: e.target.checked })} /> Check spelling in text boxes (right-click a word for suggestions)
+          </label>
+          <label className="inline">
+            <input type="checkbox" checked={settings.restoreSession} onChange={(e) => onChange({ restoreSession: e.target.checked })} /> {t('Reopen the documents that were open when OpenPDF last closed')}
+          </label>
+        </div>
+        <p className="muted small">
+          Recovery snapshots are kept only until you save or close a document. After a crash they are offered back the next
+          time OpenPDF starts.
+        </p>
+      </section>
+      <PageDisplaySettings settings={settings} onChange={onChange} />
+      <SearchProviderSettings settings={settings} onChange={onChange} />
+      <IdentitySettings settings={settings} onChange={onChange} />
+      <LaunchSettings settings={settings} onChange={onChange} />
+      <PerformanceSettings settings={settings} onChange={onChange} />
+      <div id="pref-transfer">
+        <SettingsTransfer onImported={(s) => onImported?.(s)} />
+        <ResetSettings onReset={() => void window.openpdf.resetSettings().then((s) => onImported?.(s))} />
       </div>
-      <label className="inline" style={{ marginTop: 10 }}>
-        <input type="checkbox" checked={settings.spellcheck} onChange={(e) => onChange({ spellcheck: e.target.checked })} /> Check spelling in text boxes (right-click a word for suggestions)
-      </label>
-      <label className="inline" style={{ marginTop: 6 }}>
-        <input type="checkbox" checked={settings.restoreSession} onChange={(e) => onChange({ restoreSession: e.target.checked })} /> {t('Reopen the documents that were open when OpenPDF last closed')}
-      </label>
-      <p className="muted small">
-        Recovery snapshots are kept only until you save or close a document. After a crash they are offered back the next
-        time OpenPDF starts.
-      </p>
-      <SettingsTransfer onImported={(s) => onImported?.(s)} />
-      <UpdateSettings settings={settings} onChange={onChange} />
+      <div id="pref-updates">
+        <UpdateSettings settings={settings} onChange={onChange} />
+      </div>
     </Modal>
   )
 }
@@ -244,7 +279,7 @@ export const SHORTCUTS: [string, string][] = [
   ['Ctrl+0', 'Fit width'],
   ['Ctrl+1', 'Actual size'],
   ['Ctrl+Shift++ / Ctrl+Shift+−', 'Rotate view clockwise / anticlockwise'],
-  ['F5', 'Present (full screen); arrows, space or click to move, Esc to leave'],
+  ['F5', 'Present (full screen); arrows, space or click to move, A to pause the automatic advance, Esc to leave'],
   ['Ctrl+H', 'Reading mode (hide the ribbon and side pane)'],
   ['Esc', 'Close find, back to the Select tool, clear selection'],
   ['F1', 'This list']

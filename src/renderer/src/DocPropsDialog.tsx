@@ -125,6 +125,10 @@ export function DocPropsDialog({
 
   const submit = () => {
     if (!view || !custom) return onApply({ ...p, modified: new Date().toISOString() }, null)
+    if (view.baseUrl.trim() && !/^https?:\/\/[^\s/]+\S*$/i.test(view.baseUrl.trim())) {
+      setTab('description')
+      return setProblem(t('The base URL must be a web address starting with http:// or https://'))
+    }
     const bad = checkCustomProps(custom)
     if (bad) {
       setTab('custom')
@@ -185,6 +189,22 @@ export function DocPropsDialog({
               <span>Created</span>
               <input type="datetime-local" aria-label="Created" value={toLocal(p.created)} onChange={(e) => setP({ ...p, created: fromLocal(e.target.value) })} />
             </label>
+            {view && (
+              <>
+                <label className="props-row">
+                  <span>{t('Base URL')}</span>
+                  <input aria-label={t('Base URL')} placeholder="https://" value={view.baseUrl} onChange={(e) => setV({ baseUrl: e.target.value })} spellCheck={false} />
+                </label>
+                <label className="props-row">
+                  <span>{t('Trapped')}</span>
+                  <select aria-label={t('Trapped')} value={view.trapped} onChange={(e) => setV({ trapped: e.target.value as ViewPrefs['trapped'] })}>
+                    <option value="Unknown">{t('Unknown')}</option>
+                    <option value="True">{t('Yes')}</option>
+                    <option value="False">{t('No')}</option>
+                  </select>
+                </label>
+              </>
+            )}
             <p className="muted">Last modified: {show(initial.modified)}. Saving the properties sets it to now.</p>
           </div>
         )}

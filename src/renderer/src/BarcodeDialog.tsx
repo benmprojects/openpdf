@@ -77,6 +77,7 @@ export function BarcodeDialog({
   const [margin, setMargin] = useState('10')
   const [spot, setSpot] = useState<BarcodeSpot>('bottom-right')
   const [placeAs, setPlaceAs] = useState<'content' | 'annotation'>('content')
+  const [asLink, setAsLink] = useState(false)
   const [which, setWhich] = useState<'current' | 'all' | 'range'>('current')
   const [range, setRange] = useState('')
   const [error, setError] = useState('')
@@ -88,7 +89,7 @@ export function BarcodeDialog({
 
   const submit = () => {
     try {
-      onPlace(planBarcodes(opts()))
+      onPlace(planBarcodes(opts()).map((p) => ({ ...p, link: asLink })))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -188,6 +189,9 @@ export function BarcodeDialog({
             <option value="content">{t('Page content (part of the page)')}</option>
             <option value="annotation">{t('Stamp annotation (can be selected and removed)')}</option>
           </select>
+        </label>
+        <label className="inline">
+          <input type="checkbox" checked={asLink} onChange={(e) => setAsLink(e.target.checked)} /> {t('Make the barcode a link when its text is a web address')}
         </label>
         {error && (
           <p className="error-text" role="alert">

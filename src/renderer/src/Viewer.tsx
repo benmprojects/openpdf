@@ -26,7 +26,10 @@ import { MeasureLayer, type MeasureKind, type Measurement } from './MeasureLayer
 import { constrainToStep } from './measure'
 import { SnapIndex, type SnapHit, type SnapKinds } from './snap'
 import { RULER_SIZE, RulerStrip, type RulerUnit } from './Rulers'
-import { layoutRows, rowOfPage, type PageMode } from './pageLayout'
+import type { LinkAction } from './linkLogic'
+import { gapFor, layoutRows, rowOfPage, type PageMode } from './pageLayout'
+import type { Performance } from '../../shared/prefs'
+import type { PointerBus } from './pointerBus'
 import { displayDims, stackTransform, toDisplay, toPage, type Rotation } from './viewRotation'
 
 /** Space around the page stack and between pages, in CSS pixels. */
@@ -72,6 +75,13 @@ export interface ViewerHandle {
   selectionRects(): Promise<{ page: number; rects: Rect[] }[]>
   /** The top-left of what is on screen: the page there and the point on it, in points from the page's top-left. */
   viewPoint(): { page: number; x: number; y: number } | null
+  /**
+   * What is on screen, for the pan and zoom window: the page at the middle of the view and the part of it showing, in
+   * points of the page as displayed (rotation applied), measured from its top-left corner.
+   */
+  viewport(): { page: number; u: number; v: number; w: number; h: number } | null
+  /** Scrolls so the displayed point (`u`, `v`) of a page is in the middle of the view. */
+  panTo(page: number, u: number, v: number): void
 }
 
 export type Tool =
@@ -135,6 +145,11 @@ function constrain(kind: string, a: Pt, b: Pt, stepDeg = 45): Pt {
   return constrainToStep(a, b, stepDeg)
 }
 
+export interface RenderStyle {
+  thin: boolean
+  transparent: boolean
+}
+
 export interface ViewAids {
   rulers: boolean
   unit: RulerUnit
@@ -152,6 +167,12 @@ interface Props {
   rotation: Rotation
   /** Single page or continuous, one or two pages per row. */
   mode: PageMode
+  /** How pages are drawn: thin lines kept solid, and a clear background so the transparency grid shows. */
+  renderStyle?: RenderStyle
+  /** Tile size and how far ahead pages are drawn (Settings > Performance). */
+  perf?: Performance
+  /** Told where the pointer is over the pages (for the status bar readout). */
+  pointerBus?: PointerBus
   /** The marquee zoom tool asks for a new zoom level. */
   onZoomTo: (zoom: number) => void
   /** The snapshot tool: a box dragged on one page, in page points (unrotated frame). */
@@ -175,7 +196,7 @@ interface Props {
   /** The link tool: a box dragged on one page, in page points (unrotated frame). */
   onLinkRect: (page: number, rect: Rect) => void
   /** A link was clicked: go to a page, or (after asking) open a web address. */
-  onFollowLink: (link: PageLink) => void
+  onFollowLink: (link: PageLink & { action?: LinkAction }) => void
   /** Edit Text tool: a block of text on a page was given new text. */
   onEditText: (page: number, block: TextBlock, total: number, text: string, format?: TextFormat) => void
   /** Extras for the edit tools: the page's fonts, picture and shape actions, and a box to point out (Content pane). */
@@ -239,6 +260,9 @@ export function Viewer({
   zoom,
   rotation,
   mode,
+  renderStyle,
+  perf,
+  pointerBus,
   onZoomTo,
   onSnapshot,
   stampDrag,
@@ -379,6 +403,7 @@ export function Viewer({
   }, [annots])
 
   const rows = useMemo(() => layoutRows(pages.length, mode), [pages.length, mode])
+  const gap = gapFor(mode, GAP)
   const rowOf = useMemo(() => rowOfPage(rows), [rows])
   // Outside continuous mode only one row is on screen; scrolling past its ends turns to the next or previous one.
   const [shownRow, setShownRow] = useState(0)
@@ -395,10 +420,10 @@ export function Viewer({
     let y = PAD
     for (const ri of visibleRows) {
       tops.set(ri, y)
-      y += Math.max(...rows[ri].map((p) => Math.round(displayDims(pages[p], rotation).height * zoom))) + GAP
+      y += Math.max(...rows[ri].map((p) => Math.round(displayDims(pages[p], rotation).height * zoom))) + gap
     }
     return { rowTops: tops, offsets: pages.map((_, i) => tops.get(rowOf[i]) ?? PAD) }
-  }, [visibleRows, rows, rowOf, pages, zoom, rotation])
+  }, [visibleRows, rows, rowOf, pages, zoom, rotation, gap])
 
   /** Snaps a page point to the grid and to guides within a few pixels, when snapping is on. */
   const snapPt = useCallback(
@@ -1040,6 +1065,12 @@ export function Viewer({
           onFollowLink(link)
           return
         }
+        // Links that open a file, run a script or go to a named destination are annotations here (PDFium does not report them).
+        const acted = annots.find((a) => a.kind === 'link' && a.linkAction && a.page === i && a.rects.some((q) => pointInRect(q, x, y, 1)))
+        if (acted?.linkAction && ev.detail === 1) {
+          onFollowLink({ rects: acted.rects, action: acted.linkAction })
+          return
+        }
         const hit = [...annots].reverse().find((a) => a.page === i && isMarkup(a.kind) && a.rects.some((q) => pointInRect(q, x, y, 2)))
         onSelectAnnot(hit ? hit.id : null, !!hit && (ev.shiftKey || ev.ctrlKey || ev.metaKey))
         // Double-click a replace-text strikeout to edit the replacement.
@@ -1088,6 +1119,39 @@ export function Viewer({
           return
         }
         el.scrollTop = offsets[index] - PAD / 2
+      },
+      viewport() {
+        const el = scroller.current
+        if (!el) return null
+        const mid = el.getBoundingClientRect()
+        const cy = mid.top + mid.height / 2
+        let best = -1
+        let bestDist = Infinity
+        pageEls.current.forEach((p, i) => {
+          if (!p) return
+          const r = p.getBoundingClientRect()
+          const d = cy < r.top ? r.top - cy : cy > r.bottom ? cy - r.bottom : 0
+          if (d < bestDist) {
+            bestDist = d
+            best = i
+          }
+        })
+        const pageEl = best >= 0 ? pageEls.current[best] : null
+        if (!pageEl) return null
+        const pr = pageEl.getBoundingClientRect()
+        const dims = displayDims(pages[best], rotation)
+        const u0 = Math.max(0, (mid.left - pr.left) / zoom)
+        const v0 = Math.max(0, (mid.top - pr.top) / zoom)
+        const u1 = Math.min(dims.width, (mid.right - pr.left) / zoom)
+        const v1 = Math.min(dims.height, (mid.bottom - pr.top) / zoom)
+        return { page: best, u: u0, v: v0, w: Math.max(0, u1 - u0), h: Math.max(0, v1 - v0) }
+      },
+      panTo(page, u, v) {
+        const el = scroller.current
+        const pageEl = pageEls.current[page]
+        if (!el || !pageEl) return
+        el.scrollLeft = pageEl.offsetLeft + u * zoom - el.clientWidth / 2
+        el.scrollTop = pageEl.offsetTop + v * zoom - el.clientHeight / 2
       },
       viewPoint() {
         const el = scroller.current
@@ -1175,16 +1239,29 @@ export function Viewer({
     [client, offsets, zoom, rotation, pages, ordered, mode.continuous, rowOf, shownRowSafe]
   )
 
+  const onPointerMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!pointerBus) return
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
+      if (!el) return pointerBus.emit(null)
+      const r = el.getBoundingClientRect()
+      pointerBus.emit({ page: Number(el.dataset.page), u: (e.clientX - r.left) / zoom, v: (e.clientY - r.top) / zoom })
+    },
+    [pointerBus, zoom]
+  )
+
   const scrollerEl = (
     <div
       ref={scroller}
-      className={`${tool === 'hand' ? 'scroller hand' : tool === 'zoom' ? 'scroller zoom' : tool === 'eraser' ? 'scroller erase' : tool === 'select' ? 'scroller' : 'scroller place'} colours-${pageColours}`}
+      onMouseMove={onPointerMove}
+      onMouseLeave={() => pointerBus?.emit(null)}
+      className={`${renderStyle?.transparent ? 'tgrid ' : ''}${tool === 'hand' ? 'scroller hand' : tool === 'zoom' ? 'scroller zoom' : tool === 'eraser' ? 'scroller erase' : tool === 'select' ? 'scroller' : 'scroller place'} colours-${pageColours}`}
       onMouseDown={onMouseDown}
       onWheel={onWheel}
     >
       <div className="viewer" style={{ padding: PAD }}>
         {visibleRows.map((ri) => (
-          <div key={ri} className="page-row" style={{ gap: GAP, marginBottom: GAP }}>
+          <div key={ri} className="page-row" style={{ gap, marginBottom: gap }}>
             {rows[ri].map((i) => (
               <PageView
                 key={i}
@@ -1229,6 +1306,8 @@ export function Viewer({
                 guidesInteractive={tool === 'select'}
                 onGuideDown={onGuideDown}
                 epoch={epoch}
+                renderStyle={renderStyle}
+                perf={perf}
                 scroller={scroller}
                 annotProps={{ tool, selectedAnnot, extraSelected, editingAnnot, touchedAnnots, onTouchAnnot, onSelectAnnot, onMoveAnnot, onResizeAnnot, onReshapeAnnot, onEditAnnot, onAnnotText }}
                 selection={selForPage(i)}
@@ -1313,6 +1392,8 @@ interface PageViewProps {
   annots?: Annot[]
   draft?: Annot
   epoch: number
+  renderStyle?: RenderStyle
+  perf?: Performance
   annotProps: {
     tool: Tool
     selectedAnnot: number | null
@@ -1333,7 +1414,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, snapMark, grid, guides, links, onEditText, editExtras, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, onMarkContext, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, renderStyle, perf, measures, measureDraft, measureLabel, snapMark, grid, guides, links, onEditText, editExtras, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, onMarkContext, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const hasForms = !!forms && forms.fields.length > 0
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -1343,14 +1424,18 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
   const cssW = Math.round(size.width * zoom)
   const cssH = Math.round(size.height * zoom)
   const rotated = rotation === 90 || rotation === 270
+  const ahead = perf?.renderAhead ?? 600
+  const tileLimit = perf ? perf.tileMegapixels * 1_000_000 : TILE_THRESHOLD
+  const thin = !!renderStyle?.thin
+  const clear = !!renderStyle?.transparent
 
   useEffect(() => {
     const el = holder.current
     if (!el) return
-    const io = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), { rootMargin: '600px 0px' })
+    const io = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), { rootMargin: `${ahead}px 0px` })
     io.observe(el)
     return () => io.disconnect()
-  }, [])
+  }, [ahead])
 
   // Whole-page rendering, or for very large bitmaps (high zoom) a low-resolution whole page plus a sharp tile
   // covering just the part in view, re-rendered as the view scrolls.
@@ -1358,7 +1443,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
   const [tile, setTile] = useState<{ x: number; y: number; w: number; h: number; scale: number } | null>(null)
   const dpr = window.devicePixelRatio || 1
   const fullScale = zoom * dpr
-  const tiled = Math.floor(size.width) * fullScale * Math.floor(size.height) * fullScale > TILE_THRESHOLD
+  const tiled = Math.floor(size.width) * fullScale * Math.floor(size.height) * fullScale > tileLimit
 
   useEffect(() => {
     if (!visible) {
@@ -1373,7 +1458,8 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
     // Debounce so rapid zoom changes do not queue a render per step.
     const timer = setTimeout(() => {
       client
-        .render(index, scale, { signal: ctrl.signal, forms: !hasForms })
+        .render(index, scale, { signal: ctrl.signal, forms: !hasForms, thin, transparent: clear })
+
         .then((out) => paint(canvas.current, out, ctrl.signal))
         .catch(() => {})
     }, 60)
@@ -1381,7 +1467,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [client, index, zoom, visible, epoch, tiled, fullScale, size.width, size.height, hasForms])
+  }, [client, index, zoom, visible, epoch, tiled, fullScale, size.width, size.height, hasForms, thin, clear])
 
   useEffect(() => {
     setTile(null)
@@ -1420,7 +1506,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
       ctrl?.abort()
       const c = (ctrl = new AbortController())
       client
-        .render(index, fullScale, { signal: c.signal, region, forms: !hasForms })
+        .render(index, fullScale, { signal: c.signal, region, forms: !hasForms, thin, transparent: clear })
         .then((out) => {
           if (paint(tileCanvas.current, out, c.signal)) {
             shown = region
@@ -1440,7 +1526,7 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
       ctrl?.abort()
       sc.removeEventListener('scroll', onScroll)
     }
-  }, [client, index, visible, tiled, fullScale, zoom, rotation, size, scroller, epoch, hasForms])
+  }, [client, index, visible, tiled, fullScale, zoom, rotation, size, scroller, epoch, hasForms, thin, clear])
 
   // Text is also loaded for every page near the view, for the screen-reader text layer.
   useEffect(() => {

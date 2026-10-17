@@ -96,7 +96,7 @@ function child<T extends PDFDict | PDFArray>(ctx: PDFContext, owner: PDFDict, ke
 }
 
 /** The bytes of one indirect object as it is written in an update. */
-function serialise(ref: PDFRef, obj: PDFObject): Uint8Array {
+export function serialise(ref: PDFRef, obj: PDFObject): Uint8Array {
   const head = `${ref.objectNumber} ${ref.generationNumber} obj\n`
   if (obj instanceof PDFRawStream) {
     const dict = obj.dict
@@ -113,14 +113,14 @@ function serialise(ref: PDFRef, obj: PDFObject): Uint8Array {
   return latin1(`${head}${obj.toString()}\nendobj\n`)
 }
 
-function lastStartXref(bytes: Uint8Array): number {
+export function lastStartXref(bytes: Uint8Array): number {
   const tail = new TextDecoder('latin1').decode(bytes.subarray(Math.max(0, bytes.length - 2048)))
   const m = [...tail.matchAll(/startxref\s+(\d+)/g)].pop()
   if (!m) throw new Error('This file has no cross-reference section to build on.')
   return Number(m[1])
 }
 
-const usesXrefStream = (bytes: Uint8Array, at: number): boolean => {
+export const usesXrefStream = (bytes: Uint8Array, at: number): boolean => {
   const head = new TextDecoder('latin1').decode(bytes.subarray(at, at + 20)).trimStart()
   return !head.startsWith('xref')
 }
@@ -463,7 +463,7 @@ function nameParts(n: pkijs.RelativeDistinguishedNames): { commonName?: string; 
   return out
 }
 
-function ensureCrypto(): void {
+export function ensureCrypto(): void {
   if (!pkijs.getCrypto()) pkijs.setEngine('webcrypto', new pkijs.CryptoEngine({ name: 'webcrypto', crypto: globalThis.crypto }))
 }
 

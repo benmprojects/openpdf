@@ -147,12 +147,13 @@ pm.save(sys.argv[2])
   try {
     const win = await app.firstWindow()
     await expect(win.locator('.page')).toHaveCount(1)
-    const z = Number((await win.locator('.zoom-now').textContent())!.replace('%', '')) / 100
     await win.getByRole('tab', { name: 'Edit', exact: true }).click()
     await win.getByRole('button', { name: 'Add image' }).click()
     await expect(win.getByText('Click the page where the picture should go.')).toBeVisible()
     // The notice shifts the page: measure it again.
+    // The zoom too is read here: the page can still be fitting its width when the window first opens.
     const pb2 = (await win.locator('.page').first().boundingBox())!
+    const z = pb2.width / 595
     await win.mouse.click(pb2.x + 300 * z, pb2.y + 300 * z)
     await expect(win.getByText('Image added')).toBeVisible()
     await win.keyboard.press('Control+s')

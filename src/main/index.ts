@@ -1,10 +1,13 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, net, shell } from 'electron'
 import { mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { lookup } from 'node:dns/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { sheetGrid, sheetSlots, type PrintLayout } from '../shared/printLayout'
 import { clampPercent, effectiveDuplex, effectiveScaling, isPaperId, type PrintRunOptions, type Scaling } from '../shared/printPlan'
 import { findFont } from './fonts'
+import { launchBlockReason } from '../shared/launchPath'
+import { isPrivateHost, publicHttpUrl } from '../shared/publicUrl'
 import { editMenuTemplate } from './spellMenu'
 import { copyEncryption, decryptPdf, encryptionInfo, encryptPdf, runQpdf } from './qpdf'
 import { chainStatus, listCertificates, pfxInfo, signCms, type SignSource } from './signing'
@@ -17,6 +20,7 @@ import { listPlaces } from './places'
 import { downloadPdf } from './download'
 import { exportSettings, parseSettingsImport } from './settingsIo'
 import { renameDocument, trashDocument } from './fileOps'
+import { launchWith } from './launch'
 import { userCatalogues } from './locales'
 import { checkForUpdates, downloadUpdate, installUpdate, updateStatus } from './updates'
 import type { Place } from '../shared/places'
@@ -33,6 +37,7 @@ import {
   readRecovery,
   removeRecent,
   saveRecovery,
+  resetSettings,
   updateSettings,
   type Settings
 } from './settings'
@@ -70,7 +75,18 @@ function titleBarColours() {
   return { color: dark ? '#1d1f22' : '#f3f4f7', symbolColor: dark ? '#e6e8eb' : '#1c2027', height: 38 }
 }
 
-function createWindow(): void {
+/** A document handed to a new window: saved ones by name and path, unsaved ones with `recovered` set. */
+interface Handoff {
+  name: string
+  path?: string
+  data: Uint8Array
+  recovered?: boolean
+}
+/** Files waiting for a new window to ask for them, by the id of its web contents. */
+const handoffs = new Map<number, Handoff[]>()
+let firstWebContents = 0
+
+function createWindow(opts: { secondary?: boolean; files?: Handoff[] } = {}): void {
   // Test hook: test windows open off-screen and without taking focus, unless OPENPDF_E2E_SHOW=1.
   const hideForTests = e2e && process.env.OPENPDF_E2E_SHOW !== '1'
   const win = new BrowserWindow({
@@ -115,17 +131,20 @@ function createWindow(): void {
       })
     ).popup({ window: win })
   })
-  mainWindow = win
+  if (!mainWindow) mainWindow = win
+  if (!opts.secondary && !firstWebContents) firstWebContents = win.webContents.id
+  if (opts.files?.length) handoffs.set(win.webContents.id, opts.files)
   const retint = () => {
     if (!win.isDestroyed()) win.setTitleBarOverlay(titleBarColours())
   }
   nativeTheme.on('updated', retint)
   win.on('closed', () => nativeTheme.off('updated', retint))
   win.on('closed', () => {
-    if (mainWindow === win) mainWindow = null
+    if (mainWindow === win) mainWindow = BrowserWindow.getAllWindows().find((w) => w !== win && !w.isDestroyed()) ?? null
   })
-  if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
-  else win.loadFile(join(__dirname, '../renderer/index.html'))
+  // A window opened for a moved tab does not take part in the session list or the crash-recovery offer.
+  if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL + (opts.secondary ? '?secondary=1' : ''))
+  else win.loadFile(join(__dirname, '../renderer/index.html'), opts.secondary ? { query: { secondary: '1' } } : undefined)
   // Shown without activating, so it renders normally but stays off-screen and out of the way.
   if (hideForTests) win.showInactive()
 }
@@ -215,7 +234,7 @@ ipcMain.handle('settings:import', async (e): Promise<{ ok: true; settings: Setti
 
 /** Send by e-mail: Windows gives a program no way to attach a file to a message without native mail code, so the saved file is shown in Explorer, or a message is started without it. */
 ipcMain.handle('mail:send', async (_e, path: unknown, mode: unknown) => {
-  if (typeof path !== 'string' || !path.toLowerCase().endsWith('.pdf')) throw new Error('Only a saved PDF can be sent.')
+  if (typeof path !== 'string' || !/\.(pdf|fdf|xfdf|xml|csv)$/i.test(path)) throw new Error('Only a saved PDF or form data file can be sent.')
   await stat(path)
   if (e2e && process.env.OPENPDF_E2E_MAIL_LOG) {
     await writeFile(process.env.OPENPDF_E2E_MAIL_LOG, `${mode === 'compose' ? 'compose' : 'reveal'}|${path}`)
@@ -550,6 +569,41 @@ ipcMain.handle('link:open', async (e, url: string) => {
   return true
 })
 
+/**
+ * Opens a file named by a link in a document, after asking. A link can name any file, so this refuses programs and
+ * scripts (see launchBlockReason), network shares, web addresses and anything that is not an ordinary file, and
+ * always asks first with Cancel as the default.
+ */
+ipcMain.handle('link:open-file', async (e, name: unknown, docPath: unknown): Promise<{ ok: boolean; reason?: string }> => {
+  if (typeof name !== 'string') return { ok: false, reason: 'The link has no file name.' }
+  const blocked = launchBlockReason(name)
+  if (blocked) return { ok: false, reason: blocked }
+  const base = typeof docPath === 'string' && docPath ? dirname(docPath) : ''
+  const wanted = name.trim().replace(/\//g, '\\')
+  if (!isAbsolute(wanted) && !base) return { ok: false, reason: 'Save the document first: the link names a file relative to it.' }
+  const full = resolve(base || '.', wanted)
+  // The resolved name is checked again: a relative name can lead to a different kind of file.
+  const again = launchBlockReason(full)
+  if (again) return { ok: false, reason: again }
+  let info
+  try {
+    info = await stat(full)
+  } catch {
+    return { ok: false, reason: `The file ${full} was not found.` }
+  }
+  if (!info.isFile()) return { ok: false, reason: 'The link does not name a file.' }
+  if (e2e && process.env.OPENPDF_E2E_LINKS) {
+    await writeFile(process.env.OPENPDF_E2E_LINKS, `file:${full}`)
+    return { ok: true }
+  }
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { type: 'question' as const, buttons: ['Open', 'Cancel'], defaultId: 1, cancelId: 1, message: 'This document wants to open a file. Open it?', detail: full }
+  const res = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+  if (res.response !== 0) return { ok: false }
+  const failure = await shell.openPath(full)
+  return failure ? { ok: false, reason: failure } : { ok: true }
+})
+
 /** Sends form data to a web address (a Submit button in a form), after asking. Only http and https. */
 ipcMain.handle('form:submit', async (e, url: string, contentType: string, body: Uint8Array) => {
   let parsed: URL
@@ -638,6 +692,43 @@ ipcMain.handle('sign:timestamp', async (_e, url: unknown, request: Uint8Array) =
   const res = await net.fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/timestamp-query' }, body: Buffer.from(request), signal: AbortSignal.timeout(20000) })
   if (!res.ok) throw new Error(`The time-stamp server answered ${res.status}.`)
   return new Uint8Array(await res.arrayBuffer())
+})
+/**
+ * Fetches one revocation answer for a signature's long-term validation data: an OCSP response (POST) or a certificate
+ * revocation list (GET). The address comes from the signer's certificate, so it is not trusted: public http and https
+ * hosts only (checked by name and again by what the name resolves to), no redirects, small answers, a short time limit.
+ * Resolves null when nothing usable came back, so a missing answer never stops a document from being signed.
+ */
+ipcMain.handle('sign:fetch-revocation', async (_e, url: unknown, kind: unknown, body: unknown): Promise<Uint8Array | null> => {
+  if (typeof url !== 'string' || (kind !== 'ocsp' && kind !== 'crl')) return null
+  if (e2e && process.env.OPENPDF_E2E_REVOCATION) {
+    try {
+      return new Uint8Array(await readFile(join(process.env.OPENPDF_E2E_REVOCATION, kind === 'ocsp' ? 'ocsp.der' : 'ca.crl')))
+    } catch {
+      return null
+    }
+  }
+  const parsed = publicHttpUrl(url)
+  if (!parsed) return null
+  try {
+    const found = await lookup(parsed.hostname, { all: true })
+    if (!found.length || found.some((a) => isPrivateHost(a.address))) return null
+    const post = kind === 'ocsp'
+    if (post && !(body instanceof Uint8Array) && !Buffer.isBuffer(body)) return null
+    if (post && (body as Uint8Array).length > 4096) return null
+    const res = await net.fetch(parsed.href, {
+      method: post ? 'POST' : 'GET',
+      headers: post ? { 'Content-Type': 'application/ocsp-request', Accept: 'application/ocsp-response' } : { Accept: 'application/pkix-crl' },
+      body: post ? Buffer.from(body as Uint8Array) : undefined,
+      redirect: 'error',
+      signal: AbortSignal.timeout(15000)
+    })
+    if (!res.ok) return null
+    const data = new Uint8Array(await res.arrayBuffer())
+    return data.length > 0 && data.length <= (post ? 1024 * 1024 : 8 * 1024 * 1024) ? data : null
+  } catch {
+    return null
+  }
 })
 ipcMain.handle('sign:chain', (_e, certs: Uint8Array[]) => chainStatus(Array.isArray(certs) ? certs.map((c) => new Uint8Array(c)) : []))
 
@@ -893,9 +984,44 @@ ipcMain.handle('print:run', async (e, id: string, raw: PrintRunOptions) => {
 })
 
 // PDF paths passed on the command line (e.g. file association or `openpdf a.pdf b.pdf`).
-ipcMain.handle('file:initial', async () => {
+ipcMain.handle('file:initial', async (e) => {
+  // A window opened for a moved tab gets that document; only the first window reads the command line.
+  const handed = handoffs.get(e.sender.id)
+  if (handed) {
+    handoffs.delete(e.sender.id)
+    return handed
+  }
+  if (e.sender.id !== firstWebContents) return []
   const files = await Promise.all(pdfArgs(process.argv).map((p) => openForUser(resolve(p)).catch(() => null)))
   return files.filter((f) => f !== null)
+})
+
+/** A document moves to a window of its own (a tab opened in a new window, or dragged out of the strip). */
+ipcMain.handle('window:new', async (_e, file: unknown) => {
+  const f = file as { name?: unknown; path?: unknown; data?: unknown; recovered?: unknown } | null
+  if (!f || typeof f.name !== 'string' || (f.path !== undefined && typeof f.path !== 'string')) throw new Error('Invalid document')
+  // A saved document is read again from its file, so the new window shows what is on disk (the tab's bytes may be older).
+  if (typeof f.path === 'string' && /\.pdf$/i.test(f.path)) createWindow({ secondary: true, files: [await readPdf(f.path)] })
+  else if (f.data instanceof Uint8Array) createWindow({ secondary: true, files: [{ name: f.name, data: f.data, recovered: f.recovered === true }] })
+  else throw new Error('Invalid document')
+})
+
+/** Opens bytes (an attachment, say) with the program chosen in Settings for their extension. Tests record the call instead. */
+ipcMain.handle('app:launch', async (_e, name: unknown, data: unknown) => {
+  if (typeof name !== 'string' || !(data instanceof Uint8Array)) throw new Error('Invalid file')
+  const apps = (await loadSettings()).launchApps
+  return launchWith(apps, name, data, e2e && process.env.OPENPDF_E2E_LAUNCH_LOG ? async (exe, file) => void (await writeFile(process.env.OPENPDF_E2E_LAUNCH_LOG as string, JSON.stringify({ exe, file }))) : undefined)
+})
+
+ipcMain.handle('settings:reset', () => resetSettings())
+
+/** Asks for a program (an .exe) to add under Launch applications; resolves to its path, or null. Tests name it in OPENPDF_E2E_PICK_PROGRAM. */
+ipcMain.handle('app:pick-program', async (e) => {
+  if (e2e && process.env.OPENPDF_E2E_PICK_PROGRAM) return process.env.OPENPDF_E2E_PICK_PROGRAM
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const opts = { properties: ['openFile' as const], filters: [{ name: 'Programs', extensions: ['exe'] }] }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
 })
 
 /** What a command-line batch run is doing, for the hidden window that does the work to ask about. */

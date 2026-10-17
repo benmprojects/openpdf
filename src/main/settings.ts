@@ -3,6 +3,34 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { join } from 'node:path'
 import { isPaperId } from '../shared/printPlan'
 import { cleanMarkPresets, type MarkPreset } from '../shared/markPresets'
+import { cleanSecurityPolicies, type SecurityPolicy } from '../shared/securityPolicy'
+import {
+  cleanFloatPane,
+  cleanIdentity,
+  cleanLaunchApps,
+  cleanPerformance,
+  cleanPresentation,
+  cleanQuickAccess,
+  cleanRibbonLayout,
+  cleanSearchProviders,
+  cleanViewDefaults,
+  defaultFloatPane,
+  defaultIdentity,
+  defaultPerformance,
+  defaultPresentation,
+  defaultRibbonLayout,
+  defaultSearchProviders,
+  defaultViewDefaults,
+  DEFAULT_QUICK_ACCESS,
+  type FloatPane,
+  type Identity,
+  type LaunchApp,
+  type Performance,
+  type PresentationPrefs,
+  type RibbonLayout,
+  type SearchProvider,
+  type ViewDefaults
+} from '../shared/prefs'
 
 export type Theme = 'system' | 'dark' | 'light'
 
@@ -27,6 +55,8 @@ export interface Settings {
   scalePresets: ScalePreset[]
   /** Saved settings for the header and footer, page number, Bates, watermark and crop dialogs. */
   markPresets: MarkPreset[]
+  /** Named security choices (which passwords and permissions to ask for). Never hold a password. */
+  securityPolicies: SecurityPolicy[]
   /** Update checks: off unless turned on, and only to the address given. */
   updates: { check: boolean; feed: string }
   /** `system`, or a language code such as en-AU or fr. */
@@ -38,6 +68,24 @@ export interface Settings {
   restoreSession: boolean
   /** Paths of the saved documents that were open, in tab order, as of the last change. */
   lastSession: string[]
+  /** How documents open: page layout, thin lines and zoom. */
+  viewDefaults: ViewDefaults
+  /** Web searches for selected text. */
+  searchProviders: SearchProvider[]
+  /** Initials, e-mail, organisation and job title (the name is `author`). */
+  identity: Identity
+  /** Programs to open attachments and other files with, by extension. Not carried by Import and Export. */
+  launchApps: LaunchApp[]
+  /** Drawing limits: tile size, how far ahead pages are drawn, pages drawn at once. */
+  performance: Performance
+  /** Commands on the quick-access toolbar, in order. */
+  quickAccess: string[]
+  /** Ribbon tabs and groups shown, and the order of the tabs. */
+  ribbonLayout: RibbonLayout
+  /** Transition, automatic advance and looping in presentation mode. */
+  presentation: PresentationPrefs
+  /** The side pane floating over the page, and where. */
+  floatPane: FloatPane
 }
 
 /** Mirrors ToolStyle in the renderer's annotations.ts. */
@@ -113,13 +161,23 @@ const defaults = (): Settings => ({
   toolPresets: [],
   scalePresets: [],
   markPresets: [],
+  securityPolicies: [],
   updates: { check: false, feed: '' },
   // Tests always start in Australian English, whatever the machine's language.
   language: process.env.OPENPDF_E2E === '1' ? 'en-AU' : 'system',
   printer: '',
   printPaper: 'A4',
   restoreSession: false,
-  lastSession: []
+  lastSession: [],
+  viewDefaults: defaultViewDefaults(),
+  searchProviders: defaultSearchProviders(),
+  identity: defaultIdentity(),
+  launchApps: [],
+  performance: defaultPerformance(),
+  quickAccess: [...DEFAULT_QUICK_ACCESS],
+  ribbonLayout: defaultRibbonLayout(),
+  presentation: defaultPresentation(),
+  floatPane: defaultFloatPane()
 })
 
 let current: Settings | null = null
@@ -171,6 +229,7 @@ function sanitise(raw: Partial<Settings>): Settings {
           }))
       : [],
     markPresets: cleanMarkPresets(raw.markPresets),
+    securityPolicies: cleanSecurityPolicies(raw.securityPolicies),
     updates: {
       check: typeof raw.updates?.check === 'boolean' ? raw.updates.check : false,
       feed: typeof raw.updates?.feed === 'string' ? raw.updates.feed.trim().slice(0, 300) : ''
@@ -179,7 +238,16 @@ function sanitise(raw: Partial<Settings>): Settings {
     printer: typeof raw.printer === 'string' ? raw.printer.slice(0, 300) : d.printer,
     printPaper: isPaperId(raw.printPaper) ? raw.printPaper : d.printPaper,
     restoreSession: typeof raw.restoreSession === 'boolean' ? raw.restoreSession : d.restoreSession,
-    lastSession: Array.isArray(raw.lastSession) ? raw.lastSession.filter((p): p is string => typeof p === 'string' && p.length < 1000 && /\.pdf$/i.test(p)).slice(0, 30) : d.lastSession
+    lastSession: Array.isArray(raw.lastSession) ? raw.lastSession.filter((p): p is string => typeof p === 'string' && p.length < 1000 && /\.pdf$/i.test(p)).slice(0, 30) : d.lastSession,
+    viewDefaults: cleanViewDefaults(raw.viewDefaults),
+    searchProviders: cleanSearchProviders(raw.searchProviders, d.searchProviders),
+    identity: cleanIdentity(raw.identity),
+    launchApps: cleanLaunchApps(raw.launchApps),
+    performance: cleanPerformance(raw.performance),
+    quickAccess: cleanQuickAccess(raw.quickAccess),
+    ribbonLayout: cleanRibbonLayout(raw.ribbonLayout),
+    presentation: cleanPresentation(raw.presentation),
+    floatPane: cleanFloatPane(raw.floatPane)
   }
 }
 
@@ -210,21 +278,34 @@ function applySpelling(s: Settings): void {
 }
 
 /** Writes happen one at a time, each saving the latest settings, so a slow older write cannot overwrite a newer one. */
-let writing: Promise<void> = Promise.resolve()
+let writing: Promise<unknown> = Promise.resolve()
 
-export async function updateSettings(patch: Partial<Settings>): Promise<Settings> {
-  const next = sanitise({ ...(await loadSettings()), ...patch })
-  current = next
-  nativeTheme.themeSource = next.theme
-  applySpelling(next)
-  writing = writing
+export function updateSettings(patch: Partial<Settings>): Promise<Settings> {
+  // One update at a time, in the order they arrive: two quick changes (typing, then ticking a box) must not both
+  // start from the same old settings, or the later one could be overwritten by the earlier.
+  const run = writing
     .catch(() => {})
     .then(async () => {
+      const next = sanitise({ ...(await loadSettings()), ...patch })
+      current = next
+      nativeTheme.themeSource = next.theme
+      applySpelling(next)
       await mkdir(app.getPath('userData'), { recursive: true })
-      await writeJson(file(), current ?? next)
+      await writeJson(file(), next)
+      return next
     })
-  await writing
-  return next
+  writing = run
+  return run
+}
+
+/**
+ * Puts every preference back to its default. The recent files and the last session are not preferences and stay;
+ * the update address stays too, because it is a decision about trust that the user made on this computer.
+ */
+export async function resetSettings(): Promise<Settings> {
+  const s = await loadSettings()
+  const d = defaults()
+  return updateSettings({ ...d, recent: s.recent, lastSession: s.lastSession, updates: s.updates, printer: s.printer })
 }
 
 export async function addRecent(path: string): Promise<void> {

@@ -2,7 +2,8 @@ import type { Settings } from './settings'
 
 /**
  * Settings that move between computers. Left out on purpose: the recent files and last session (they name local
- * files), the printer (it is installed on one machine) and the update address (a trust decision for each machine).
+ * files), the printer (it is installed on one machine), the update address and the launch applications (trust decisions for
+ * each machine: they name programs on this computer).
  */
 export const PORTABLE_KEYS = [
   'theme',
@@ -17,7 +18,15 @@ export const PORTABLE_KEYS = [
   'toolDefaults',
   'toolPresets',
   'scalePresets',
-  'markPresets'
+  'markPresets',
+  'securityPolicies',
+  'viewDefaults',
+  'searchProviders',
+  'identity',
+  'performance',
+  'quickAccess',
+  'ribbonLayout',
+  'presentation'
 ] as const satisfies readonly (keyof Settings)[]
 
 export type PortableKey = (typeof PORTABLE_KEYS)[number]
@@ -47,7 +56,15 @@ const GUARDS: Record<PortableKey, (v: unknown) => boolean> = {
   toolDefaults: isObject,
   toolPresets: Array.isArray,
   scalePresets: Array.isArray,
-  markPresets: Array.isArray
+  securityPolicies: Array.isArray,
+  markPresets: Array.isArray,
+  viewDefaults: isObject,
+  searchProviders: Array.isArray,
+  identity: isObject,
+  performance: isObject,
+  quickAccess: Array.isArray,
+  ribbonLayout: isObject,
+  presentation: isObject
 }
 
 export type ImportCheck = { ok: true; patch: Partial<Settings>; skipped: string[] } | { ok: false; error: string }

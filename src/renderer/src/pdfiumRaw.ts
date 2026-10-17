@@ -8,6 +8,7 @@ import type { PDFDict } from 'pdf-lib'
 import { arrowEnds, blendModeOf, cloudIntensityOf, dashStyle, layerKeyOf, lineEndStyles, measureOf, nameOf, noteIconOf, numbers, linkTargetOf } from './annotExtras'
 import { pathBounds, type AnnotKind, type BlendMode, type MeasureInfo, type NoteIcon, type Pt } from './annotations'
 import type { LineEnd } from './lineEnds'
+import type { LinkAction } from './linkLogic'
 import type { PathGeometry } from './snap'
 import type { Rect } from './textLogic'
 
@@ -174,6 +175,7 @@ export interface ImportedAnnot {
   /** Link target (kind 'link'). */
   linkUri?: string
   linkPage?: number
+  linkAction?: LinkAction
   /** Line and polyline end styles (/LE), cloud intensity (/BE), blend mode (/BM) and the annotation flags (/F). */
   lineStart?: LineEnd
   lineEnd?: LineEnd
@@ -542,6 +544,7 @@ export function readPageAnnots(
           modified: readString(annot, keyM) || undefined,
           linkUri: link?.uri,
           linkPage: link?.page,
+          linkAction: link?.action,
           lineStart,
           lineEnd,
           cloud,
@@ -608,7 +611,8 @@ export function renderRegion(
   w: number,
   h: number,
   /** Draw the form fields too; false when the app shows them as its own controls. */
-  forms = true
+  forms = true,
+  style: { thin?: boolean; transparent?: boolean } = {}
 ): Uint8Array {
   const m = raw(lib)
   const p = pageHandle(page)
@@ -621,9 +625,12 @@ export function renderRegion(
   let bitmap = 0
   try {
     bitmap = m._FPDFBitmap_CreateEx(w, h, 4 /* BGRA */, ptr, w * 4)
-    m._FPDFBitmap_FillRect(bitmap, 0, 0, w, h, 0xffffffff)
+    // A transparent background lets the page's own transparency show over the grid behind it.
+    m._FPDFBitmap_FillRect(bitmap, 0, 0, w, h, style.transparent ? 0x00ffffff : 0xffffffff)
     // ANNOT | LCD_TEXT | REVERSE_BYTE_ORDER (RGBA out). The page is placed so the wanted region lands on the bitmap.
-    const flags = 0x01 | 0x02 | 0x10
+    // Thin lines: NO_SMOOTHPATH (0x4000) draws paths without anti-aliasing, so hairlines stay one solid pixel wide.
+    // LCD text needs an opaque background, so it is left out over a transparent one.
+    const flags = 0x01 | (style.transparent ? 0 : 0x02) | 0x10 | (style.thin ? 0x4000 : 0)
     m._FPDF_RenderPageBitmap(bitmap, p, -x, -y, full.width, full.height, 0, flags)
     if (forms) m._FPDF_FFLDraw(form, bitmap, p, -x, -y, full.width, full.height, 0, flags & ~0x01)
     return m.HEAPU8.slice(ptr, ptr + size)

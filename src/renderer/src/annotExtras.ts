@@ -6,12 +6,15 @@
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib'
 import { BLEND_MODES, isNoteIcon, type BlendMode, type NoteIcon } from './annotations'
 import { isLineEnd, type LineEnd } from './lineEnds'
+import { linkActionOf, type LinkAction } from './linkLogic'
 
 const textOf = (o: unknown) => (o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : undefined)
 
 export interface LinkTarget {
   uri?: string
   page?: number
+  /** Open a file, run a script, or go to a named destination (kept as the name even when it leads to a page here). */
+  action?: LinkAction
 }
 
 /** Targets of the Link annotations seen by annotDicts, resolved against the document's pages. */
@@ -29,10 +32,15 @@ function resolveLink(doc: PDFDocument, d: PDFDict, pageIndex: Map<string, number
     const uri = textOf(a.lookup(PDFName.of('URI')))
     return uri ? { uri } : undefined
   }
-  if (a && s !== 'GoTo') return undefined
+  if (a && s !== 'GoTo') {
+    // Opening a file and running a script are links too: editable, and followed only after asking (or in the sandbox).
+    const action = linkActionOf(a)
+    return action ? { action } : undefined
+  }
   let dest = a ? a.lookup(PDFName.of('D')) : d.lookup(PDFName.of('Dest'))
   // Named destinations: the old /Dests dictionary, or the /Names /Dests name tree (first level of names only).
   const name = dest instanceof PDFName ? dest.decodeText() : textOf(dest)
+  const named: LinkAction | undefined = name !== undefined ? { kind: 'named', name } : undefined
   if (name !== undefined) {
     const dests = doc.catalog.lookupMaybe(PDFName.of('Dests'), PDFDict)
     dest = dests?.lookup(PDFName.of(name))
@@ -53,13 +61,14 @@ function resolveLink(doc: PDFDocument, d: PDFDict, pageIndex: Map<string, number
     }
     if (dest instanceof PDFDict) dest = dest.lookup(PDFName.of('D'))
   }
-  if (!(dest instanceof PDFArray) || !dest.size()) return undefined
+  if (!(dest instanceof PDFArray) || !dest.size()) return named ? { action: named } : undefined
   const ref = dest.get(0)
   if (ref instanceof PDFRef) {
     const page = pageIndex.get(ref.toString())
-    return page === undefined ? undefined : { page }
+    if (page === undefined) return named ? { action: named } : undefined
+    return named ? { page, action: named } : { page }
   }
-  return undefined
+  return named ? { action: named } : undefined
 }
 
 /** Each page's /Annots dictionaries, in /Annots order (the same order as PDFium's annotation indices). */

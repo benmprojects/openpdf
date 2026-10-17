@@ -8,7 +8,7 @@ import variant from '@jitl/quickjs-singlefile-mjs-release-sync'
 import { wrapScript } from './acrobatJs'
 import type { FieldType, FormField, FormValue } from './forms'
 
-export type ScriptKind = 'Format' | 'Keystroke' | 'Validate' | 'Calculate' | 'MouseUp'
+export type ScriptKind = 'Format' | 'Keystroke' | 'Validate' | 'Calculate' | 'MouseUp' | 'Open' | 'WillClose' | 'WillSave' | 'DidSave' | 'WillPrint' | 'DidPrint'
 
 export interface FieldState {
   name: string
@@ -47,11 +47,12 @@ export async function runScript(
   target: string,
   fields: FieldState[],
   event: { value?: string; change?: string; willCommit?: boolean } = {},
-  fileName = ''
+  fileName = '',
+  pageCount = 1
 ): Promise<RunResult> {
   const docJs = fields.find((f) => f.docJs)?.docJs
   const plain = fields.map((f) => ({ name: f.name, type: f.type, value: f.value, readOnly: f.readOnly, numeric: f.numeric }))
-  const input = { fields: plain, target, pages: 1, fileName, event: { name: kind, value: event.value ?? '', change: event.change ?? '', willCommit: event.willCommit ?? true } }
+  const input = { fields: plain, target, pages: pageCount, fileName, event: { name: kind, value: event.value ?? '', change: event.change ?? '', willCommit: event.willCommit ?? true } }
   const source = `var __inputJson = ${JSON.stringify(JSON.stringify(input))};\n${wrapScript(docJs ? `${docJs}
 ${code}` : code)}`
   const qjs = await engine()
@@ -86,6 +87,8 @@ export interface CommitResult {
   /** The value to keep (a keystroke script may change it). */
   value: string
   alerts: string[]
+  /** What the scripts printed with console.println. */
+  log: string[]
   error?: string
 }
 
@@ -93,26 +96,29 @@ export interface CommitResult {
 export async function commitValue(f: FormField, raw: string, states: FieldState[]): Promise<CommitResult> {
   let value = raw
   const alerts: string[] = []
+  const log: string[] = []
   for (const [kind, code] of [['Keystroke', f.scripts?.keystroke], ['Validate', f.scripts?.validate]] as const) {
     if (!code) continue
     const r = await runScript(kind, code, f.name, states, { value, change: kind === 'Keystroke' ? raw : '', willCommit: true })
     alerts.push(...r.alerts)
-    if (r.error) return { ok: true, value, alerts, error: r.error }
-    if (!r.rc) return { ok: false, value, alerts }
+    log.push(...r.log)
+    if (r.error) return { ok: true, value, alerts, log, error: r.error }
+    if (!r.rc) return { ok: false, value, alerts, log }
     value = r.value
   }
-  return { ok: true, value, alerts }
+  return { ok: true, value, alerts, log }
 }
 
 /**
  * Runs every calculate script in order and returns the values that changed. Several passes, because one calculation can
  * feed another; it stops when nothing changes (at most five times).
  */
-export async function recalculate(fields: FormField[], values: ReadonlyMap<string, FormValue>): Promise<{ changed: Map<string, FormValue>; alerts: string[]; error?: string }> {
+export async function recalculate(fields: FormField[], values: ReadonlyMap<string, FormValue>): Promise<{ changed: Map<string, FormValue>; alerts: string[]; log: string[]; error?: string }> {
   const calc = fields.filter((f) => f.scripts?.calculate).sort((a, b) => (a.calcOrder ?? 1e6) - (b.calcOrder ?? 1e6))
   const current = new Map(values)
   const changed = new Map<string, FormValue>()
   const alerts: string[] = []
+  const log: string[] = []
   let error: string | undefined
   for (let pass = 0; pass < 5 && calc.length; pass++) {
     let moved = false
@@ -121,6 +127,7 @@ export async function recalculate(fields: FormField[], values: ReadonlyMap<strin
       const now = current.get(f.name) ?? f.value
       const r = await runScript('Calculate', f.scripts!.calculate!, f.name, states, { value: typeof now === 'string' ? now : '' })
       alerts.push(...r.alerts)
+      log.push(...r.log)
       if (r.error) {
         error = r.error
         continue
@@ -143,5 +150,5 @@ export async function recalculate(fields: FormField[], values: ReadonlyMap<strin
     }
     if (!moved) break
   }
-  return { changed, alerts: [...new Set(alerts)], error }
+  return { changed, alerts: [...new Set(alerts)], log, error }
 }

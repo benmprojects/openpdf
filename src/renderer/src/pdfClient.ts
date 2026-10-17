@@ -23,6 +23,10 @@ export interface RenderOptions {
   region?: { x: number; y: number; w: number; h: number }
   /** Draw the document's form fields (default true). False when the app draws them itself as controls. */
   forms?: boolean
+  /** Thin lines: draw paths without anti-aliasing so hairlines stay a solid pixel wide. */
+  thin?: boolean
+  /** Leave the page background clear (alpha 0) so a transparency grid shows through. */
+  transparent?: boolean
 }
 
 type Distribute<T> = T extends unknown ? Omit<T, 'id'> : never
@@ -35,11 +39,18 @@ interface QueuedRender {
   signal?: AbortSignal
   region?: { x: number; y: number; w: number; h: number }
   forms: boolean
+  thin: boolean
+  transparent: boolean
   resolve: (r: RenderedPage) => void
   reject: (e: Error) => void
 }
 
-const MAX_IN_FLIGHT = 2
+let maxInFlight = 2
+
+/** How many pages the worker is asked to draw at once (Settings > Performance). */
+export function setRenderJobs(n: number): void {
+  maxInFlight = Math.min(4, Math.max(1, Math.round(n)))
+}
 
 /** Talks to the PDFium worker. One client per open document. */
 export class PdfClient {
@@ -85,13 +96,13 @@ export class PdfClient {
   render(page: number, scale: number, opts: RenderOptions = {}): Promise<RenderedPage> {
     return new Promise((resolve, reject) => {
       if (opts.signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
-      this.queue.push({ page, scale, priority: opts.priority ?? 0, seq: this.seq++, signal: opts.signal, region: opts.region, forms: opts.forms !== false, resolve, reject })
+      this.queue.push({ page, scale, priority: opts.priority ?? 0, seq: this.seq++, signal: opts.signal, region: opts.region, forms: opts.forms !== false, thin: !!opts.thin, transparent: !!opts.transparent, resolve, reject })
       this.pump()
     })
   }
 
   private pump(): void {
-    while (this.inFlight < MAX_IN_FLIGHT && this.queue.length) {
+    while (this.inFlight < maxInFlight && this.queue.length) {
       this.queue = this.queue.filter((q) => {
         if (!q.signal?.aborted) return true
         q.reject(new DOMException('Aborted', 'AbortError'))
@@ -107,7 +118,11 @@ export class PdfClient {
       const job = this.queue.splice(bestIdx, 1)[0]
       this.inFlight++
       const r = job.region
-      this.call(r ? { type: 'renderRegion', page: job.page, scale: job.scale, ...r, forms: job.forms } : { type: 'render', page: job.page, scale: job.scale, forms: job.forms })
+      this.call(
+        r
+          ? { type: 'renderRegion', page: job.page, scale: job.scale, ...r, forms: job.forms, thin: job.thin, transparent: job.transparent }
+          : { type: 'render', page: job.page, scale: job.scale, forms: job.forms, thin: job.thin, transparent: job.transparent }
+      )
         .then((res) => {
           if (job.signal?.aborted) job.reject(new DOMException('Aborted', 'AbortError'))
           else if (res.ok && res.type === 'render') job.resolve(res)

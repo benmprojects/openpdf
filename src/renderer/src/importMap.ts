@@ -25,6 +25,7 @@ export function annotsFromImported(page: number, list: ImportedAnnot[], replies:
     fontFamily: r.fontFamily,
     linkUri: r.linkUri,
     linkPage: r.linkPage,
+    linkAction: r.linkAction,
     lineStart: r.lineStart,
     lineEnd: r.lineEnd,
     cloud: r.cloud,

@@ -115,3 +115,38 @@ export function duplicateSpecs(field: FormField, widget: number, targets: { page
     return spec
   })
 }
+
+/**
+ * Moves the selected widgets together by one offset (display space). The group is kept on its page: the offset is cut
+ * back so that no box leaves the page, and a widget on another page than `page` is not moved.
+ */
+export function moveWidgets(boxes: WidgetBox[], selection: WidgetRef[], page: number, dx: number, dy: number, pageSize?: { width: number; height: number }): WidgetBox[] {
+  const keys = new Set(selection.map(widgetKey))
+  const chosen = boxes.filter((b) => keys.has(widgetKey(b)) && b.page === page)
+  if (!chosen.length) return []
+  let mx = dx
+  let my = dy
+  if (pageSize) {
+    const left = Math.min(...chosen.map((b) => b.rect.x))
+    const top = Math.min(...chosen.map((b) => b.rect.y))
+    const right = Math.max(...chosen.map((b) => b.rect.x + b.rect.w))
+    const bottom = Math.max(...chosen.map((b) => b.rect.y + b.rect.h))
+    mx = Math.min(Math.max(mx, -left), pageSize.width - right)
+    my = Math.min(Math.max(my, -top), pageSize.height - bottom)
+  }
+  if (Math.abs(mx) < 0.01 && Math.abs(my) < 0.01) return []
+  return chosen.map((b) => ({ ...b, rect: { ...b.rect, x: b.rect.x + mx, y: b.rect.y + my } }))
+}
+
+/** The widgets on a page that a dragged box touches (a box with no area picks nothing). */
+export function widgetsInRect(boxes: WidgetBox[], page: number, area: Rect): WidgetRef[] {
+  if (area.w < 1 && area.h < 1) return []
+  return boxes
+    .filter((b) => b.page === page && b.rect.x < area.x + area.w && b.rect.x + b.rect.w > area.x && b.rect.y < area.y + area.h && b.rect.y + b.rect.h > area.y)
+    .map(({ name, widget }) => ({ name, widget }))
+}
+
+/** The distinct field names in a selection, in the order first seen. */
+export function selectedFieldNames(selection: WidgetRef[]): string[] {
+  return [...new Set(selection.map((s) => s.name))]
+}

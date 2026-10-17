@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, Lock, Settings2, Trash2 } from 'lucide-react'
+import { CalendarDays, Lock, Settings2, Trash2, X } from 'lucide-react'
 import { dateFormatOf, formatDate, fromInputValue, parseDate, toInputValue } from './dateField'
 import { isImageField } from './formImage'
 import type { FormField, FormValue, Widget } from './forms'
@@ -21,6 +21,8 @@ export interface FormsView {
   onCommit?: (field: FormField, value: FormValue) => void
   /** What fields with a format script show when they are not being edited. */
   display?: ReadonlyMap<string, string>
+  /** The picture in an image field was cleared. */
+  onClearImage?: (field: FormField) => void
 }
 
 export interface DesignProps {
@@ -31,6 +33,10 @@ export interface DesignProps {
   /** Shift or Ctrl and click: add the widget to the selection, or take it out. */
   onToggle?: (s: { name: string; widget: number }) => void
   onPlace: (name: string, widget: number, rect: Rect) => void
+  /** Several selected widgets were dragged together by this offset (display space, points) on a page. */
+  onPlaceMany?: (page: number, dx: number, dy: number) => void
+  /** A box was dragged on the page background: these widgets are now the selection. */
+  onSelectMany?: (refs: { name: string; widget: number }[]) => void
   onEdit: (name: string) => void
   onDelete: (name: string) => void
 }
@@ -61,6 +67,7 @@ export function FormLayer({ page, zoom, rotation, forms, interactive }: { page: 
           onChange={(v) => forms.onChange(field.name, v)}
           onCommit={(v) => forms.onCommit?.(field, v)}
           onButton={() => forms.onButton?.(field)}
+          onClearImage={() => forms.onClearImage?.(field)}
         />
       ))}
     </div>
@@ -76,7 +83,9 @@ interface Item {
 
 /** Design mode: each widget is a box with its name. Drag to move, drag the corner to resize, Delete removes it. */
 function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: number; rotation: Rotation; design: DesignProps }) {
-  const [drag, setDrag] = useState<{ key: string; kind: 'move' | 'resize'; dx: number; dy: number } | null>(null)
+  const [drag, setDrag] = useState<{ key: string; kind: 'move' | 'resize'; dx: number; dy: number; group?: ReadonlySet<string> } | null>(null)
+  /** The box being dragged on the page background to select several widgets (layer pixels). */
+  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const root = useRef<HTMLDivElement>(null)
   const isSel = (it: Item) => design.selected?.name === it.field.name && design.selected.widget === it.index
   const isExtra = (it: Item) => !!design.extra?.has(`${it.field.name}#${it.index}`)
@@ -90,7 +99,10 @@ function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: n
       design.onToggle({ name: it.field.name, widget: it.index })
       return
     }
-    design.onSelect({ name: it.field.name, widget: it.index })
+    // Dragging one of several selected widgets moves them all; anything else selects just this one.
+    const selectedKeys = new Set<string>([...(design.selected ? [`${design.selected.name}#${design.selected.widget}`] : []), ...(design.extra ?? [])])
+    const group = kind === 'move' && selectedKeys.size > 1 && selectedKeys.has(it.key) && design.onPlaceMany ? new Set(items.filter((x) => selectedKeys.has(x.key)).map((x) => x.key)) : undefined
+    if (!group) design.onSelect({ name: it.field.name, widget: it.index })
     const sx = e.clientX
     const sy = e.clientY
     let moved = false
@@ -101,14 +113,19 @@ function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: n
     const move = (ev: MouseEvent) => {
       if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return
       moved = true
-      setDrag({ key: it.key, kind, ...delta(ev) })
+      setDrag({ key: it.key, kind, ...delta(ev), group })
     }
     const up = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
       setDrag(null)
-      if (!moved) return
+      if (!moved) {
+        // A click (no drag) on one of several selected widgets narrows the selection to it.
+        if (group) design.onSelect({ name: it.field.name, widget: it.index })
+        return
+      }
       const { dx, dy } = delta(ev)
+      if (group) return design.onPlaceMany?.(it.widget.page, dx, dy)
       const r = it.widget.rect
       design.onPlace(it.field.name, it.index, kind === 'move' ? { ...r, x: r.x + dx, y: r.y + dy } : { ...r, w: Math.max(6, r.w + dx), h: Math.max(6, r.h + dy) })
     }
@@ -118,6 +135,7 @@ function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: n
 
   const shown = (it: Item): Rect => {
     const r = it.widget.rect
+    if (drag?.group?.has(it.key)) return { ...r, x: r.x + drag.dx, y: r.y + drag.dy }
     if (!drag || drag.key !== it.key) return r
     return drag.kind === 'move' ? { ...r, x: r.x + drag.dx, y: r.y + drag.dy } : { ...r, w: Math.max(6, r.w + drag.dx), h: Math.max(6, r.h + drag.dy) }
   }
@@ -130,7 +148,39 @@ function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: n
       tabIndex={-1}
       onMouseDown={(e) => {
         e.stopPropagation()
-        if (e.target === e.currentTarget) design.onSelect(null)
+        if (e.target !== e.currentTarget) return
+        design.onSelect(null)
+        if (e.button !== 0 || !design.onSelectMany || !items.length) return
+        // Drag a box over the page to select every widget it touches.
+        const sx = e.clientX
+        const sy = e.clientY
+        const ox = e.nativeEvent.offsetX
+        const oy = e.nativeEvent.offsetY
+        let moved = false
+        let last = { x: ox, y: oy }
+        const toLayer = (ev: MouseEvent) => {
+          const d = deltaToPage(rotation, ev.clientX - sx, ev.clientY - sy)
+          return { x: ox + d.dx, y: oy + d.dy }
+        }
+        const box = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) })
+        const move = (ev: MouseEvent) => {
+          if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return
+          moved = true
+          last = toLayer(ev)
+          setMarquee(box({ x: ox, y: oy }, last))
+        }
+        const up = () => {
+          window.removeEventListener('mousemove', move)
+          window.removeEventListener('mouseup', up)
+          setMarquee(null)
+          if (!moved) return
+          const b = box({ x: ox, y: oy }, last)
+          const area = { x: b.x / zoom, y: b.y / zoom, w: b.w / zoom, h: b.h / zoom }
+          const hit = items.filter((it) => it.widget.rect.x < area.x + area.w && it.widget.rect.x + it.widget.rect.w > area.x && it.widget.rect.y < area.y + area.h && it.widget.rect.y + it.widget.rect.h > area.y)
+          design.onSelectMany?.(hit.map((it) => ({ name: it.field.name, widget: it.index })))
+        }
+        window.addEventListener('mousemove', move)
+        window.addEventListener('mouseup', up)
       }}
       onKeyDown={(e) => {
         if (!sel) return
@@ -161,6 +211,7 @@ function DesignLayer({ items, zoom, rotation, design }: { items: Item[]; zoom: n
           </div>
         )
       })}
+      {marquee && <div className="form-marquee" aria-hidden style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />}
       {sel && !drag && (
         <div className="imageedit-bar" style={{ left: sel.widget.rect.x * zoom, top: Math.max(0, sel.widget.rect.y * zoom - 34) }} onMouseDown={(e) => e.stopPropagation()}>
           <button type="button" onClick={() => design.onEdit(sel.field.name)} title="Name, options and other properties (Enter)">
@@ -183,7 +234,8 @@ function Control({
   shown,
   onChange,
   onCommit,
-  onButton
+  onButton,
+  onClearImage
 }: {
   field: FormField
   widget: Widget
@@ -193,6 +245,7 @@ function Control({
   onChange: (v: FormValue) => void
   onCommit: (v: FormValue) => void
   onButton: () => void
+  onClearImage?: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const box = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
@@ -343,7 +396,8 @@ function Control({
     )
   }
   const picture = isImageField(field) && typeof value === 'string' && value.startsWith('data:image/') ? value : null
-  return (
+  const hasPicture = isImageField(field) && typeof value === 'string' && value !== ''
+  const button = (
     <button
       type="button"
       className={`${cls}${isImageField(field) ? ' image-field' : ''}`}
@@ -354,6 +408,23 @@ function Control({
     >
       {picture ? '' : (widget.caption ?? label)}
     </button>
+  )
+  if (!hasPicture || locked || !onClearImage) return button
+  const s = Math.max(14, Math.min(20, r.h * zoom * 0.5))
+  return (
+    <>
+      {button}
+      <button
+        type="button"
+        className="form-clear-btn"
+        aria-label={`Clear the picture in ${label}`}
+        title="Clear the picture"
+        style={{ left: r.x * zoom + r.w * zoom - s - 1, top: r.y * zoom + 1, width: s, height: s }}
+        onClick={onClearImage}
+      >
+        <X size={Math.max(8, s - 6)} aria-hidden />
+      </button>
+    </>
   )
 }
 

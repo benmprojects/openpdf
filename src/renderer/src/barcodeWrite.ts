@@ -3,10 +3,11 @@
  * text field (a barcode field). The drawing is a form XObject authored in display space (points from the top-left of
  * the page as shown) and placed with one matrix, so it stays upright on rotated pages.
  */
-import { PDFBool, PDFDict, PDFDocument, PDFFont, PDFHexString, PDFName, PDFRef, StandardFonts, concatTransformationMatrix, drawObject, popGraphicsState, pushGraphicsState, type PDFField, type PDFPage } from 'pdf-lib'
+import { PDFBool, PDFDict, PDFDocument, PDFFont, PDFHexString, PDFName, PDFRef, PDFString, StandardFonts, concatTransformationMatrix, drawObject, popGraphicsState, pushGraphicsState, type PDFField, type PDFPage } from 'pdf-lib'
 import { barcodeShape, quietZone, type BarcodeKind, type BarcodeShape, type QrEcc } from './barcode'
 import { frameFor } from './annotWrite'
 import { matMul, type Matrix6 } from './content'
+import { webAddress } from './linkLogic'
 import type { Rect } from './textLogic'
 
 export interface BarcodeStyle {
@@ -27,6 +28,8 @@ export interface BarcodePlacement {
   rect: Rect
   style: BarcodeStyle
   as: 'content' | 'annotation'
+  /** Also put a link over the barcode when its text is a web address (the link opens that address). */
+  link?: boolean
 }
 
 const n = (v: number) => (Math.round(v * 1000) / 1000).toString()
@@ -122,6 +125,18 @@ export async function placeBarcodes(bytes: Uint8Array, items: BarcodePlacement[]
         AP: { N: form }
       } as never)
       page.node.addAnnot(ctx.register(annot))
+    }
+    const uri = it.link ? webAddress(it.style.text) : null
+    if (uri) {
+      // A link over the symbol, so that following it opens the address the barcode holds.
+      const at = (px: number, py: number): [number, number] => [f[0] * px + f[2] * py + f[4], f[1] * px + f[3] * py + f[5]]
+      const corners = [at(x, y), at(x + w, y), at(x, y + h), at(x + w, y + h)]
+      const xs = corners.map((c) => c[0])
+      const ys = corners.map((c) => c[1])
+      const linkRef = doc.context.register(
+        doc.context.obj({ Type: 'Annot', Subtype: 'Link', Rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], Border: [0, 0, 0], F: 4, A: { S: 'URI', URI: PDFString.of(uri) }, P: page.ref } as never)
+      )
+      page.node.addAnnot(linkRef)
     }
   }
   return doc.save({ updateFieldAppearances: false })

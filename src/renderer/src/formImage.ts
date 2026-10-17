@@ -2,7 +2,7 @@
  * Image fields: a push button that lets whoever fills the form choose a picture, which then fills the button (the
  * way Acrobat's "Image Field" works, through the standard buttonImportIcon call).
  */
-import { PDFDict, PDFDocument, PDFName, PDFRawStream, type PDFButton } from 'pdf-lib'
+import { PDFDict, PDFDocument, PDFName, PDFRawStream, StandardFonts, type PDFButton } from 'pdf-lib'
 import { frameFor } from './annotWrite'
 import type { ButtonAction, FormField } from './forms'
 import type { Matrix6 } from './content'
@@ -72,4 +72,11 @@ export async function setButtonImage(doc: PDFDocument, field: PDFButton, image: 
     const form = doc.context.register(doc.context.stream(ops, { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, bw, bh], Matrix: [f[0], f[1], f[2], f[3], 0, 0], Resources: { XObject: { Img: pic.ref } } } as never))
     w.dict.set(PDFName.of('AP'), doc.context.obj({ N: form }))
   }
+}
+
+/** Takes the picture out of an image field: the stored copy and the appearance go, and the caption is drawn again. */
+export async function clearButtonImage(doc: PDFDocument, field: PDFButton): Promise<void> {
+  field.acroField.dict.delete(PDFName.of('OpenPDFImage'))
+  for (const w of field.acroField.getWidgets()) w.dict.delete(PDFName.of('AP'))
+  field.updateAppearances(await doc.embedFont(StandardFonts.Helvetica))
 }

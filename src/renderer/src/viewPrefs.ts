@@ -3,7 +3,7 @@
  * (ISO 32000-1 7.7.2 and 12.2). Reading and writing only touch the entries this module knows; any other
  * viewer preference, and an open action that is not a plain "go to a page" one, are left as they are.
  */
-import { PDFArray, PDFBool, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRef, type PDFObject } from 'pdf-lib'
+import { PDFArray, PDFBool, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString, type PDFObject } from 'pdf-lib'
 import { PAPER_SIZES, type PaperId } from '../../shared/printPlan'
 
 export type PageLayoutName = 'Default' | 'SinglePage' | 'OneColumn' | 'TwoColumnLeft' | 'TwoColumnRight' | 'TwoPageLeft' | 'TwoPageRight'
@@ -33,6 +33,10 @@ export interface ViewPrefs {
   pickTray: boolean
   /** Inclusive page ranges from 1; empty means all pages. */
   printRange: [number, number][]
+  /** The catalogue's /URI /Base: the address that relative web links in the document are taken from ('' for none). */
+  baseUrl: string
+  /** The Info dictionary's /Trapped: whether the file has been prepared for printing with trapping. */
+  trapped: 'Unknown' | 'True' | 'False'
 }
 
 export const DEFAULT_VIEW_PREFS: ViewPrefs = {
@@ -51,7 +55,9 @@ export const DEFAULT_VIEW_PREFS: ViewPrefs = {
   duplex: 'Default',
   numCopies: 1,
   pickTray: false,
-  printRange: []
+  printRange: [],
+  baseUrl: '',
+  trapped: 'Unknown'
 }
 
 const LAYOUTS: PageLayoutName[] = ['SinglePage', 'OneColumn', 'TwoColumnLeft', 'TwoColumnRight', 'TwoPageLeft', 'TwoPageRight']
@@ -118,6 +124,12 @@ export async function readViewPrefs(bytes: Uint8Array): Promise<ViewPrefs> {
   if (dup && (DUPLEXES as string[]).includes(dup)) out.duplex = dup as DuplexName
   const copies = numOf(prefs?.lookup(PDFName.of('NumCopies')))
   if (copies !== null && copies >= 1 && copies <= 5) out.numCopies = Math.round(copies)
+  const base = doc.catalog.lookupMaybe(PDFName.of('URI'), PDFDict)?.lookup(PDFName.of('Base'))
+  if (base instanceof PDFString || base instanceof PDFHexString) out.baseUrl = base.decodeText()
+  const info = doc.context.lookupMaybe(doc.context.trailerInfo.Info, PDFDict)
+  const trapped = info?.lookup(PDFName.of('Trapped'))
+  const trappedName = trapped instanceof PDFName ? trapped.decodeText() : trapped instanceof PDFBool ? (trapped.asBoolean() ? 'True' : 'False') : ''
+  if (trappedName === 'True' || trappedName === 'False') out.trapped = trappedName
   const range = prefs?.lookup(PDFName.of('PrintPageRange'))
   if (range instanceof PDFArray) {
     for (let i = 0; i + 1 < range.size(); i += 2) {
@@ -143,7 +155,10 @@ export async function writeViewPrefs(bytes: Uint8Array, v: ViewPrefs): Promise<U
     const pages = doc.getPages()
     const index = Math.min(pages.length, Math.max(1, Math.round(v.openPage))) - 1
     const m = v.magnification
-    if (m.kind === 'default' && index === 0) cat.delete(PDFName.of('OpenAction'))
+    // A script chained after the open action (see docActions.ts) stays.
+    const old = cat.lookup(PDFName.of('OpenAction'))
+    const next = old instanceof PDFDict ? old.get(PDFName.of('Next')) : undefined
+    if (m.kind === 'default' && index === 0 && !next) cat.delete(PDFName.of('OpenAction'))
     else if (pages.length) {
       const ref = pages[index].ref
       const dest =
@@ -154,9 +169,31 @@ export async function writeViewPrefs(bytes: Uint8Array, v: ViewPrefs): Promise<U
             : m.kind === 'fit-visible'
               ? ctx.obj([ref, PDFName.of('FitBH'), null])
               : ctx.obj([ref, PDFName.of('XYZ'), null, null, m.kind === 'zoom' ? Math.max(0.01, m.percent / 100) : null])
-      cat.set(PDFName.of('OpenAction'), dest)
+      cat.set(PDFName.of('OpenAction'), next ? ctx.obj({ S: 'GoTo', D: dest, Next: next }) : dest)
     }
   }
+
+  const base = v.baseUrl.trim()
+  if (base) {
+    const uri = cat.lookupMaybe(PDFName.of('URI'), PDFDict) ?? (ctx.obj({}) as PDFDict)
+    uri.set(PDFName.of('Base'), PDFString.of(base))
+    cat.set(PDFName.of('URI'), uri)
+  } else {
+    const uri = cat.lookupMaybe(PDFName.of('URI'), PDFDict)
+    uri?.delete(PDFName.of('Base'))
+    if (uri && !uri.keys().length) cat.delete(PDFName.of('URI'))
+  }
+  const info = ctx.lookupMaybe(ctx.trailerInfo.Info, PDFDict)
+  if (v.trapped !== 'Unknown') {
+    const target =
+      info ??
+      (() => {
+        const ref = ctx.register(ctx.obj({}))
+        ctx.trailerInfo.Info = ref
+        return ctx.lookup(ref, PDFDict)
+      })()
+    target.set(PDFName.of('Trapped'), PDFName.of(v.trapped))
+  } else info?.delete(PDFName.of('Trapped'))
 
   const existing = cat.lookup(PDFName.of('ViewerPreferences'))
   const prefs = existing instanceof PDFDict ? existing : ctx.obj({})

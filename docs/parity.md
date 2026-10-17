@@ -21,11 +21,11 @@ Prepared 17/10/2026 for planning the remaining work.
 | Export | Images, Word, Excel, PowerPoint | DONE | Images (PNG/JPEG/TIFF), text, HTML, Word, Excel, PowerPoint: see the Convert tab section. All are best effort (tables and columns are found from positions, not from tags) |
 | Share / e-mail | Send by e-mail, SharePoint check in/out | PARTIAL | Send by e-mail saves the document, shows it in Explorer to drag into a message, or starts a message without it; it cannot attach the file (needs native mail code, MAPI). Missing: check in/out (Out of scope, see section 10) |
 | Revert | Discard unsaved changes | DONE | File tab > Revert to saved: asks, then reloads the whole document from its file (page edits, annotation edits, form values, security changes dropped). Undo/redo and recovery snapshots exist; the Forms tab Revert is for form values only |
-| Document properties | Description, Fonts, Security, Initial View, Custom, Advanced, Actions, JavaScript | PARTIAL | Done: Description/XMP, Security dialog, Initial View, Fonts, Custom keys, Print presets. Missing: base URL, a Trapped control (the key is only listed as a standard key), document actions and JavaScript from this dialog (Forms > Document JavaScript covers scripts) |
+| Document properties | Description, Fonts, Security, Initial View, Custom, Advanced, Actions, JavaScript | DONE | Description/XMP, Security dialog, Initial View, Fonts, Custom keys, Print presets, Base URL and Trapped (Description tab). Document actions and JavaScript are edited under Forms (Document actions, Document JavaScript) rather than in this dialog |
 | Rename / move to trash | Rename or delete the file | DONE | File tab > Rename (same folder, never over another file, name checked) and Move to Recycle Bin (asks first; uses the Windows Recycle Bin, never a permanent delete; the document stays open as an unsaved one) |
 | Close / Exit | One or all | DONE | Unsaved prompt |
-| Preferences | About 35 categories | PARTIAL | Settings has theme, language, author, recovery interval, spellcheck, restore session, updates, tool defaults and presets. Missing: most categories (page display defaults, colour management, file associations UI, identity, launch applications, search providers, performance) |
-| Manage settings | Export, import, reset | PARTIAL | Settings export and import (JSON) are done. Missing: a reset-to-defaults command |
+| Preferences | About 35 categories | PARTIAL | Settings has General (theme, language, author, recovery interval, spellcheck, restore session), Page display defaults, Search providers, Identity, Launch applications (by file type, for attachments), Performance (tile size, draw-ahead, pages drawn at once), Move settings and Updates and privacy, with a category strip at the top; tool defaults and presets live in the Properties panel. Missing: colour management and a file associations page |
+| Manage settings | Export, import, reset | DONE | Export and import (JSON; the launch applications, recent files and update address are left out on purpose) and Reset settings to defaults (asks first; keeps the recent files, the last session and the update address) |
 | Customise UI | Custom ribbons/toolbars, panes, RTL | MISSING | Fixed ribbon; panes dock left or right only; no quick-access toolbar, custom ribbons or tab groups. Settings export and import exist but do not cover layout |
 
 ## 2. Home tab (tools, view, quick comment, links)
@@ -43,7 +43,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | Edit objects | Move/resize/rotate/delete content, images | PARTIAL | See section 6 |
 | Add text / image / QR code | Insert new content | DONE | Typewriter, text box, Add image (PNG/JPEG). Edit tab, Images, QR / barcode: QR code (levels L to Q to H), Code 128, Code 39, EAN-13 as vector drawings, from typed text or a template ({filename}, {page}, {pages}, {date}), to the current page, every page or a range, in a corner or the centre, as page content or as a Stamp annotation, with a live preview. Encoders written for OpenPDF and checked against reference encoders. Not offered: DataMatrix and other symbologies |
 | Quick comment tools | Typewriter, note, highlight, arrow, underline, rectangle, stamp | DONE | In Comment/Draw tabs |
-| Links | Add/edit links, links from URLs, remove web-links, links from barcodes, batch link | PARTIAL | Link tool (web address or page) with edit and Open on click. Missing: auto-link URLs in text, remove all web links, links from barcodes, link actions other than URL/page (open file, run JavaScript, named destination), batch link |
+| Links | Add/edit links, links from URLs, remove web-links, links from barcodes, batch link | DONE | Link tool (web address, page, named destination, file or JavaScript) with edit and follow on click; Comment tab: Auto-link (web addresses in the text become links, places that already have one are skipped), Link text (a link on every match of a word, phrase or pattern, to one target), Remove web links, and a barcode can also be a link when its text is a web address. A file link asks first and never opens a program or script (exe, bat, cmd, js, vbs, ps1, lnk, macro-enabled Office files and so on), a network share or a web address; a script link runs in the sandbox |
 | Sign Document | From Home | DONE | Under Sign tab |
 
 ## 3. Comment tab
@@ -145,14 +145,14 @@ Prepared 17/10/2026 for planning the remaining work.
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
 | Field types | Text, button, check, radio, list, dropdown, date, barcode, image, digital signature | DONE | Text, check, radio, dropdown, list, button, signature, plus Date (a text field with an AFDate format; filling shows a calendar button and date picker, and the date is written in the field's own form), Image (a button that lets the filler choose a PNG or JPEG, kept in the file and shown again when it is opened) and Barcode (a text field drawn as QR, Code 128, Code 39 or EAN-13; other viewers may show plain text). Not offered: DataMatrix; an image already saved in an image field cannot be cleared |
-| Select / edit fields | Move, resize, properties, align, duplicate | PARTIAL | Select, move, resize, delete, properties; multi-select with align, spread, same size; duplicate to other pages. Missing: moving a selection as a group, properties of several fields at once, drag-select |
+| Select / edit fields | Move, resize, properties, align, duplicate | DONE | Select, move, resize, delete, properties; drag a box on the page to select several; the selection moves as a group; Selection properties changes required, read only, text size, alignment and tooltip of all of them at once; align, spread, same size; duplicate to other pages; the picture in an image field can be cleared |
 | Highlight fields, grid, fields pane | | DONE | Highlight; the grid for form design uses View grid; Fields pane (Forms, Fields pane, or the Fields tab of the side pane) lists every field with its type and page, with find, select (goes to the page), rename, delete, properties and tab order Earlier and Later |
 | Reset, import, export | FDF, XFDF, CSV, XML | DONE | |
-| Email form data |  | MISSING | Submit sends to http or https only; no command to e-mail the form data |
+| Email form data |  | DONE | Forms, E-mail data: saves the values as XFDF, FDF, XML or CSV, then the Send by e-mail dialog shows the file in Explorer (or starts a message without it): the file cannot be attached from here |
 | Populate from CSV (Plus-style) | Merge many records | DONE | Forms, Populate from CSV: the first row names fields, every other row makes one filled PDF (calculations and formats applied, optional flatten), named from a chosen column (unsafe characters replaced, repeats numbered) and written to a folder without overwriting. Import still fills one record |
 | Form identification (Plus) | Detect fields | DONE | Detect fields with confirm |
 | Calculations, validation, formats | | DONE | Presets and custom scripts in a sandbox |
-| JavaScript console, document JS, document actions |  | PARTIAL | Field scripts, a document-level JavaScript editor, Submit and Reset buttons. Missing: console window, open/close/save/print document actions |
+| JavaScript console, document JS, document actions |  | DONE | Field scripts, a document-level JavaScript editor, Submit and Reset buttons, Document actions (open, before and after save, before and after print, close: written to /OpenAction and /AA, run in the sandbox) and a read-only Script console that shows console.println output, messages and errors from every script. The close action runs from the Close button of the File tab, not when a tab is closed with its own cross |
 | Tab order | | DONE | |
 | Fill and save | Fill, flatten | DONE | |
 | Placeholder tool (Plus) | Mark where signature/initials go | DONE | Sign tab: Sign here and Initial here markers (stamps) |
@@ -163,11 +163,11 @@ Prepared 17/10/2026 for planning the remaining work.
 |---|---|---|---|
 | Sign document, place signature | Certificate store or file, appearance | DONE | Visible and invisible, time-stamp |
 | Certify | Visible or invisible, change permissions | DONE | |
-| Timestamp, validate all, clear all |  | PARTIAL | Time-stamp, validate in the Signatures panel. Missing: clear all signatures, LTV |
+| Timestamp, validate all, clear all |  | DONE | Time-stamp, validate in the Signatures panel, Clear all signatures (asks first; the signature objects leave the file; optionally keeps how they looked as page content) and long-term validation (certificates with the OCSP and CRL answers of the signing chain stored in /DSS as an incremental update, so the signature stays valid; answers that cannot be fetched are skipped). The time-stamp authority's own chain is not added |
 | Signature and initials library | Drawn/typed/image signatures stored, place and apply all | DONE | Sign tab: draw (smoothed), type (installed script fonts) or import a picture (white to transparent, trim); library with rename/delete; click or drag to place; several pages; flatten. Visual only, not a certificate signature |
-| Mark for redaction, apply, find and redact | Patterns: phone, card numbers, SSN, emails, dates | PARTIAL | Area, selected text, search results and Find and redact with pattern presets; mark properties (fill, overlay text, repeat, outline). Missing: apply to a selected mark only |
+| Mark for redaction, apply, find and redact | Patterns: phone, card numbers, SSN, emails, dates | DONE | Area, selected text, search results and Find and redact with pattern presets; mark properties (fill, overlay text, repeat, outline); right-click a mark, Apply this mark redacts that one only |
 | Sanitise | Metadata etc. | DONE | |
-| Security properties, policies | Passwords, permissions, certificate security | PARTIAL | AES-256/128 passwords and permissions. Missing: saved security policies, certificate encryption |
+| Security properties, policies | Passwords, permissions, certificate security | PARTIAL | AES-256/128 passwords and permissions; saved security policies (File, Security: named sets of choices kept in Settings and in settings export, never a password). Missing: certificate encryption (no permissive library was added; needs the public-key security handler) |
 | DocuSign |  | MISSING | Out of scope: a proprietary online service |
 
 ## 10. Share, Review, Accessibility, Bookmarks, Portfolio tabs
@@ -189,16 +189,16 @@ Prepared 17/10/2026 for planning the remaining work.
 | Feature | PDF-XChange options (brief) | OpenPDF status | Gaps |
 |---|---|---|---|
 | Go to / previous view / next view | Page box, first/last | DONE | |
-| Zoom tools | Continuous zoom, zoom in/out tool, loupe, pan and zoom | PARTIAL | Marquee zoom, presets, loupe. Missing: pan and zoom window |
-| Page display | Single, continuous, two pages, cover, gaps, right-to-left | PARTIAL | Single, continuous, two pages, cover. Missing: gaps toggle, right-to-left |
-| Show rulers, grid, guides, snapping, page size/position |  | PARTIAL | Rulers, grid, guides, snap done. Missing: page size and position display, transparency grid |
-| Thin lines | Hairline rendering | MISSING | No hairline (thin line) rendering option |
-| Split views | Two views of one document | PARTIAL | Horizontal or vertical split with own scroll and zoom; the second view is read-only with no overlays. No four-way split |
-| Page transitions, autoscroll |  | MISSING | Presentation mode (F5) exists; no page transitions or autoscroll |
-| Document tabs | Group, new window, close options | PARTIAL | Tabs exist. Missing: tab groups, open in new window, drag a tab out |
+| Zoom tools | Continuous zoom, zoom in/out tool, loupe, pan and zoom | DONE | Marquee zoom, presets, loupe, and a Pan and zoom window (View > Zoom): an overview of the page with a rectangle to drag, a click to centre, and a corner handle to zoom. Continuous zoom is not offered |
+| Page display | Single, continuous, two pages, cover, gaps, right-to-left | DONE | Single, continuous, two pages, cover, Page gaps on or off and Right to left (the pairs in a row run the other way); defaults for new documents are in Settings > Page display |
+| Show rulers, grid, guides, snapping, page size/position |  | DONE | Rulers, grid, guides, snap, a page size and pointer position readout in the status bar (View > Display > Page info, in the ruler unit, with the paper name) and a transparency grid (page drawn with a clear background over a chequered one) |
+| Thin lines | Hairline rendering | DONE | View > Display > Thin lines draws paths without smoothing (PDFium's no-smooth-path flag), so hairlines are one hard pixel wide; per document, with a default in Settings. Text and pictures are drawn as before |
+| Split views | Two views of one document | DONE | Horizontal, vertical or four-way split; each extra view has its own scrolling and zoom, shows the comments (and measurements) and the form fields over the page, read-only. The extra views show a single column |
+| Page transitions, autoscroll |  | PARTIAL | In presentation mode: fade, push, wipe or zoom between pages, or the transitions and display times set in the file (/Trans and /Dur); automatic advance every 2 to 60 seconds with Loop and A to pause; choices are remembered. Not done: writing transitions into a file |
+| Document tabs | Group, new window, close options | DONE | Tab groups (name, colour, collapse, ungroup, close group), drag to reorder, Open in new window and drag a tab out of the window (saved documents; unsaved work stays put), and Close other tabs, to the right and all. Groups are not kept between runs |
 | Full screen, reading mode, night/high-contrast colours | | DONE | |
 | Read aloud | | DONE | |
-| Toolbars / ribbon layout |  | MISSING | See File: customise UI |
+| Toolbars / ribbon layout |  | DONE | A quick-access toolbar on the ribbon's tab row (21 commands to choose from and order) and Customise the ribbon (tabs shown and their order, groups shown per tab, reset); saved in Settings and moved by Export settings. Free placement of single buttons is not offered |
 
 ## 12. Side panes and dialogs
 
@@ -211,21 +211,21 @@ Prepared 17/10/2026 for planning the remaining work.
 | Layers pane |  | PARTIAL | See section 6 |
 | Signatures pane | List, validate, properties | DONE | Panel in a dialog rather than a docked pane |
 | Fields pane | List of fields | DONE | Side pane, Fields tab |
-| Destinations pane | Named destinations | MISSING | No named destinations pane |
+| Destinations pane | Named destinations | DONE | Side pane: list, go to, add at the current view, move to the current view, rename (F2) and delete; written as one sorted name tree (old /Dests dictionaries are merged in); warns how many bookmarks and links still use a renamed or deleted name |
 | Stamps pane and palette |  | DONE | Picker pop-up, or docked as a pane (Comment tab > Dock palette), with categories, search and recent stamps |
 | Comment styles pane |  | PARTIAL | Styles are managed inside the Properties panel, with import and export of style sets. Missing: a separate docked pane (left out on purpose) |
 | Content pane |  | PARTIAL | See section 6 |
 | Tags pane |  | MISSING | No tags pane |
-| Document recovery pane |  | PARTIAL | Recovery snapshots are offered on restart; no pane |
+| Document recovery pane |  | DONE | Side pane listing the snapshots with their time, a first-page preview, Open (as an unsaved document) and Delete; also offered on restart as before |
 | Properties pane | Object properties | DONE | Properties panel (Ctrl+E) |
 | Search results pane | | DONE | |
-| Floating / detachable panes |  | MISSING | Docked left or right only |
+| Floating / detachable panes |  | PARTIAL | The side pane can float over the page (View > Panes > Float): moved by its title bar, resized by its corner, saved, and docked again. It stays inside the window: it cannot be taken out into a window of its own |
 
 ## Counts
 
 Counted from the tables above (one count per row), re-audited against the source on 17/10/2026.
 
-DONE 75, PARTIAL 58, MISSING 18 (total 151 rows). Several rows repeat a feature seen from two tabs (Compare, Flatten, bookmarks), so treat the counts as a guide.
+DONE 92, PARTIAL 47, MISSING 12 (total 151 rows; Batch 3 and Batch 4 both counted). Several rows repeat a feature seen from two tabs (Compare, Flatten, bookmarks), so treat the counts as a guide.
 
 ## Top 25 gaps for a construction-company office user
 
@@ -252,12 +252,12 @@ Ordered by everyday usefulness (marking up drawings, measuring, stamping, combin
 17. Auto-generate bookmarks from headings or a table of contents, bookmark colour/bold/italic, import/export; set destination from the current view.
 18. Delete blank pages automatically, delete extracted pages from the source, swap pages, insert pages from clipboard or scanner.
 19. Add QR codes and barcodes to pages and as form fields. (Done: QR code, Code 128, Code 39 and EAN-13 as page content or stamp annotations, and as a barcode form field; DataMatrix is not offered.)
-20. Fillable form gaps: date-picker and image fields, align/distribute/duplicate of fields, fields pane, document and open/save/print scripts, submit action, populate from CSV for many records. (Done except the open/close/save/print document scripts and a console window.)
+20. Fillable form gaps: date-picker and image fields, align/distribute/duplicate of fields, fields pane, document and open/save/print scripts, submit action, populate from CSV for many records. (Done, including the open/close/save/print document actions and a script console.)
 21. Scanner support: named presets, duplex (where reported), paper size, deskew, speck removal, auto-crop and insert scanned pages into the open document are done (WIA only, hardware-untested). Still missing: TWAIN (needs a native module or helper, not feasible here) and OCR table detection.
-22. Document properties: Initial View (open on page, zoom, pane), fonts list, custom properties, Advanced print presets. DONE, except trapped, base URL and document actions.
+22. Document properties: Initial View (open on page, zoom, pane), fonts list, custom properties, Advanced print presets. DONE (base URL and Trapped included; document actions are under Forms).
 23. Edit-content depth: image rotate, flip, crop, opacity and export, shape recolour, line width and opacity, text format changes (font, size, colour, bold, italic) and a Content pane are DONE. Still open: text and objects inside form XObjects, draggable crop handles, text spacing and alignment.
 24. Open from URL and restore previous session are DONE; send by e-mail is PARTIAL (the file cannot be attached without native mail code). Later, direct SharePoint and OneDrive connection with check in/out (needs app registrations).
-25. Workspace comfort: Fit Visible zoom, loupe, split view and settings import/export are DONE. Still open: pan and zoom window, tab groups/new window, right-to-left and gaps options, quick-access toolbar and customisable ribbon (left for later on purpose).
+25. Workspace comfort: Fit Visible zoom, loupe, split view and settings import/export are DONE, and so are (Batch 4) the pan and zoom window, tab groups and new window, right-to-left and gaps options, the quick-access toolbar and the customisable ribbon.
 
 ## Remaining work batches
 
@@ -277,6 +277,8 @@ Brief: Print: choice of layers (visible, all, as in the file) and a text-preserv
 
 ### Batch 3: Forms, links, signing and security
 
+Status 17/10/2026: done (move a selection as a group, drag-select, properties of several fields, clear an image field, E-mail data, document actions and the script console, file, JavaScript and named-destination links, auto-link, link text, remove web links, links from barcodes, Clear all signatures, long-term validation data, applying one redaction mark (the right-click dialog), saved security policies, base URL and Trapped). Left out: certificate encryption (no permissive library added). Not yet hand-tested: long-term validation against a real certificate authority (the OCSP and CRL requests are built and the stored data is checked with generated certificates, but no live responder was asked), opening a linked file in its real program, and the on-screen look of the new dialogs.
+
 Code areas: `FormLayer.tsx`, `FieldDialog.tsx`, `FieldsPane.tsx`, `formArrange.ts`, `formSubmit.ts`, `docScripts.ts`, `acrobatJs.ts`, `SignDialog.tsx`, `SignaturesDialog.tsx`, `sign.ts`, `SecurityDialog.tsx`, `redact.ts`, `RedactDialogs.tsx`, `DocPropsDialog.tsx`, `docExtras.ts`. Rows: Select / edit fields, Email form data, JavaScript console and document actions, Links, Timestamp / clear all, Redaction, Security policies, Document properties.
 Brief: Forms: move a multi-selection as a group, edit common properties of several fields at once, drag-select on the page, clear an image field. Add Email form data (build FDF or XFDF, save it, start a message the way `FileDialogs.tsx` does for Send by e-mail). Add document actions (open, close, before and after save, before and after print) stored in the catalogue /AA and /OpenAction and run in the existing script sandbox, plus a read-only console window showing `console.println` output. Links: add file, JavaScript and named-destination actions to the Link dialog, auto-link URLs found in text, remove all web links, a batch link command and links from barcodes. Signing: a Clear all signatures command (with confirmation, flattening the visible appearance only if asked) and long-term validation data (embed the OCSP and CRL responses found in the chain) when the time-stamp is added. Redaction: apply a single selected mark, not only all marks. Security: saved security policies (named permission and password-method sets stored in Settings; never store the passwords) and certificate encryption only if a permissive library is found. Properties: base URL and a Trapped control.
 
@@ -284,6 +286,8 @@ Brief: Forms: move a multi-selection as a group, edit common properties of sever
 
 Code areas: `Viewer.tsx`, `pageLayout.ts`, `DocView.tsx` (View tab, panes), `App.tsx` (tabs), `Sidebar.tsx`, `Presentation.tsx`, `AppDialogs.tsx`, `src/main/settings.ts`, `src/main/index.ts` (windows). Rows: Page display, rulers and grid, Thin lines, Zoom tools, Split views, Page transitions, Document tabs, Toolbars, Preferences, Manage settings, Floating panes, Document recovery pane, Destinations pane.
 Brief: View: right-to-left page order and a gaps toggle in `pageLayout.ts`; a page size and position readout in the status bar; a transparency grid; a thin-lines option (render with PDFium's no-smooth-path flag or a minimum stroke width, as a per-view setting); a pan and zoom window (small overview with a draggable viewport rectangle); page transitions and autoscroll in presentation mode. Make the second split view able to show comment overlays and fields, and add a four-way split if the cost is modest. Tabs: groups, open in a new window (a second BrowserWindow handed the file) and drag a tab out. Shell: a customisable quick-access toolbar first (saved in Settings), then ribbon customisation, floating or detachable panes, a Destinations pane (list, add, rename, go to, delete named destinations) and a Recovery pane listing snapshots with preview. Preferences: add the missing categories in this order: page display defaults, search providers, identity, launch applications, performance; add Reset settings to defaults.
+
+Status 17/10/2026: implemented (see the rows above). Left over: a floating pane cannot leave the window (a second window would need its own copy of the document state), tab groups are not kept between runs, the extra split views show one column and no search highlights, transitions cannot be written into a file, the ribbon customisation cannot move single buttons, and the launch applications are used for attachments only. Not yet hand-tested on a real machine: window sizes under Windows display scaling other than 100 % and 125 %, dragging a tab out with a real mouse, and the title-bar buttons next to the quick-access toolbar.
 
 ### Batch 5: Convert, content editing and optimisation
 

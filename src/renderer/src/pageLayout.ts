@@ -10,11 +10,15 @@ export interface PageMode {
   continuous: boolean
   /** With two-up: the first page sits alone, like a book's cover, so even pages fall on the left. */
   cover: boolean
+  /** Right-to-left reading order: with two pages in a row the first page sits on the right. */
+  rtl?: boolean
+  /** Space between pages (and rows); false packs the pages edge to edge. Unset means true. */
+  gaps?: boolean
 }
 
-export const DEFAULT_MODE: PageMode = { twoUp: false, continuous: true, cover: false }
+export const DEFAULT_MODE: PageMode = { twoUp: false, continuous: true, cover: false, rtl: false, gaps: true }
 
-/** Page indices per row. */
+/** Page indices per row, left to right as they appear on screen. */
 export function layoutRows(count: number, mode: PageMode): number[][] {
   const rows: number[][] = []
   if (!mode.twoUp) {
@@ -27,7 +31,26 @@ export function layoutRows(count: number, mode: PageMode): number[][] {
     i = 1
   }
   for (; i < count; i += 2) rows.push(i + 1 < count ? [i, i + 1] : [i])
-  return rows
+  // Right to left: each pair is shown the other way round (a lone page keeps its row to itself).
+  return mode.rtl ? rows.map((r) => [...r].reverse()) : rows
+}
+
+/** Pixels between pages for a mode, given the usual gap. */
+export function gapFor(mode: PageMode, gap: number): number {
+  return mode.gaps === false ? 0 : gap
+}
+
+/** Reads a saved page-display default (from the settings file) into a PageMode, ignoring anything odd. */
+export function modeFromDefaults(raw: unknown): PageMode {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const flag = (k: string, d: boolean) => (typeof r[k] === 'boolean' ? (r[k] as boolean) : d)
+  return {
+    twoUp: flag('twoUp', DEFAULT_MODE.twoUp),
+    continuous: flag('continuous', DEFAULT_MODE.continuous),
+    cover: flag('cover', DEFAULT_MODE.cover),
+    rtl: flag('rtl', false),
+    gaps: flag('gaps', true)
+  }
 }
 
 /** Row index of each page. */

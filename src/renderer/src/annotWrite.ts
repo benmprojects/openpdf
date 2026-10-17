@@ -45,6 +45,7 @@ import {
 import { pathEnds, type EndPath } from './lineEnds'
 import { layerKeyOf } from './annotExtras'
 import { angleAt, measureCaption, measureLabelAt } from './measure'
+import { linkActionObject } from './linkLogic'
 import { pdfUnit } from './measureScale'
 import { SIGNATURE_SUBJECT } from './signatureLogic'
 import { normAngle, rotatedBounds } from './stampLogic'
@@ -430,7 +431,8 @@ export async function writeAnnotations(
       // No appearance: viewers show links as the page content under them.
       // A link already in the file keeps its own border and flags; only the box and target change.
       dict = a.origin ? { Rect: bounds, M: now } : { Type: 'Annot', Subtype: 'Link', Rect: bounds, Border: [0, 0, 0], F: 4, M: now }
-      if (a.linkPage !== undefined && a.linkPage >= 0 && a.linkPage < pdf.getPageCount()) dict.Dest = [pdf.getPage(a.linkPage).ref, 'XYZ', null, null, null]
+      if (a.linkAction) dict.A = linkActionObject(a.linkAction) as never
+      else if (a.linkPage !== undefined && a.linkPage >= 0 && a.linkPage < pdf.getPageCount()) dict.Dest = [pdf.getPage(a.linkPage).ref, 'XYZ', null, null, null]
       else dict.A = { S: 'URI', URI: PDFString.of(a.linkUri ?? '') }
     } else if (a.kind === 'foreign') {
       if (!a.origin) continue

@@ -62,6 +62,8 @@ type Dialog =
 
 interface Deps {
   author: string
+  /** Settings > Identity, for the {initials}, {organisation}, {email} and {title} fields. */
+  identity?: { initials?: string; organisation?: string; email?: string; title?: string }
   pages: { width: number; height: number }[]
   ctx: DocContext
   commit: (fn: (list: Annot[]) => Annot[]) => void
@@ -143,7 +145,7 @@ export function useStamps(deps: Deps) {
       let base: { w: number; h: number }
       if (def.kind === 'image' && def.image) base = imageStampSize(def.image.width, def.image.height)
       else {
-        const ex = expandStamp(def, { author: d.author, now, number: numbers[i] })
+        const ex = expandStamp(def, { author: d.author, identity: d.identity, now, number: numbers[i] })
         title = ex.title || def.name
         info = ex.detail || (datedRef.current ? stampInfoLine(d.author, now) : '')
         base = stampSize(title, info || undefined)

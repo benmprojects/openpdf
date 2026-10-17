@@ -1,5 +1,6 @@
 import type { Rect } from './textLogic'
 import type { LineEnd } from './lineEnds'
+import type { LinkAction } from './linkLogic'
 
 export type { LineEnd } from './lineEnds'
 
@@ -208,6 +209,8 @@ export interface Annot {
   linkUri?: string
   /** Link target: a zero-based page. */
   linkPage?: number
+  /** Link target: open a file, run a script or go to a named destination. Takes the place of the other targets when set. */
+  linkAction?: LinkAction
   /** The subject (/Subj): a short heading for the comment. */
   subject?: string
   /** The layer the annotation belongs to (/OC): the layer's key as `readLayers` gives it. Unset: on every layer. */
@@ -301,7 +304,7 @@ export function formatWhen(iso?: string): string {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.angle ?? 0, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.file ? a.file.name : null, a.lineStart ?? null, a.lineEnd ?? null, a.cloud ?? null, a.blend ?? null, a.flags ?? null, a.subject ?? null, a.layer ?? null, a.icon ?? null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.angle ?? 0, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.linkAction ?? null, a.file ? a.file.name : null, a.lineStart ?? null, a.lineEnd ?? null, a.cloud ?? null, a.blend ?? null, a.flags ?? null, a.subject ?? null, a.layer ?? null, a.icon ?? null])
 }
 
 export const NOTE_SIZE = 22

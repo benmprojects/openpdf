@@ -21,6 +21,8 @@ export interface OpenedFile {
   name: string
   path: string
   data: Uint8Array
+  /** Set for a document handed to a new window that has no file yet (it opens as unsaved). */
+  recovered?: boolean
 }
 
 const api = {
@@ -66,6 +68,8 @@ const api = {
   pickFile: (filter?: { name: string; ext: string[] }): Promise<{ name: string; data: Uint8Array } | null> => ipcRenderer.invoke('file:pick-one', filter),
   /** Asks, then opens a web or mail link in the default app. Resolves false if refused or cancelled. */
   openLink: (url: string): Promise<boolean> => ipcRenderer.invoke('link:open', url),
+  /** Asks, then opens a file named by a link (never a program or script). `docPath` is the saved document, for relative names. */
+  openLinkedFile: (name: string, docPath: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke('link:open-file', name, docPath),
   /** Sends form data to a web address after asking; resolves what happened. */
   submitForm: (url: string, contentType: string, body: Uint8Array): Promise<{ sent: boolean; status: number; note: string }> => ipcRenderer.invoke('form:submit', url, contentType, body),
   setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
@@ -143,6 +147,8 @@ const api = {
   signCms: (data: Uint8Array, source: SignSource): Promise<Uint8Array> => ipcRenderer.invoke('sign:cms', data, source),
   /** Sends a time-stamp request (DER) to a time-stamping server and returns its response. */
   timestamp: (url: string, request: Uint8Array): Promise<Uint8Array> => ipcRenderer.invoke('sign:timestamp', url, request),
+  /** One OCSP or CRL answer named by a signer's certificate (public web hosts only); null when none came back. */
+  fetchRevocation: (url: string, kind: 'ocsp' | 'crl', body?: Uint8Array): Promise<Uint8Array | null> => ipcRenderer.invoke('sign:fetch-revocation', url, kind, body),
   /** Whether Windows trusts the first of these DER certificates. */
   chainStatus: (certs: Uint8Array[]): Promise<ChainResult> => ipcRenderer.invoke('sign:chain', certs),
   /** `plain` encrypted like `original` (same passwords and permissions). */
@@ -180,6 +186,14 @@ const api = {
   importSettings: (): Promise<{ ok: true; settings: Settings; applied: number; skipped: string[] } | { ok: false; error: string } | null> => ipcRenderer.invoke('settings:import'),
   getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   setSettings: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:set', patch),
+  /** Puts every preference back to its default (recent files, the last session and the update address stay). */
+  resetSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:reset'),
+  /** Opens a saved document, or the bytes of an unsaved one, in a window of its own. */
+  openInNewWindow: (file: { name: string; path?: string; data?: Uint8Array; recovered?: boolean }): Promise<void> => ipcRenderer.invoke('window:new', file),
+  /** Asks for a program (.exe) to use under Settings > Launch applications; null if cancelled. */
+  pickProgram: (): Promise<string | null> => ipcRenderer.invoke('app:pick-program'),
+  /** Opens bytes (an attachment) with the program chosen in Settings for the file's extension. */
+  launchFile: (name: string, data: Uint8Array): Promise<{ ok: true; app: string; file: string } | { ok: false; error: string }> => ipcRenderer.invoke('app:launch', name, data),
   recoverySave: (key: string, meta: { name: string; path?: string }, data: Uint8Array): Promise<void> =>
     ipcRenderer.invoke('recovery:save', key, meta, data),
   recoveryClear: (key: string): Promise<void> => ipcRenderer.invoke('recovery:clear', key),

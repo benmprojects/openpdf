@@ -1,8 +1,25 @@
 import type { LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
+import { groupKey } from '../../shared/prefs'
+
+/**
+ * What the ribbon is showing: the tab, the groups the user left out, and (filled in as groups render) the names of the
+ * groups the tab has, so the customise dialog can list them even when they are hidden.
+ */
+export interface RibbonView {
+  tab: string
+  hidden: ReadonlySet<string>
+  seen: Set<string>
+}
+export const RibbonViewContext = createContext<RibbonView | null>(null)
 
 /** A labelled cluster of ribbon controls. */
 export function RGroup({ label, children }: { label: string; children: ReactNode }) {
+  const view = useContext(RibbonViewContext)
+  if (view) {
+    view.seen.add(label)
+    if (view.hidden.has(groupKey(view.tab, label))) return null
+  }
   return (
     <div className="rgroup" role="group" aria-label={label}>
       <div className="rgroup-items">{children}</div>

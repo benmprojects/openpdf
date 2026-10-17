@@ -14,6 +14,8 @@ export interface SignRequest {
   certify?: CertifyLevel
   /** A time-stamping server to ask for a trusted time, or empty for none. */
   tsaUrl: string
+  /** Keep the certificates and their revocation answers (OCSP, CRL) in the file, so the signature can be checked long after. */
+  ltv: boolean
 }
 
 const TSA_PRESETS: [string, string][] = [
@@ -47,6 +49,7 @@ export function SignDialog({ canCertify, onSign, onClose }: { canCertify: boolea
   const [visible, setVisible] = useState(false)
   const [certify, setCertify] = useState<'' | '1' | '2' | '3'>('')
   const [tsa, setTsa] = useState(savedTsa)
+  const [ltv, setLtv] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -89,6 +92,7 @@ export function SignDialog({ canCertify, onSign, onClose }: { canCertify: boolea
     }
     onSign({
       tsaUrl: tsa.trim(),
+      ltv,
       source: pfx && pfxCert ? { kind: 'pfx', data: pfx.data, password: pfxPw } : { kind: 'store', thumbprint: chosen.thumbprint },
       signerName: chosen.name || chosen.subject,
       reason,
@@ -199,6 +203,10 @@ export function SignDialog({ canCertify, onSign, onClose }: { canCertify: boolea
             <input aria-label="Time-stamp server address" value={tsa} onChange={(e) => setTsa(e.target.value)} />
           </label>
         )}
+        <label className="inline">
+          <input type="checkbox" checked={ltv} onChange={(e) => setLtv(e.target.checked)} /> {t('Keep the proof that the certificates were valid in the file (long-term validation)')}
+        </label>
+        {ltv && <p className="muted small">{t('This asks the certificate authorities named in the certificates (over the internet) whether each certificate was valid, and stores their answers with the certificates. It works best with a time-stamp. Answers that cannot be fetched are skipped, and the document is signed either way.')}</p>}
         {canCertify && (
           <label className="props-row">
             <span>Certify</span>

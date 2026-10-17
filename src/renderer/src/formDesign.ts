@@ -351,6 +351,20 @@ export async function updateField(bytes: Uint8Array, name: string, patch: FieldP
   return doc.save({ updateFieldAppearances: false })
 }
 
+/** The properties that make sense for several fields at once. */
+export type CommonPatch = Pick<FieldPatch, 'required' | 'readOnly' | 'fontSize' | 'align' | 'tooltip'>
+
+/** Applies the same changes to several fields. Properties a kind of field does not have are skipped for it. */
+export async function updateFields(bytes: Uint8Array, names: string[], patch: CommonPatch): Promise<Uint8Array> {
+  const keys = (Object.keys(patch) as (keyof CommonPatch)[]).filter((k) => patch[k] !== undefined)
+  if (!names.length || !keys.length) return bytes
+  const clean: CommonPatch = {}
+  for (const k of keys) (clean as Record<string, unknown>)[k] = patch[k]
+  let cur = bytes
+  for (const n of names) cur = await updateField(cur, n, clean)
+  return cur
+}
+
 /** Removes a field and all its widgets. */
 export async function deleteField(bytes: Uint8Array, name: string): Promise<Uint8Array> {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })

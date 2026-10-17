@@ -134,9 +134,11 @@ export interface FieldContext {
   now: Date
   /** What {number} stands for, already formatted; {number} is left as it is when absent. */
   number?: string
+  /** From Settings > Identity: what {initials}, {organisation}, {email} and {title} stand for (an empty one gives nothing). */
+  identity?: { initials?: string; organisation?: string; email?: string; title?: string }
 }
 
-const FIELD = /\{(date|time|author|number)(?::([^}]*))?\}/gi
+const FIELD = /\{(date|time|author|number|initials|organisation|email|title)(?::([^}]*))?\}/gi
 
 /** Fills in {date}, {date:FORMAT}, {time}, {time:FORMAT}, {author} and {number}. Unknown {words} are kept. */
 export function expandFields(template: string, ctx: FieldContext): string {
@@ -148,6 +150,11 @@ export function expandFields(template: string, ctx: FieldContext): string {
         return formatTime(arg || TIME_FORMATS[0], ctx.now)
       case 'author':
         return ctx.author
+      case 'initials':
+      case 'organisation':
+      case 'email':
+      case 'title':
+        return ctx.identity?.[name.toLowerCase() as 'initials' | 'organisation' | 'email' | 'title'] ?? ''
       default:
         return ctx.number ?? whole
     }

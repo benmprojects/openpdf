@@ -20,6 +20,7 @@ import {
   setPageAnnotRect,
   setPageAnnotHidden,
   renderRegion,
+  scaledPageSize,
   type AttachmentInfo,
   type ImportedAnnot,
   type ImportedReply,
@@ -32,8 +33,8 @@ import {
 
 export type WorkerRequest =
   | { id: number; type: 'load'; data: Uint8Array; password?: string }
-  | { id: number; type: 'render'; page: number; scale: number; forms?: boolean }
-  | { id: number; type: 'renderRegion'; page: number; scale: number; x: number; y: number; w: number; h: number; forms?: boolean }
+  | { id: number; type: 'render'; page: number; scale: number; forms?: boolean; thin?: boolean; transparent?: boolean }
+  | { id: number; type: 'renderRegion'; page: number; scale: number; x: number; y: number; w: number; h: number; forms?: boolean; thin?: boolean; transparent?: boolean }
   | { id: number; type: 'outline' }
   | { id: number; type: 'text'; page: number }
   | { id: number; type: 'annots' }
@@ -116,6 +117,15 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (msg.type === 'render') {
       if (!doc) throw new Error('No document loaded')
       const page = doc.getPage(msg.page)
+      if (msg.thin || msg.transparent) {
+        // The wrapper cannot take render flags or a clear background: draw the whole page as one region ourselves.
+        if (!library) throw new Error('No document loaded')
+        const full = scaledPageSize(page, msg.scale)
+        const data = renderRegion(library, doc, page, msg.scale, 0, 0, full.width, full.height, msg.forms !== false, { thin: msg.thin, transparent: msg.transparent })
+        page.close()
+        reply({ id: msg.id, ok: true, type: 'render', width: full.width, height: full.height, data }, [data.buffer as ArrayBuffer])
+        return
+      }
       const out = await page.render({ scale: msg.scale, render: 'bitmap', renderFormFields: msg.forms !== false })
       page.close()
       reply({ id: msg.id, ok: true, type: 'render', width: out.width, height: out.height, data: out.data }, [
@@ -124,7 +134,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     } else if (msg.type === 'renderRegion') {
       if (!doc || !library) throw new Error('No document loaded')
       const page = doc.getPage(msg.page)
-      const data = renderRegion(library, doc, page, msg.scale, msg.x, msg.y, msg.w, msg.h, msg.forms !== false)
+      const data = renderRegion(library, doc, page, msg.scale, msg.x, msg.y, msg.w, msg.h, msg.forms !== false, { thin: msg.thin, transparent: msg.transparent })
       page.close()
       reply({ id: msg.id, ok: true, type: 'render', width: msg.w, height: msg.h, data }, [data.buffer as ArrayBuffer])
     } else if (msg.type === 'attachments') {

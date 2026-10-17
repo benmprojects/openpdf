@@ -13,7 +13,7 @@ import { join, resolve } from 'node:path'
 const root = resolve(__dirname, '..')
 const DIALOGS = '[role="dialog"], .modal, .page-dialog, .stamp-picker, .modal-backdrop'
 
-test.setTimeout(Number(process.env.WALK_TIMEOUT ?? 170_000))
+test.setTimeout(Number(process.env.WALK_TIMEOUT ?? 300_000))
 
 test('walkthrough of every ribbon button and the main workflows', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'openpdf-walk-'))

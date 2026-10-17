@@ -11,7 +11,7 @@ export interface DocScript {
 
 const textOf = (o: unknown): string => (o instanceof PDFString || o instanceof PDFHexString ? o.decodeText() : '')
 
-function codeOf(action: PDFDict | undefined): string | undefined {
+export function codeOf(action: PDFDict | undefined): string | undefined {
   if (!action || action.lookupMaybe(PDFName.of('S'), PDFName)?.decodeText() !== 'JavaScript') return undefined
   const js = action.lookup(PDFName.of('JS'))
   return js instanceof PDFRawStream ? new TextDecoder().decode(decodePDFRawStream(js).decode()) : textOf(js)

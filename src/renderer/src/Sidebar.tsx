@@ -1,4 +1,6 @@
 import {
+  Anchor,
+  ArchiveRestore,
   ArrowDown,
   ArrowUp,
   Bold,
@@ -22,6 +24,7 @@ import {
   Wand2,
   Eye,
   EyeOff,
+  ExternalLink,
   File as FileIcon,
   IndentDecrease,
   IndentIncrease,
@@ -29,6 +32,7 @@ import {
   LayoutGrid,
   MessageSquare,
   Paperclip,
+  PanelLeft,
   PencilLine,
   Ruler,
   Clapperboard,
@@ -48,11 +52,12 @@ import type { MediaItem } from './media'
 import { msg, t } from './i18n'
 import { getPageClip, onPageClip } from './pageClipboard'
 import { useEffect, useRef, useState } from 'react'
+import type { FloatPane } from '../../shared/prefs'
 import type { AttachmentInfo, PageSize, PdfClient } from './pdfClient'
 
 const THUMB_WIDTH = 132
 
-export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media' | 'measure' | 'fields' | 'content'
+export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media' | 'measure' | 'fields' | 'content' | 'destinations' | 'recovery'
 
 /** A page edit requested from the thumbnail pane. `move.before` is an index in the current order (page count = end). */
 export type PageOp =
@@ -103,6 +108,17 @@ interface Props {
   fields?: React.ReactNode
   /** The Content pane (objects on the page), rendered by the document view. */
   content?: React.ReactNode
+  /** When set, the pane floats over the page at this place and size (pixels) instead of docking. */
+  float?: FloatPane
+  /** The floating pane was moved or resized; `done` is true when the movement ended (so it can be saved). */
+  onFloatBox?: (box: FloatPane, done: boolean) => void
+  /** Put the floating pane back in its dock. */
+  onDock?: () => void
+  /** Open an attached file with the program chosen in Settings > Launch applications (only for extensions that have one). */
+  attachmentOpen?: { can: (name: string) => boolean; run: (a: AttachmentInfo) => void }
+  /** The Destinations and Recovery panes, rendered by the document view. */
+  destinations?: React.ReactNode
+  recovery?: React.ReactNode
   /** Saves an edited bookmark tree. */
   onEditOutline?: (tree: BookmarkNode[]) => void
   /** Makes bookmarks from headings or pages (opens a dialog). */
@@ -126,13 +142,71 @@ const TABS: [SidebarTab, string, LucideIcon][] = [
   ['media', 'Media', Clapperboard],
   ['measure', msg('Measurements'), Ruler],
   ['fields', msg('Fields'), TextCursorInput],
-  ['content', msg('Content'), Shapes]
+  ['content', msg('Content'), Shapes],
+  ['destinations', msg('Destinations'), Anchor],
+  ['recovery', msg('Recovery'), ArchiveRestore]
 ]
 
 export function Sidebar(props: Props) {
-  const { client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy, width, onSelectionChange, labels } = props
+  const { client, pages, outline, tab, onTab, currentPage, onGoTo, onPageOp, busy, width, onSelectionChange, labels, float, onFloatBox, onDock } = props
+  const box = useRef<HTMLElement>(null)
+  const floatRef = useRef(float)
+  floatRef.current = float
+  // A floating pane that is resized with its corner handle reports the new size once it settles.
+  useEffect(() => {
+    const el = box.current
+    if (!float || !el || !onFloatBox) return
+    let timer = 0
+    const ro = new ResizeObserver(() => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        const f = floatRef.current
+        if (!f) return
+        const w = Math.round(el.offsetWidth)
+        const h = Math.round(el.offsetHeight)
+        if (Math.abs(w - f.w) > 1 || Math.abs(h - f.h) > 1) onFloatBox({ ...f, w, h }, true)
+      }, 250)
+    })
+    ro.observe(el)
+    return () => {
+      window.clearTimeout(timer)
+      ro.disconnect()
+    }
+  }, [!!float]) // eslint-disable-line react-hooks/exhaustive-deps
+  const startDrag = (e: React.PointerEvent) => {
+    const f = floatRef.current
+    if (!f || !onFloatBox || (e.target as HTMLElement).closest('button')) return
+    e.preventDefault()
+    const from = { x: e.clientX, y: e.clientY, box: f }
+    const clamp = (x: number, y: number) => ({ x: Math.round(Math.min(Math.max(0, x), window.innerWidth - 80)), y: Math.round(Math.min(Math.max(0, y), window.innerHeight - 60)) })
+    let last = f
+    const move = (ev: PointerEvent) => {
+      last = { ...from.box, ...clamp(from.box.x + ev.clientX - from.x, from.box.y + ev.clientY - from.y) }
+      onFloatBox(last, false)
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      onFloatBox(last, true)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
   return (
-    <aside className="sidebar" style={{ width }}>
+    <aside
+      ref={box}
+      className={float ? 'sidebar floating' : 'sidebar'}
+      aria-label={float ? t('Side pane (floating)') : undefined}
+      style={float ? { left: Math.min(float.x, Math.max(0, window.innerWidth - 80)), top: Math.min(float.y, Math.max(0, window.innerHeight - 60)), width: float.w, height: float.h } : { width }}
+    >
+      {float && (
+        <div className="float-head" onPointerDown={startDrag}>
+          <span>{t('Side pane')}</span>
+          <button type="button" className="icon-btn" aria-label={t('Dock the side pane')} title={t('Dock the side pane')} onClick={onDock}>
+            <PanelLeft size={14} strokeWidth={1.8} aria-hidden />
+          </button>
+        </div>
+      )}
       <div className="sidebar-tabs" role="tablist" aria-label="Side pane">
         {TABS.map(([k, label, Icon]) => (
           <button key={k} role="tab" aria-selected={tab === k} aria-label={t(label)} title={t(label)} onClick={() => onTab(k)}>
@@ -162,8 +236,12 @@ export function Sidebar(props: Props) {
         props.fields
       ) : tab === 'content' ? (
         props.content
+      ) : tab === 'destinations' ? (
+        props.destinations
+      ) : tab === 'recovery' ? (
+        props.recovery
       ) : tab === 'attachments' ? (
-        <Attachments list={props.attachments} onSave={props.onSaveAttachment} onAdd={props.onAddAttachments} onRemove={props.onRemoveAttachment} onSaveAll={props.onSaveAllAttachments} />
+        <Attachments list={props.attachments} onSave={props.onSaveAttachment} onAdd={props.onAddAttachments} onRemove={props.onRemoveAttachment} onSaveAll={props.onSaveAllAttachments} openWith={props.attachmentOpen} />
       ) : tab === 'media' ? (
         <MediaList list={props.media} onGoTo={onGoTo} onPlay={props.onPlayMedia} onSave={props.onSaveMedia} />
       ) : (
@@ -180,7 +258,7 @@ function formatSize(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-function Attachments({ list, onSave, onAdd, onRemove, onSaveAll }: { list: AttachmentInfo[]; onSave: (a: AttachmentInfo) => void; onAdd?: () => void; onRemove?: (a: AttachmentInfo) => void; onSaveAll?: () => void }) {
+function Attachments({ list, onSave, onAdd, onRemove, onSaveAll, openWith }: { list: AttachmentInfo[]; onSave: (a: AttachmentInfo) => void; onAdd?: () => void; onRemove?: (a: AttachmentInfo) => void; onSaveAll?: () => void; openWith?: { can: (name: string) => boolean; run: (a: AttachmentInfo) => void } }) {
   return (
     <>
       {(onAdd || onSaveAll) && (
@@ -213,6 +291,11 @@ function Attachments({ list, onSave, onAdd, onRemove, onSaveAll }: { list: Attac
                   {a.page !== undefined ? ` · on page ${a.page + 1}` : ''}
                 </span>
               </span>
+              {openWith?.can(a.name) && (
+                <button className="icon-btn" onClick={() => openWith.run(a)} aria-label={t('Open {name} with its program', { name: a.name })} title={t('Open with the program set in Settings')}>
+                  <ExternalLink size={16} strokeWidth={1.8} aria-hidden />
+                </button>
+              )}
               <button className="icon-btn" onClick={() => onSave(a)} aria-label={`Save ${a.name}`} title="Save a copy of this file…">
                 <Download size={16} strokeWidth={1.8} aria-hidden />
               </button>
