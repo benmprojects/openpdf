@@ -1,5 +1,5 @@
 import { expandPattern, pagesWord, type PageDialogResult } from './pageDialogLogic'
-import { deletePages, duplicatePages, extractPages, insertBlankPages, insertMany, movePages, replacePages, rotatePages, splitByRanges, splitBySize } from './pageOps'
+import { deletePages, duplicatePages, extractPages, insertBlankPages, insertMany, movePages, replacePages, rotatePages, splitByRanges, splitBySize, swapPages } from './pageOps'
 
 /** Runs a dialog's result that changes this document's bytes. Extract, split and a merge into a new document are not these. */
 export async function applyDialogEdit(r: PageDialogResult, base: Uint8Array): Promise<Uint8Array> {
@@ -19,6 +19,8 @@ export async function applyDialogEdit(r: PageDialogResult, base: Uint8Array): Pr
       return duplicatePages(base, r.pages, r.copies, r.where)
     case 'move':
       return movePages(base, r.pages, r.before)
+    case 'swap':
+      return swapPages(base, r.a, r.b)
     default:
       throw new Error('This operation does not change the document.')
   }
@@ -41,6 +43,8 @@ export function doneMessage(r: PageDialogResult): string | undefined {
       return `Added ${pagesWord(r.pages.length * r.copies)}`
     case 'move':
       return `Moved ${pagesWord(r.pages.length)}`
+    case 'swap':
+      return `Swapped page ${r.a + 1} and page ${r.b + 1}`
     default:
       return undefined
   }

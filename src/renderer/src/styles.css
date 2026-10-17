@@ -3398,3 +3398,48 @@ button:not([class]):disabled {
   white-space: nowrap;
   max-width: 100%;
 }
+
+/* Find bar extras, results list */
+.searchbar {
+  flex-wrap: wrap;
+}
+.find-results {
+  max-height: 34vh;
+  overflow: auto;
+  padding: 4px 12px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.find-group h3 {
+  margin: 6px 0 2px;
+  font-size: 12px;
+}
+.find-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.find-hit {
+  display: block;
+  width: 100%;
+  padding: 3px 6px;
+  overflow: hidden;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.find-hit:hover,
+.find-hit.on {
+  background: var(--panel-3);
+}
+.find-hit mark {
+  color: inherit;
+  background: var(--match);
+  border-radius: 2px;
+}

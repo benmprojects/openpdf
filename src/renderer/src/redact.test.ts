@@ -84,3 +84,50 @@ describe('redactContent', () => {
     expect(r.forms).toBe(true)
   })
 })
+
+describe('mark styles', () => {
+  const w = (s: string, size: number) => s.length * size * 0.5
+  it('centres one line of overlay text in the box and fits it', async () => {
+    const { layoutOverlay } = await import('./redact')
+    const lay = layoutOverlay({ x: 10, y: 20, w: 100, h: 20 }, 'REDACTED', w)!
+    expect(lay.rows).toHaveLength(1)
+    expect(lay.size).toBeCloseTo(12)
+    expect(lay.rows[0].x).toBeGreaterThan(10)
+    expect(lay.rows[0].baseline).toBeGreaterThan(20)
+    expect(lay.rows[0].baseline).toBeLessThan(40)
+    // Too narrow for the text: the type shrinks to fit.
+    const narrow = layoutOverlay({ x: 0, y: 0, w: 20, h: 20 }, 'REDACTED', w)!
+    expect(w('REDACTED', narrow.size)).toBeLessThanOrEqual(20.001)
+  })
+  it('repeats the text across and down the box', async () => {
+    const { layoutOverlay } = await import('./redact')
+    const lay = layoutOverlay({ x: 0, y: 0, w: 200, h: 60 }, 'X1', w, 10, true)!
+    expect(lay.rows.length).toBeGreaterThan(1)
+    expect(lay.rows[0].text.split('   ').length).toBeGreaterThan(1)
+    expect(layoutOverlay({ x: 0, y: 0, w: 200, h: 60 }, '   ', w)).toBeNull()
+  })
+  it('picks readable text colour', async () => {
+    const { contrastText } = await import('./redact')
+    expect(contrastText('#000000')).toBe('#ffffff')
+    expect(contrastText('#ffff00')).toBe('#000000')
+  })
+  it('draws a coloured box with an outline and overlay text, and nothing from the removed content', async () => {
+    const { redactPages } = await import('./redact')
+    const { PDFDocument } = await import('pdf-lib')
+    const { pageContent } = await import('./pageContent')
+    const doc = await PDFDocument.create()
+    doc.addPage([300, 200])
+    const bytes = await doc.save()
+    const empty = async () => ({ texts: [], textTotal: 0, images: [], imageTotal: 0, paths: [], pathTotal: 0 })
+    const out = await redactPages(bytes, [{ page: 0, rect: { x: 20, y: 20, w: 200, h: 30 }, style: { fill: '#ff0000', outline: '#00ff00', text: 'REDACTED', repeat: false } }, { page: 0, rect: { x: 20, y: 100, w: 50, h: 20 } }], empty)
+    expect(out.report.boxes).toBe(2)
+    const re = await PDFDocument.load(out.bytes)
+    const src = pageContent(re.getPage(0))
+    expect(src).toContain('1 0 0 rg')
+    expect(src).toContain('0 1 0 RG')
+    expect(src.toLowerCase()).toContain('<524544414354454' + '4>')
+    // The second mark has no style: plain black, and only one piece of text was drawn.
+    expect(src).toContain('0 0 0 rg')
+    expect(src.match(/ Tj/g)).toHaveLength(1)
+  })
+})

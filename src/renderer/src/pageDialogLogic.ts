@@ -255,5 +255,7 @@ export type PageDialogResult =
   | { kind: 'merge'; items: SourceItem[]; includeThis: boolean; at: number; count: number }
   | { kind: 'duplicate'; pages: number[]; copies: number; where: 'block' | 'each' | 'end' }
   | { kind: 'move'; pages: number[]; before: number }
+  | { kind: 'swap'; a: number; b: number }
 
-export type PageDialogKind = PageDialogResult['kind']
+/** `deleteBlank` is a dialog that hands back a plain delete. */
+export type PageDialogKind = PageDialogResult['kind'] | 'deleteBlank'

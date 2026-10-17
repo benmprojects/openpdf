@@ -56,6 +56,8 @@ export interface ViewerHandle {
   clearSelection(): void
   /** One entry per page touched by the current text selection, with a rectangle per line. */
   selectionRects(): Promise<{ page: number; rects: Rect[] }[]>
+  /** The top-left of what is on screen: the page there and the point on it, in points from the page's top-left. */
+  viewPoint(): { page: number; x: number; y: number } | null
 }
 
 export type Tool =
@@ -154,6 +156,8 @@ interface Props {
   /** Areas marked for redaction, drawn over their pages; clicking one takes it off. */
   redactMarks: { id: number; page: number; rect: Rect }[]
   onUnmark: (id: number) => void
+  /** Right-click on a mark: its properties. */
+  onMarkContext?: (id: number) => void
   /** The link tool: a box dragged on one page, in page points (unrotated frame). */
   onLinkRect: (page: number, rect: Rect) => void
   /** A link was clicked: go to a page, or (after asking) open a web address. */
@@ -244,6 +248,7 @@ export function Viewer({
   onRedactRect,
   redactMarks,
   onUnmark,
+  onMarkContext,
   tool,
   annots,
   selectedAnnot,
@@ -1061,6 +1066,17 @@ export function Viewer({
         }
         el.scrollTop = offsets[index] - PAD / 2
       },
+      viewPoint() {
+        const el = scroller.current
+        if (!el) return null
+        const i = pageEls.current.findIndex((p) => !!p && p.offsetTop + p.offsetHeight > el.scrollTop + 1)
+        const pageEl = i >= 0 ? pageEls.current[i] : null
+        if (!pageEl) return null
+        const u = Math.max(0, (el.scrollLeft - pageEl.offsetLeft) / zoom)
+        const v = Math.max(0, (el.scrollTop - pageEl.offsetTop) / zoom)
+        const at = toPage(rotation, Math.min(u, displayDims(pages[i], rotation).width), Math.min(v, displayDims(pages[i], rotation).height), pages[i])
+        return { page: i, x: Math.round(at.x * 100) / 100, y: Math.round(at.y * 100) / 100 }
+      },
       async scrollToRect(page, r) {
         const el = scroller.current
         if (!el) return
@@ -1182,6 +1198,7 @@ export function Viewer({
                 forms={forms}
                 redactMarks={redactMarks.filter((m) => m.page === i)}
                 onUnmark={onUnmark}
+                onMarkContext={onMarkContext}
                 textEditReady={textEditReady}
                 onVisible={loadLinks}
                 eraseTrail={eraseTrail && eraseTrail.page === i ? eraseTrail : undefined}
@@ -1240,6 +1257,8 @@ export function Viewer({
 interface PageViewProps {
   redactMarks: { id: number; page: number; rect: Rect }[]
   onUnmark: (id: number) => void
+  /** Right-click on a mark: its properties. */
+  onMarkContext?: (id: number) => void
   client: PdfClient
   index: number
   size: PageSize
@@ -1289,7 +1308,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, snapMark, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, snapMark, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, onMarkContext, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const hasForms = !!forms && forms.fields.length > 0
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -1484,8 +1503,14 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
             <button
               key={m.id}
               className="redact-mark"
-              aria-label="Marked for redaction: click to remove the mark"
-              title="Marked for redaction: click to remove the mark"
+              aria-label="Marked for redaction: click to remove the mark, right-click for its properties"
+              title="Marked for redaction: click to remove the mark, right-click for its properties"
+              data-mark-id={m.id}
+              onContextMenu={(e) => {
+                if (!onMarkContext) return
+                e.preventDefault()
+                onMarkContext(m.id)
+              }}
               style={{ left: m.rect.x * zoom, top: m.rect.y * zoom, width: m.rect.w * zoom, height: m.rect.h * zoom }}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => onUnmark(m.id)}

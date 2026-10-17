@@ -4,6 +4,7 @@ import { appEnv, checkSteps, runBatch, STEP_LABELS, type BatchAction, type Batch
 import { ALL_ALLOWED } from '../../shared/pdfSecurity'
 import type { InstalledPlugin } from '../../main/plugins'
 import { t } from './i18n'
+import { batesLogCsv } from './batesMulti'
 
 const KINDS = Object.keys(STEP_LABELS) as BatchStep['kind'][]
 
@@ -15,6 +16,8 @@ export function newStep(kind: BatchStep['kind']): BatchStep {
       return { kind, text: 'DRAFT', fontSize: 60, color: '#cc0000', opacity: 0.25, angle: 45, behind: false }
     case 'headerFooter':
       return { kind, slots: { bc: 'Page <<page>> of <<pages>>' }, fontSize: 9, color: '#000000', margin: 24, startNumber: 1 }
+    case 'bates':
+      return { kind, slot: 'br', prefix: 'DOC', suffix: '', start: 1, digits: 6, fontSize: 9, color: '#000000', margin: 24, carry: true }
     case 'optimise':
       return { kind, level: 'standard' }
     case 'ocr':
@@ -63,6 +66,30 @@ function StepEditor({ step, languages, plugins, onChange }: { step: BatchStep; l
           {field('Header right', <input aria-label="Header right" value={step.slots.tr ?? ''} onChange={(e) => onChange({ ...step, slots: { ...step.slots, tr: e.target.value } })} />)}
           {field('Footer', <input aria-label="Footer" value={step.slots.bc ?? ''} onChange={(e) => onChange({ ...step, slots: { ...step.slots, bc: e.target.value } })} />)}
           <span className="muted">Tokens: &lt;&lt;page&gt;&gt; &lt;&lt;pages&gt;&gt; &lt;&lt;date&gt;&gt; &lt;&lt;file&gt;&gt;</span>
+        </>
+      )
+    case 'bates':
+      return (
+        <>
+          {field(
+            t('Position'),
+            <select aria-label={t('Bates position')} value={step.slot} onChange={(e) => onChange({ ...step, slot: e.target.value as typeof step.slot })}>
+              <option value="tl">{t('Top left')}</option>
+              <option value="tc">{t('Top centre')}</option>
+              <option value="tr">{t('Top right')}</option>
+              <option value="bl">{t('Bottom left')}</option>
+              <option value="bc">{t('Bottom centre')}</option>
+              <option value="br">{t('Bottom right')}</option>
+            </select>
+          )}
+          {field(t('Prefix'), <input aria-label={t('Bates prefix')} value={step.prefix} onChange={(e) => onChange({ ...step, prefix: e.target.value })} />)}
+          {field(t('Suffix'), <input aria-label={t('Bates suffix')} value={step.suffix} onChange={(e) => onChange({ ...step, suffix: e.target.value })} />)}
+          {field(t('First number'), <input aria-label={t('Bates first number')} type="number" min={0} value={step.start} onChange={(e) => onChange({ ...step, start: Math.max(0, Math.round(num(e.target.value, 1))) })} />)}
+          {field(t('Digits'), <input aria-label={t('Bates digits')} type="number" min={1} max={12} value={step.digits} onChange={(e) => onChange({ ...step, digits: Math.min(12, Math.max(1, Math.round(num(e.target.value, 6)))) })} />)}
+          <label className="inline">
+            <input type="checkbox" checked={step.carry} onChange={(e) => onChange({ ...step, carry: e.target.checked })} /> {t('Carry the number on from one file to the next')}
+          </label>
+          <span className="muted">{t('Example')}: {`${step.prefix}${String(step.start).padStart(step.digits, '0')}${step.suffix}`}</span>
         </>
       )
     case 'optimise':
@@ -418,6 +445,22 @@ export function BatchDialog({ onClose }: { onClose: () => void }) {
             <h3>
               Done: {okCount} of {results.length} file{results.length === 1 ? '' : 's'} processed
             </h3>
+            {results.some((r) => r.bates) && (
+              <button
+                type="button"
+                onClick={() =>
+                  void window.openpdf.saveData(
+                    'bates-log.csv',
+                    new TextEncoder().encode(
+                      batesLogCsv(results.map((r) => ({ source: r.source.split(/[\\/]/).pop() ?? r.source, output: r.output?.split(/[\\/]/).pop() ?? '', pages: r.bates?.pages ?? 0, first: r.bates?.first ?? '', last: r.bates?.last ?? '', error: r.error })))
+                    ),
+                    { name: 'CSV', ext: 'csv' }
+                  )
+                }
+              >
+                {t('Save the Bates log (CSV)…')}
+              </button>
+            )}
             <ul className="batch-results">
               {results.map((r) => (
                 <li key={r.source} className={r.ok ? 'std-pass' : 'std-fail'}>

@@ -8,7 +8,7 @@ import { frameFor, type Frame } from './annotWrite'
 import type { FontFamily } from './annotations'
 
 export type Slot = 'tl' | 'tc' | 'tr' | 'bl' | 'bc' | 'br'
-export type MarkKind = 'HeaderFooter' | 'Watermark' | 'Background'
+export type MarkKind = 'HeaderFooter' | 'Watermark' | 'Background' | 'Overlay'
 
 export interface HeaderFooterSpec {
   /** Text per position; tokens: <<page>> <<pages>> <<label>> <<date>> <<file>> <<bates>>. */
@@ -23,6 +23,8 @@ export interface HeaderFooterSpec {
   /** First number for <<page>> (on the first marked page). */
   startNumber: number
   bates?: { prefix: string; suffix: string; start: number; digits: number }
+  /** What <<pages>> shows, when the numbering runs on across several files. */
+  totalPages?: number
 }
 
 export interface DocInfo {
@@ -65,7 +67,7 @@ export function batesNumber(b: NonNullable<HeaderFooterSpec['bates']>, index: nu
   return `${b.prefix}${String(b.start + index).padStart(b.digits, '0')}${b.suffix}`
 }
 
-function frameOf(page: PDFPage): { f: Frame; w: number; h: number } {
+export function frameOf(page: PDFPage): { f: Frame; w: number; h: number } {
   const cb = page.getCropBox()
   const rot = ((page.getRotation().angle % 360) + 360) % 360
   const turned = rot === 90 || rot === 270
@@ -107,7 +109,7 @@ const markOf = (doc: PDFDocument, ref: unknown): string | undefined => {
  * Adds a mark stream to a page. Over the content: the page's own content is wrapped in q/Q first (guard streams)
  * so its graphics state cannot shift the mark. Behind the content: the stream goes first.
  */
-function addMarkStream(doc: PDFDocument, page: PDFPage, kind: MarkKind, ops: string, behind: boolean) {
+export function addMarkStream(doc: PDFDocument, page: PDFPage, kind: MarkKind, ops: string, behind: boolean) {
   const ctx = doc.context
   const arr = contentsOf(doc, page)
   const ref = ctx.register(ctx.flateStream(ops, { OPMarks: kind } as never))
@@ -146,7 +148,7 @@ export async function addHeaderFooter(bytes: Uint8Array, spec: HeaderFooterSpec,
         font,
         expandTokens(template, {
           page: spec.startNumber + k,
-          pages: spec.startNumber + pages.length - 1,
+          pages: spec.totalPages ?? spec.startNumber + pages.length - 1,
           label: info.labels?.[pi] || String(pi + 1),
           date,
           file: info.fileName,
@@ -254,7 +256,7 @@ export async function removeMarks(bytes: Uint8Array, kinds: MarkKind[]): Promise
       }
     }
     const left = Array.from({ length: c.size() }, (_, i) => markOf(doc, c.get(i)))
-    if (!left.some((m) => m === 'HeaderFooter' || m === 'Watermark')) {
+    if (!left.some((m) => m === 'HeaderFooter' || m === 'Watermark' || m === 'Overlay')) {
       for (let i = c.size() - 1; i >= 0; i--) if (left[i] === 'GuardOpen' || left[i] === 'GuardClose') c.remove(i)
     }
   }
@@ -271,7 +273,7 @@ export async function marksPresent(bytes: Uint8Array): Promise<Set<MarkKind>> {
       if (!(c instanceof PDFArray)) continue
       for (let i = 0; i < c.size(); i++) {
         const m = markOf(doc, c.get(i))
-        if (m === 'HeaderFooter' || m === 'Watermark' || m === 'Background') out.add(m)
+        if (m === 'HeaderFooter' || m === 'Watermark' || m === 'Background' || m === 'Overlay') out.add(m)
       }
     }
   } catch {

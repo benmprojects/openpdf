@@ -38,14 +38,17 @@ import { writeAnnotations, type DeletedAnnot } from './annotWrite'
 import { deletePages, extractPages, insertPagesFrom, mergeDocuments, movePages, rotatePages } from './pageOps'
 import { DeleteDialog, DuplicateDialog, ExtractDialog, InsertDialog, MergeDialog, MoveDialog, ReplaceDialog, RotateDialog, SplitDialog } from './PageOpsDialogs'
 import type { DocContext, PageDialogKind, PageDialogResult } from './pageDialogLogic'
+import { DeleteBlankDialog, SwapDialog } from './BlankPagesDialog'
 import { applyDialogEdit, buildExtractFiles, buildSplitFiles, doneMessage } from './pageDialogRun'
 import { CommentsDialog, ExportTextDialog, FlattenDialog, SaveAsDialog, type CommentFormat, type CommentsDialogResult, type SaveAsChoice } from './CommandDialogs'
 import { applyFilter, type CommentFilter } from './commentFilter'
 import { flattenDocument, flattenSignatures, type FlattenWhat } from './flatten'
 import { getPageClip, onPageClip, setPageClip } from './pageClipboard'
-import { PdfClient, type AttachmentInfo, type OutlineNode, type PageSize } from './pdfClient'
+import { PdfClient, type AttachmentInfo, type PageSize } from './pdfClient'
 import { Sidebar, type PageOp, type SidebarTab } from './Sidebar'
-import { findInPage, hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
+import { hitTest, normaliseNewlines, rangeRects, type Match } from './textLogic'
+import { PRESETS, findPattern, presetById, queryError, searchBookmarks, searchComments, type ListHit, type SearchOpts, type SearchScope } from './searchPatterns'
+import { SearchResults } from './SearchResults'
 import { BatchDialog } from './BatchDialog'
 import { MediaPlayerDialog } from './MediaPlayerDialog'
 import { findMedia, type MediaItem } from './media'
@@ -70,10 +73,13 @@ import { convertToPdfA, type PdfAReport } from './pdfa'
 import { checkStandards, type StandardsReport } from './standards'
 import { SignDialog, type SignRequest } from './SignDialog'
 import { CombineDialog } from './CombineDialog'
+import { OverlayDialog } from './OverlayDialog'
+import { SplitPagesDialog } from './SplitPagesDialog'
 import { SignaturesDialog, signatureState, type SignatureRow } from './SignaturesDialog'
 import { addTimestamp, buildTimestampRequest, prepareSignature, readSignatures, verifySignature } from './sign'
 import { sanitise, scanHidden, type HiddenInfo } from './sanitise'
-import { redactPages, type RedactMark, type RedactReport } from './redact'
+import { redactPages, type RedactMark, type RedactReport, type RedactStyle } from './redact'
+import { FindRedactDialog, RedactMarkDialog } from './RedactDialogs'
 import { useHistory } from './useHistory'
 import { DEFAULT_MODE, layoutRows, rowExtent, type PageMode } from './pageLayout'
 import { GAP, PAD, Viewer, type Tool, type ViewAids, type ViewerHandle } from './Viewer'
@@ -86,6 +92,8 @@ import { annotsFromImported } from './importMap'
 import { addBackground, addHeaderFooter, addWatermark, cropPages, marksPresent, removeMarks, resizePages, uncropPages, type MarkKind } from './pageMarks'
 import { PageMarksDialog, type MarksMode, type MarksRequest } from './PageMarksDialog'
 import { readLabelRanges, writeLabelRanges, writeOutline, type BookmarkNode, type LabelRange } from './outlineEdit'
+import { mergeOutlineStyles, outlineToCsv, outlineToText, parseOutline, readOutlineStyles } from './outlineTools'
+import { GenerateBookmarksDialog } from './BookmarkDialogs'
 import { PageLabelsDialog } from './PageLabelsDialog'
 import { optimise, type OptimiseOptions } from './optimise'
 import { readProps, removeProps, writeProps, type DocProps } from './metadata'
@@ -133,6 +141,8 @@ import {
   FileText,
   GalleryVertical,
   ScanSearch,
+  Palette,
+  FileX,
   Bookmark,
   ChevronDown,
   ChevronUp,
@@ -215,6 +225,7 @@ import {
   Redo2,
   RotateCcw,
   Layers2,
+  Layers,
   ShieldCheck,
   SquareCheck,
   CircleDot,
@@ -375,13 +386,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   >(null)
   /** The Combine files dialog (File and Organize tabs). */
   const [combineOpen, setCombineOpen] = useState(false)
+  /** The Overlay and Split pages dialogs (Organize tab). */
+  const [overlayOpen, setOverlayOpen] = useState(false)
+  const [splitOpen, setSplitOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [client, setClient] = useState<PdfClient | null>(null)
   /** The bytes the current client loaded: editing text needs the client to match the file, or its object numbers are stale. */
   const [clientBytes, setClientBytes] = useState<Uint8Array | null>(null)
   const [pages, setPages] = useState<PageSize[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [outline, setOutline] = useState<OutlineNode[] | null>(null)
+  const [outline, setOutline] = useState<BookmarkNode[] | null>(null)
   const [passwordIssue, setPasswordIssue] = useState<'required' | 'wrong' | null>(null)
   const [passwordDraft, setPasswordDraft] = useState('')
   // ---- Security -------------------------------------------------------------------------------------
@@ -565,6 +579,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setClient(c)
         setClientBytes(viewBytes)
         c.outline()
+          // Colour, style and place on the page are not in what PDFium reports: read them from the file.
+          .then(async (o) => (o.length ? mergeOutlineStyles(o, await readOutlineStyles(viewBytes).catch(() => [])) : o))
           .then((o) => !cancelled && setOutline(o))
           .catch(() => !cancelled && setOutline([]))
         c.attachments()
@@ -1355,6 +1371,13 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [redactMarks, setRedactMarks] = useState<(RedactMark & { id: number })[]>([])
   const nextMark = useRef(1)
   const [redactConfirm, setRedactConfirm] = useState(false)
+  /** Style given to marks as they are placed. */
+  const [redactStyle, setRedactStyle] = useState<RedactStyle>({ fill: '#000000' })
+  /** The mark whose properties are open, 'defaults' for the style of new marks, or null. */
+  const [markDialog, setMarkDialog] = useState<number | 'defaults' | null>(null)
+  const [findRedactOpen, setFindRedactOpen] = useState(false)
+  /** When set, only this mark is applied. */
+  const [redactOnly, setRedactOnly] = useState<number | null>(null)
   const [hidden, setHidden] = useState<HiddenInfo | null>(null)
   const [signOpen, setSignOpen] = useState(false)
   const [sigPanel, setSigPanel] = useState(false)
@@ -1768,6 +1791,25 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     outlineWant.current = tree
     setOutlineTick((t) => t + 1)
   }, [])
+  const [generateOpen, setGenerateOpen] = useState(false)
+  const importBookmarks = async () => {
+    const file = await window.openpdf.pickFile({ name: 'Outline (text or CSV)', ext: ['txt', 'csv', 'tsv'] })
+    if (!file) return
+    const r = parseOutline(new TextDecoder().decode(file.data), pages.length)
+    if (!r.tree.length) return setNotice({ kind: 'error', text: 'No bookmarks were found in that file. Use one line per bookmark: the title, a tab and the page number, indented for each level.' })
+    editOutline(outline?.length ? [...outline, ...r.tree] : r.tree)
+    const extra = [r.outOfRange && `${r.outOfRange} with a page outside the document`, r.skipped && `${r.skipped} line${r.skipped === 1 ? '' : 's'} skipped`].filter(Boolean)
+    setNotice({ kind: 'info', text: `Imported ${r.tree.length} top-level bookmark${r.tree.length === 1 ? '' : 's'}${extra.length ? ` (${extra.join(', ')})` : ''}.` })
+  }
+  const exportBookmarks = async (format: 'text' | 'csv') => {
+    if (!outline?.length) return
+    const base = name.replace(/\.pdf$/i, '')
+    const saved =
+      format === 'csv'
+        ? await window.openpdf.saveText(`${base} (bookmarks).csv`, outlineToCsv(outline), { name: 'CSV (comma separated)', ext: 'csv' })
+        : await window.openpdf.saveText(`${base} (bookmarks).txt`, outlineToText(outline), { name: 'Text outline', ext: 'txt' })
+    if (saved) setNotice({ kind: 'info', text: `Saved the bookmarks to ${saved}.` })
+  }
   useEffect(() => {
     const t = outlineWant.current
     if (!t || busy || saving) return
@@ -2206,7 +2248,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }
 
   // ---- Redaction -------------------------------------------------------------------------------------
-  const addMarks = (list: RedactMark[]) => setRedactMarks((m) => [...m, ...list.map((x) => ({ ...x, id: nextMark.current++ }))])
+  const addMarks = (list: RedactMark[]) => setRedactMarks((m) => [...m, ...list.map((x) => ({ ...x, style: x.style ?? redactStyle, id: nextMark.current++ }))])
   useEffect(() => setRedactMarks([]), [pages.length])
   const markSelectionForRedaction = async () => {
     const parts = (await viewer.current?.selectionRects()) ?? []
@@ -2230,8 +2272,11 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }
   const applyRedactions = async () => {
     setRedactConfirm(false)
-    if (!client || !redactMarks.length) return
-    const marks = redactMarks.map(({ page, rect }) => ({ page, rect }))
+    const only = redactOnly
+    setRedactOnly(null)
+    const chosen = redactMarks.filter((m) => only === null || m.id === only)
+    if (!client || !chosen.length) return
+    const marks = chosen.map(({ page, rect, style }) => ({ page, rect, style }))
     let report: RedactReport | null = null
     await applyPageEdit(async (b) => {
       const r = await redactPages(b, marks, async (pg) => {
@@ -2243,7 +2288,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     })
     if (!report) return
     const r: RedactReport = report
-    setRedactMarks([])
+    const applied = new Set(chosen.map((m) => m.id))
+    setRedactMarks((list) => list.filter((m) => !applied.has(m.id)))
     setTool('select')
     const parts = [r.text && `${r.text} piece${r.text === 1 ? '' : 's'} of text`, r.images && `${r.images} image${r.images === 1 ? '' : 's'}`, r.shapes && `${r.shapes} shape${r.shapes === 1 ? '' : 's'}`, r.annotations && `${r.annotations} annotation${r.annotations === 1 ? '' : 's'}`].filter(Boolean)
     const done = `Redacted: ${parts.length ? parts.join(', ') : 'nothing but the area'} removed.`
@@ -2592,10 +2638,22 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [query, setQuery] = useState('')
   const [matchCase, setMatchCase] = useState(false)
   const [wholeWord, setWholeWord] = useState(false)
+  const [useRegex, setUseRegex] = useState(false)
+  const [presetId, setPresetId] = useState('')
+  const [scope, setScope] = useState<SearchScope>('text')
+  const [resultsOpen, setResultsOpen] = useState(false)
   const [matches, setMatches] = useState<Match[]>([])
   const [current, setCurrent] = useState(-1)
   const [searching, setSearching] = useState(false)
   const searchInput = useRef<HTMLInputElement>(null)
+  const preset = presetById(presetId)
+  // A preset's check (a card number's check digit, say) holds only while its pattern is what is typed.
+  const searchOpts: SearchOpts = { regex: useRegex, matchCase, wholeWord, validate: preset && query === preset.pattern ? preset.validate : undefined }
+  const patternError = searchOpen ? queryError(query, searchOpts) : null
+  const otherHits = useMemo<ListHit[]>(() => {
+    if (!searchOpen || !query || patternError || scope === 'text') return []
+    return [...(scope !== 'bookmarks' ? searchComments(annots, query, searchOpts) : []), ...(scope !== 'comments' ? searchBookmarks(outline ?? [], query, searchOpts) : [])]
+  }, [searchOpen, query, patternError, scope, annots, outline, useRegex, matchCase, wholeWord, presetId]) // eslint-disable-line react-hooks/exhaustive-deps
   const runId = useRef(0)
   const matchesRef = useRef(matches)
   matchesRef.current = matches
@@ -2609,6 +2667,9 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     setQuery(jump.query)
     setMatchCase(jump.matchCase)
     setWholeWord(jump.wholeWord)
+    setUseRegex(!!jump.regex)
+    setPresetId('')
+    setScope('text')
     setSearchOpen(true)
     // The query may be unchanged, in which case the search does not rerun; go straight there.
     const hit = matchesRef.current.findIndex((m) => m.page === jump.page && m.from === jump.from)
@@ -2620,7 +2681,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   }, [jump?.key]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!client || !searchOpen || !query) {
+    if (!client || !searchOpen || !query || scope === 'comments' || scope === 'bookmarks' || queryError(query, searchOpts)) {
       setMatches([])
       setCurrent(-1)
       setSearching(false)
@@ -2634,7 +2695,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       for (let p = 0; p < pages.length; p++) {
         if (run !== runId.current) return
         try {
-          all.push(...findInPage(await client.pageText(p), p, query, matchCase, wholeWord))
+          all.push(...findPattern(await client.pageText(p), p, query, searchOpts))
         } catch {
           continue // a page that fails to parse is skipped rather than ending the search
         }
@@ -2668,7 +2729,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       clearTimeout(timer)
       runId.current++
     }
-  }, [client, searchOpen, query, matchCase, wholeWord, pages.length])
+  }, [client, searchOpen, query, matchCase, wholeWord, useRegex, presetId, scope, pages.length])
 
   const stepMatch = useCallback((dir: 1 | -1) => {
     const list = matchesRef.current
@@ -2677,6 +2738,23 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     setCurrent(next)
     viewer.current?.scrollToMatch(list[next])
   }, [])
+
+  /** Every text match becomes a highlight annotation. */
+  const highlightAllResults = async () => {
+    if (!client || !matches.length) return
+    const made: Annot[] = []
+    for (const m of matches) {
+      const rects = rangeRects((await client.pageText(m.page)).boxes, m.from, m.to)
+      if (rects.length) made.push(newAnnot('highlight', m.page, rects))
+    }
+    if (!made.length) return
+    history.commit((list) => [...list, ...made])
+    setNotice({ kind: 'info', text: `Highlighted ${made.length} result${made.length === 1 ? '' : 's'}.` })
+  }
+  const pickOtherHit = (h: ListHit) => {
+    if (h.kind === 'comment' && h.annotId !== undefined) focusComment(h.annotId)
+    else if (h.page >= 0) goTo(h.page)
+  }
 
   const openSearch = useCallback(() => {
     setSearchOpen(true)
@@ -3079,6 +3157,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 </RStack>
                 <RB big icon={Trash2} label={t('Delete')} onClick={() => openPageDialog('delete')} disabled={!pages.length || busy || pages.length < 2} title={t('Delete the selected pages')} />
                 <RB big icon={ArrowUpDown} label={t('Move')} onClick={() => openPageDialog('move')} disabled={!pages.length || busy || pages.length < 2} title={t('Move pages to another place in the document')} />
+                <RB big icon={ArrowLeftRight} label={t('Swap')} onClick={() => openPageDialog('swap')} disabled={!pages.length || busy || pages.length < 2} title={t('Exchange two pages')} />
+                <RB big icon={FileX} label={t('Delete blank')} onClick={() => openPageDialog('deleteBlank')} disabled={!pages.length || busy || pages.length < 2 || !client} title={t('Find blank pages and delete them, after looking at the list')} />
               </RGroup>
               <RGroup label={t('Copy')}>
                 <RStack>
@@ -3096,6 +3176,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Files} label={t('Merge')} onClick={() => openPageDialog('merge')} disabled={!pages.length || busy} title={t('Merge: add the pages of other PDFs to the end')} />
                 <RB big icon={Combine} label={t('Combine files')} onClick={() => setCombineOpen(true)} title={t('Combine PDFs, pictures and Office files into one PDF')} />
                 <RB big icon={Scissors} label={t('Split')} onClick={() => openPageDialog('split')} disabled={!pages.length || busy} title={t('Split into files of a set number of pages')} />
+                <RB big icon={LayoutGrid} label={t('Split pages…')} onClick={() => setSplitOpen(true)} disabled={!pages.length || busy || locked} title={t('Cut each page into tiles (a grid, or pieces of A3 or A4) that become pages of their own')} />
+                <RB big icon={Layers} label={t('Overlay…')} onClick={() => setOverlayOpen(true)} disabled={!pages.length || busy || locked} title={t('Lay pages of another PDF over or under these pages, in a colour if you like')} />
                 <RB big icon={GitCompare} label={t('Compare')} onClick={() => setCompareOpen(true)} disabled={!pages.length || busy} title={t('Compare this document with another PDF: the words, and how the pages look')} />
               </RGroup>
               <RGroup label={t('Optimise')}>
@@ -3212,6 +3294,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={EyeOff} label={t('Mark area')} onClick={() => setTool(tool === 'redact' ? 'select' : 'redact')} pressed={tool === 'redact'} disabled={!pages.length || busy || locked} title={t('Drag a box over what is to be removed')} />
                 <RB big icon={TextSelect} label={t('Mark text')} onClick={() => void markSelectionForRedaction()} disabled={!pages.length || busy || locked} title={t('Mark the text you have selected')} />
                 <RB big icon={Search} label={t('Mark search')} onClick={() => void markSearchForRedaction()} disabled={!pages.length || busy || locked} title={t('Mark every match of the current search (Ctrl+F to search)')} />
+                <RB big icon={ScanSearch} label={t('Find and redact')} onClick={() => setFindRedactOpen(true)} disabled={!pages.length || busy || locked || !client} title={t('Mark phone numbers, e-mail addresses, dates, ABNs, card numbers or your own pattern')} />
+                <RB big icon={Palette} label={t('Mark properties')} onClick={() => setMarkDialog('defaults')} disabled={!pages.length || locked} title={t('Fill colour, overlay text, font size, repeat and outline of the marks')} />
               </RGroup>
               <RGroup label={t('Apply')}>
                 <RB big icon={ShieldAlert} label={t('Apply')} onClick={() => setRedactConfirm(true)} disabled={!redactMarks.length || busy || locked} title={t('Permanently remove what is under the marks')} />
@@ -3450,10 +3534,50 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           <label>
             <input type="checkbox" checked={wholeWord} onChange={(e) => setWholeWord(e.target.checked)} /> Whole word
           </label>
+          <label>
+            <input type="checkbox" checked={useRegex} onChange={(e) => setUseRegex(e.target.checked)} /> {t('Regular expression')}
+          </label>
+          <select
+            aria-label={t('Pattern preset')}
+            title={t('Fill in a ready-made pattern')}
+            value={presetId}
+            onChange={(e) => {
+              const p = presetById(e.target.value)
+              setPresetId(e.target.value)
+              if (p) {
+                setQuery(p.pattern)
+                setUseRegex(true)
+                setWholeWord(false)
+              }
+            }}
+          >
+            <option value="">{t('Pattern preset…')}</option>
+            {PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {t(p.label)}
+              </option>
+            ))}
+          </select>
+          <select aria-label={t('Search in')} value={scope} onChange={(e) => setScope(e.target.value as SearchScope)}>
+            <option value="text">{t('Page text')}</option>
+            <option value="comments">{t('Comments')}</option>
+            <option value="bookmarks">{t('Bookmarks')}</option>
+            <option value="all">{t('Text, comments and bookmarks')}</option>
+          </select>
+          <button type="button" className="btn" aria-pressed={resultsOpen} onClick={() => setResultsOpen(!resultsOpen)} title="List every result by page">
+            {t('Results list')}
+          </button>
+          <button type="button" className="btn" disabled={!matches.length || locked} onClick={() => void highlightAllResults()} title="Add a highlight to every result">
+            {t('Highlight all')}
+          </button>
           <span className="muted search-status" aria-live="polite">
-            {!query
+            {patternError
+              ? `Not a valid pattern: ${patternError}`
+              : !query
               ? ''
-              : matches.length
+              : otherHits.length && !matches.length
+                ? `${otherHits.length} in ${scope === 'bookmarks' ? 'bookmarks' : scope === 'comments' ? 'comments' : 'comments and bookmarks'}`
+                : matches.length
                 ? `${current + 1} of ${matches.length}${matches.length >= MAX_MATCHES ? '+' : ''}${searching ? '…' : ''}`
                 : searching
                   ? 'Searching…'
@@ -3461,6 +3585,21 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           </span>
           <IconButton icon={X} className="close" label={t('Close find')} title={t('Close (Esc)')} onClick={() => setSearchOpen(false)} />
         </div>
+      )}
+      {searchOpen && resultsOpen && client && (
+        <SearchResults
+          client={client}
+          matches={matches}
+          current={current}
+          onPickMatch={(i) => {
+            setCurrent(i)
+            viewer.current?.scrollToMatch(matches[i])
+          }}
+          others={otherHits}
+          onPickOther={pickOtherHit}
+          pageLabel={pageName}
+          truncated={matches.length >= MAX_MATCHES}
+        />
       )}
 
       {presenting && (
@@ -3587,15 +3726,79 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
           }}
         />
       )}
+      {generateOpen && client && (
+        <GenerateBookmarksDialog
+          client={client}
+          pageCount={pages.length}
+          labels={pageLabels}
+          hasBookmarks={!!outline?.length}
+          onClose={() => setGenerateOpen(false)}
+          onGenerate={(tree, replace) => editOutline(replace || !outline ? tree : [...outline, ...tree])}
+        />
+      )}
+      {markDialog !== null && (
+        <RedactMarkDialog
+          title={markDialog === 'defaults' ? t('Redaction mark properties') : t('Redaction mark')}
+          style={markDialog === 'defaults' ? redactStyle : (redactMarks.find((m) => m.id === markDialog)?.style ?? redactStyle)}
+          canApplyToAll={markDialog === 'defaults' && redactMarks.length > 0}
+          onClose={() => setMarkDialog(null)}
+          onSave={(st, toAll) => {
+            const id = markDialog
+            if (id === 'defaults') {
+              setRedactStyle(st)
+              if (toAll) setRedactMarks((list) => list.map((m) => ({ ...m, style: st })))
+            } else setRedactMarks((list) => list.map((m) => (m.id === id ? { ...m, style: st } : m)))
+            setMarkDialog(null)
+          }}
+          onApply={
+            markDialog === 'defaults' || locked
+              ? undefined
+              : (st) => {
+                  const id = markDialog
+                  setRedactMarks((list) => list.map((m) => (m.id === id ? { ...m, style: st } : m)))
+                  setMarkDialog(null)
+                  setRedactOnly(id)
+                  setRedactConfirm(true)
+                }
+          }
+          onRemove={
+            markDialog === 'defaults'
+              ? undefined
+              : () => {
+                  const id = markDialog
+                  setRedactMarks((list) => list.filter((m) => m.id !== id))
+                  setMarkDialog(null)
+                }
+          }
+        />
+      )}
+      {findRedactOpen && client && (
+        <FindRedactDialog
+          client={client}
+          pageCount={pages.length}
+          pageLabel={(i) => pageLabels?.[i] || String(i + 1)}
+          onClose={() => setFindRedactOpen(false)}
+          onMark={(list) => {
+            addMarks(list)
+            setTool('select')
+            setNotice({ kind: 'info', text: `Marked ${list.length} area${list.length === 1 ? '' : 's'} for redaction.` })
+          }}
+        />
+      )}
       {redactConfirm && (
-        <Modal title={t('Apply redactions')} onClose={() => setRedactConfirm(false)}>
+        <Modal title={t('Apply redactions')} onClose={() => { setRedactConfirm(false); setRedactOnly(null) }}>
           <div className="marks-form">
-            <p>
-              {redactMarks.length} marked area{redactMarks.length === 1 ? '' : 's'} on {new Set(redactMarks.map((m) => m.page)).size} page{new Set(redactMarks.map((m) => m.page)).size === 1 ? '' : 's'}. The text, images and shapes under them are removed from the pages and each area is covered with a black box.
-            </p>
+            {(() => {
+              const n = redactOnly === null ? redactMarks : redactMarks.filter((m) => m.id === redactOnly)
+              return (
+                <p>
+                  {n.length} marked area{n.length === 1 ? '' : 's'} on {new Set(n.map((m) => m.page)).size} page{new Set(n.map((m) => m.page)).size === 1 ? '' : 's'}. The text, images and shapes under {n.length === 1 ? 'it' : 'them'} are removed from the pages and each area is covered with its box (black unless you chose another colour).
+                </p>
+              )
+            })()}
             <p className="muted">Text is removed a whole line at a time, so a line that is only partly marked goes entirely. Once the file is saved this cannot be undone.</p>
             <div className="marks-actions">
-              <button type="button" onClick={() => setRedactConfirm(false)}>
+              <button type="button" onClick={() => { setRedactConfirm(false); setRedactOnly(null) }}>
                 Cancel
               </button>
               <button className="primary" type="button" onClick={() => void applyRedactions()}>
@@ -3854,6 +4057,30 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       {stamps.dialogs}
       {signatures.dialogs}
       {combineOpen && <CombineDialog onClose={() => setCombineOpen(false)} onNewDoc={onNewDoc} notify={setNotice} />}
+      {overlayOpen && (
+        <OverlayDialog
+          pageCount={pages.length}
+          currentPage={currentPage}
+          selected={pageSel}
+          onApply={(fn, done) => {
+            setOverlayOpen(false)
+            void applyPageEdit(fn, done)
+          }}
+          onClose={() => setOverlayOpen(false)}
+        />
+      )}
+      {splitOpen && (
+        <SplitPagesDialog
+          sizes={pages}
+          currentPage={currentPage}
+          selected={pageSel}
+          onApply={(fn, done) => {
+            setSplitOpen(false)
+            void applyPageEdit(fn, done)
+          }}
+          onClose={() => setSplitOpen(false)}
+        />
+      )}
 
       {pageDialog && (() => {
         const common = { ctx: dialogCtx, name: baseName, onCancel: () => setPageDialog(null), onSubmit: (r: PageDialogResult) => void submitPageDialog(r) }
@@ -3876,6 +4103,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             return <DuplicateDialog {...common} />
           case 'move':
             return <MoveDialog {...common} />
+          case 'deleteBlank':
+            return <DeleteBlankDialog {...common} client={client!} pageLabel={(i) => pageLabels?.[i] || String(i + 1)} />
+          case 'swap':
+            return <SwapDialog {...common} />
         }
       })()}
 
@@ -3934,6 +4165,10 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
                 onToggleLayer={toggleLayer}
                 onEditOutline={locked ? undefined : editOutline}
+                onGenerateBookmarks={locked ? undefined : () => setGenerateOpen(true)}
+                onImportBookmarks={locked ? undefined : () => void importBookmarks()}
+                onExportBookmarks={(f) => void exportBookmarks(f)}
+                getView={() => viewer.current?.viewPoint() ?? null}
                 measurements={
                   <MeasurePane
                     rows={measureList}
@@ -4013,6 +4248,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               onRedactRect={(page, rect) => (tool === 'signbox' && pendingSign ? void doSign(pendingSign, { page, rect }) : addMarks([{ page, rect }]))}
               redactMarks={redactMarks}
               onUnmark={(id) => setRedactMarks((m) => m.filter((x) => x.id !== id))}
+              onMarkContext={locked ? undefined : setMarkDialog}
               onLinkRect={(page, rect) => setLinkDraft({ page, rect, to: 'uri', uri: 'https://', page1: String(Math.min(pages.length, page + 2)) })}
               onChangeImage={(page, obj, total, change) =>
                 void applyPageEdit((b) => transformImage(b, { page, ordinal: obj.ordinal, total, matrix: obj.matrix }, change), change ? 'Image updated' : 'Image deleted')

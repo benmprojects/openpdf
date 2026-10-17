@@ -226,3 +226,17 @@ export async function splitBySize(bytes: Uint8Array, maxBytes: number): Promise<
   }
   return parts
 }
+
+/** Exchanges the pages at indexes `a` and `b`; the others stay where they are. */
+export async function swapPages(bytes: Uint8Array, a: number, b: number): Promise<Uint8Array> {
+  const doc = await load(bytes)
+  const n = doc.getPageCount()
+  if (a === b || a < 0 || b < 0 || a >= n || b >= n) throw new Error('Choose two different pages of the document.')
+  const order = Array.from({ length: n }, (_, i) => i)
+  ;[order[a], order[b]] = [order[b], order[a]]
+  // Re-inserting the same page objects keeps links and bookmarks that point at them valid.
+  const objs = order.map((i) => doc.getPage(i))
+  for (let i = n - 1; i >= 0; i--) doc.removePage(i)
+  objs.forEach((p) => doc.addPage(p))
+  return doc.save()
+}

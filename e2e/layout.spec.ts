@@ -36,7 +36,7 @@ test('Layout: page numbers, header and footer, Bates, watermark, crop, resize an
 
     // Page numbers "Page 1 of 6".
     await win.getByRole('button', { name: 'Page numbers' }).click()
-    await dialog.getByRole('button', { name: 'Apply' }).click()
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click()
     await expect(win.getByText(/Added page numbers to 6 pages/)).toBeVisible()
 
     // A Bates number on pages 2-3 only.
@@ -44,11 +44,11 @@ test('Layout: page numbers, header and footer, Bates, watermark, crop, resize an
     await dialog.getByRole('textbox', { name: 'Prefix' }).fill('EPC')
     await dialog.getByRole('combobox', { name: 'Pages' }).selectOption('custom')
     await dialog.getByRole('textbox', { name: 'Page range' }).fill('2-3')
-    await dialog.getByRole('button', { name: 'Apply' }).click()
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click()
 
     // A DRAFT watermark on every page.
     await win.getByRole('button', { name: 'Watermark', exact: true }).click()
-    await dialog.getByRole('button', { name: 'Apply' }).click()
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click()
     await expect(win.getByText(/Added a watermark/)).toBeVisible()
     await win.screenshot({ path: test.info().outputPath('layout.png') })
     await save(win)
@@ -63,12 +63,12 @@ test('Layout: page numbers, header and footer, Bates, watermark, crop, resize an
     await win.getByRole('button', { name: 'Crop…' }).click()
     await dialog.getByRole('combobox', { name: 'Pages' }).selectOption('current')
     for (const side of ['Top', 'Bottom', 'Left', 'Right']) await dialog.getByRole('spinbutton', { name: side }).fill('20')
-    await dialog.getByRole('button', { name: 'Apply' }).click()
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click()
     await win.getByRole('button', { name: 'Resize…' }).click()
     await dialog.getByRole('combobox', { name: 'Paper' }).selectOption('A3')
     await dialog.getByRole('combobox', { name: 'Pages' }).selectOption('custom')
     await dialog.getByRole('textbox', { name: 'Page range' }).fill('2')
-    await dialog.getByRole('button', { name: 'Apply' }).click()
+    await dialog.getByRole('button', { name: 'Apply', exact: true }).click()
     await expect(win.getByText(/Resized 1 page/)).toBeVisible()
 
     // Remove the watermarks again, keeping the numbers.

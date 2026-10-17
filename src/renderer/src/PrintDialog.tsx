@@ -25,7 +25,8 @@ import {
   type Scaling,
   type Subset
 } from '../../shared/printPlan'
-import type { PrintOptions } from './print'
+import { tileArea, type PrintOptions } from './print'
+import { bestPrintLandscape, clampTileScale, mmToPt, tileLabel, tileSheets, type TileOptions } from '../../shared/tiling'
 
 /** Everything DocView needs to run a print job. */
 export interface PrintJob {
@@ -80,6 +81,12 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
   const [binding, setBinding] = useState<'left' | 'right'>('left')
   const [sides, setSides] = useState<'both' | 'front' | 'back'>('both')
   const [what, setWhat] = useState<PrintWhat>('comments')
+  // Tiling a large page over several sheets (replaces the scaling choice and pages per sheet while on).
+  const [tileOn, setTileOn] = useState(false)
+  const [tileScale, setTileScale] = useState(100)
+  const [tileOverlap, setTileOverlap] = useState(10)
+  const [tileMarks, setTileMarks] = useState(true)
+  const [tileLabels, setTileLabels] = useState(true)
 
   const [face, setFace] = useState(0)
   const printerSelect = useRef<HTMLSelectElement>(null)
@@ -129,12 +136,21 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
   )
   const scaling: Scaling = scalingKind === 'custom' ? { kind: 'custom', percent: clampPercent(percent) } : { kind: scalingKind }
   const first = list.length ? sizes[list[0]] : undefined
-  const landscape = resolveLandscape(orientation, layout, !!first && first.width > first.height, autoRotate)
-  const rotate = autoRotate && layout.kind === 'single' && !landscape
+  const tileOpts: TileOptions | undefined = tileOn ? { scalePct: clampTileScale(tileScale), overlapMm: Math.max(0, tileOverlap), marks: tileMarks, labels: tileLabels } : undefined
+  const landscape = tileOpts
+    ? orientation === 'auto'
+      ? !!first && bestPrintLandscape(first.width, first.height, tileArea(paper, false), tileOpts.scalePct / 100, mmToPt(tileOpts.overlapMm))
+      : orientation === 'landscape'
+    : resolveLandscape(orientation, layout, !!first && first.width > first.height, autoRotate)
+  const rotate = !tileOn && autoRotate && layout.kind === 'single' && !landscape
   const toFile = printer === FILE
   const duplexUsed = toFile ? 'off' : effectiveDuplex(duplex, layout)
   const slots = useMemo(() => sheetSlots(list.length, layout), [list.length, layout])
-  const faces = faceCount(list.length, layout)
+  const tileList = useMemo(
+    () => (tileOpts ? tileSheets(list.map((p) => ({ w: sizes[p]?.width ?? 0, h: sizes[p]?.height ?? 0 })), tileArea(paper, landscape), tileOpts) : []),
+    [list, sizes, paper, landscape, tileOpts?.scalePct, tileOpts?.overlapMm] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const faces = tileOn ? tileList.length : faceCount(list.length, layout)
   const paperSheets = paperCount(faces, duplexUsed)
   const shownFace = Math.min(face, Math.max(0, faces - 1))
 
@@ -214,7 +230,8 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
         colour,
         duplex: duplexUsed,
         collate,
-        autoRotate,
+        autoRotate: autoRotate && !tileOn,
+        tile: tileOpts,
         deviceName: toFile ? undefined : printer || undefined,
         toFile
       }
@@ -344,13 +361,25 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
             <legend>{t('Page handling')}</legend>
             <Row label={t('Scaling')}>
               <span className="print-inline">
-                <select aria-label={t('Page scaling')} value={scalingKind} disabled={perSheet !== '1'} onChange={(e) => setScalingKind(e.target.value as Scaling['kind'])}>
+                <select
+                  aria-label={t('Page scaling')}
+                  value={tileOn ? 'tile' : scalingKind}
+                  disabled={perSheet !== '1' && !tileOn}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setTileOn(v === 'tile')
+                    if (v === 'tile') setPerSheet('1')
+                    else setScalingKind(v as Scaling['kind'])
+                    setFace(0)
+                  }}
+                >
                   <option value="fit">{t('Fit to printable area')}</option>
                   <option value="shrink">{t('Shrink oversized pages only')}</option>
                   <option value="actual">{t('None (actual size)')}</option>
                   <option value="custom">{t('Custom scale')}</option>
+                  <option value="tile">{t('Tile large pages')}</option>
                 </select>
-                {scalingKind === 'custom' && perSheet === '1' && (
+                {scalingKind === 'custom' && perSheet === '1' && !tileOn && (
                   <>
                     <input type="number" min={10} max={400} aria-label={t('Custom scale (percent)')} value={percent} onChange={(e) => setPercent(Number(e.target.value) || 100)} onBlur={() => setPercent(clampPercent(percent))} />
                     <span>%</span>
@@ -358,20 +387,48 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
                 )}
               </span>
             </Row>
+            {tileOn && (
+              <>
+                <Row label={t('Tile scale')}>
+                  <span className="print-inline">
+                    <input type="number" min={10} max={400} aria-label={t('Tile scale (percent)')} value={tileScale} onChange={(e) => setTileScale(Number(e.target.value) || 100)} onBlur={() => setTileScale(clampTileScale(tileScale))} />
+                    <span>%</span>
+                  </span>
+                </Row>
+                <Row label={t('Overlap')}>
+                  <span className="print-inline">
+                    <input type="number" min={0} max={50} aria-label={t('Tile overlap (mm)')} value={tileOverlap} onChange={(e) => setTileOverlap(Math.max(0, Number(e.target.value) || 0))} />
+                    <span>mm</span>
+                  </span>
+                </Row>
+                <Row label="">
+                  <span className="print-inline">
+                    <label>
+                      <input type="checkbox" checked={tileMarks} onChange={(e) => setTileMarks(e.target.checked)} />
+                      {t('Cut marks')}
+                    </label>
+                    <label>
+                      <input type="checkbox" checked={tileLabels} onChange={(e) => setTileLabels(e.target.checked)} />
+                      {t('Labels')}
+                    </label>
+                  </span>
+                </Row>
+              </>
+            )}
             <Row label="">
               <span className="print-inline">
                 <label title={t('Turn landscape pages so they fill portrait paper')}>
-                  <input type="checkbox" checked={autoRotate} disabled={perSheet !== '1'} onChange={(e) => setAutoRotate(e.target.checked)} />
+                  <input type="checkbox" checked={autoRotate} disabled={perSheet !== '1' || tileOn} onChange={(e) => setAutoRotate(e.target.checked)} />
                   {t('Auto-rotate')}
                 </label>
                 <label>
-                  <input type="checkbox" checked={centre} disabled={perSheet !== '1' || scalingKind === 'fit'} onChange={(e) => setCentre(e.target.checked)} />
+                  <input type="checkbox" checked={centre} disabled={perSheet !== '1' || scalingKind === 'fit' || tileOn} onChange={(e) => setCentre(e.target.checked)} />
                   {t('Auto-centre')}
                 </label>
               </span>
             </Row>
             <Row label={t('Pages per sheet')}>
-              <select aria-label={t('Pages per sheet')} value={perSheet} onChange={(e) => setPerSheet(e.target.value as PerSheet)}>
+              <select aria-label={t('Pages per sheet')} value={perSheet} disabled={tileOn} onChange={(e) => setPerSheet(e.target.value as PerSheet)}>
                 <option value="1">{t('1 page per sheet')}</option>
                 {[2, 4, 6, 9, 16].map((n) => (
                   <option key={n} value={String(n)}>
@@ -433,7 +490,9 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
 
         <div className="print-side">
           <div className="print-preview" aria-label={t('Preview')}>
-            {loaded && ready && faces > 0 ? (
+            {loaded && ready && faces > 0 && tileOpts ? (
+              <TilePreview client={loaded.client} sizes={sizes} sheet={tileList[Math.min(shownFace, tileList.length - 1)]} area={tileArea(paper, landscape)} paper={paper} landscape={landscape} opts={tileOpts} grey={!colour && !toFile} />
+            ) : loaded && ready && faces > 0 ? (
               <SheetPreview
                 client={loaded.client}
                 sizes={sizes}
@@ -456,7 +515,7 @@ export function PrintDialog({ pageCount, sizes, currentPage, viewRange, selected
               ◀
             </button>
             <span role="status" className="print-sheet-label">
-              {faces > 0 ? `${t('Sheet {n} of {total}', { n: shownFace + 1, total: faces })} · ${paperLabel(paper, landscape)}` : t('No pages selected')}
+              {faces > 0 ? `${t('Sheet {n} of {total}', { n: shownFace + 1, total: faces })} · ${paperLabel(paper, landscape)}${tileOn && tileList[shownFace] ? ` · ${tileLabel(tileList[shownFace].page, tileList[shownFace].tile, tileList[shownFace].grid)}` : ''}` : t('No pages selected')}
             </span>
             <button type="button" aria-label={t('Next sheet')} title={t('Next sheet')} disabled={shownFace >= faces - 1} onClick={() => setFace(shownFace + 1)}>
               ▶
@@ -621,6 +680,98 @@ function SheetPreview(props: {
           />
         </div>
       ))}
+    </div>
+  )
+}
+
+/** One sheet of a tiled printout drawn to scale: the part of the page its tile covers, with the marks and label. */
+function TilePreview(props: {
+  client: PdfClient
+  sizes: PageSize[]
+  sheet: { page: number; tile: { x: number; y: number; w: number; h: number; row: number; col: number }; grid: { rows: number; cols: number } } | undefined
+  area: { w: number; h: number }
+  paper: PaperId
+  landscape: boolean
+  opts: TileOptions
+  grey: boolean
+}) {
+  const { client, sizes, sheet, area, paper, landscape, opts, grey } = props
+  const sheetPt = paperPoints(paper, landscape)
+  const k = Math.min(PREVIEW_BOX.w / sheetPt.w, PREVIEW_BOX.h / sheetPt.h)
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const size = sheet ? sizes[sheet.page] : undefined
+  const inset = 18
+  const s = opts.scalePct / 100
+  // The part of the page on this sheet, in preview pixels (the printable area starts `inset` points in).
+  const visW = size && sheet ? Math.max(0, Math.min(area.w, (size.width - sheet.tile.x) * s)) * k : 0
+  const visH = size && sheet ? Math.max(0, Math.min(area.h, (size.height - sheet.tile.y) * s)) * k : 0
+  useEffect(() => {
+    if (!sheet || !size) return
+    const ctrl = new AbortController()
+    const dpr = window.devicePixelRatio || 1
+    // A short wait so changing a setting does not queue a render for each step.
+    const timer = window.setTimeout(() => {
+      const scale = k * s * dpr
+      const cw = Math.max(1, Math.round(area.w * k * dpr))
+      const ch = Math.max(1, Math.round(area.h * k * dpr))
+      client.render(sheet.page, scale, { priority: 2, signal: ctrl.signal, region: { x: Math.round(sheet.tile.x * scale), y: Math.round(sheet.tile.y * scale), w: cw, h: ch } }).then(
+        (out) => {
+          const el = canvas.current
+          const ctx = el?.getContext('2d')
+          if (!el || !ctx || ctrl.signal.aborted) return
+          el.width = out.width
+          el.height = out.height
+          ctx.putImageData(new ImageData(new Uint8ClampedArray(out.data.buffer as ArrayBuffer, out.data.byteOffset, out.data.byteLength), out.width, out.height), 0, 0)
+        },
+        () => undefined // aborted or the document went away
+      )
+    }, 120)
+    return () => {
+      window.clearTimeout(timer)
+      ctrl.abort()
+    }
+  }, [client, sheet, size, k, s, area.w, area.h])
+  const mark = 5 * (72 / 25.4) * k
+  return (
+    <div
+      className="print-sheet"
+      style={{ width: sheetPt.w * k, height: sheetPt.h * k, filter: grey ? 'grayscale(1)' : undefined, position: 'relative' }}
+      data-testid="print-sheet"
+      data-tile-sheet={sheet ? `${sheet.page + 1}:${sheet.tile.row + 1}:${sheet.tile.col + 1}` : ''}
+    >
+      <canvas ref={canvas} data-testid="tile-canvas" style={{ position: 'absolute', left: inset * k, top: inset * k, width: area.w * k, height: area.h * k }} />
+      {opts.marks &&
+        visW > 0 &&
+        (
+          [
+            [0, 0, 1, 1],
+            [visW, 0, -1, 1],
+            [0, visH, 1, -1],
+            [visW, visH, -1, -1]
+          ] as const
+        ).map(([x, y, sx, sy], i) => (
+          <span
+            key={i}
+            aria-hidden
+            data-testid="tile-mark"
+            style={{
+              position: 'absolute',
+              left: inset * k + x + (sx < 0 ? -mark : 0),
+              top: inset * k + y + (sy < 0 ? -mark : 0),
+              width: mark,
+              height: mark,
+              borderTop: sy > 0 ? '1px solid #000' : undefined,
+              borderBottom: sy < 0 ? '1px solid #000' : undefined,
+              borderLeft: sx > 0 ? '1px solid #000' : undefined,
+              borderRight: sx < 0 ? '1px solid #000' : undefined
+            }}
+          />
+        ))}
+      {opts.labels && sheet && (
+        <span data-testid="tile-label" style={{ position: 'absolute', left: inset * k + 6, bottom: inset * k + 6, fontSize: 8, background: 'rgba(255,255,255,0.9)', padding: '1px 3px' }}>
+          {tileLabel(sheet.page, sheet.tile, sheet.grid)}
+        </span>
+      )}
     </div>
   )
 }

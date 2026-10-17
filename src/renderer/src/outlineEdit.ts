@@ -3,8 +3,23 @@
  * as a fresh /Outlines tree (ISO 32000 12.3.3) or /PageLabels number tree (12.4.2).
  */
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, type PDFRef } from 'pdf-lib'
+import { frameFor } from './annotWrite'
 
-export interface BookmarkNode {
+/** What a bookmark can show beyond its title (ISO 32000 12.3.3: /C colour, /F style flags). */
+export interface OutlineStyle {
+  bold?: boolean
+  italic?: boolean
+  /** `#rrggbb`; the viewer's default (black) when unset. */
+  color?: string
+  /** Shown open (children visible) when the file is opened. */
+  open?: boolean
+  /** Destination as read from the file, in user space; kept as it is unless `view` is set. */
+  dest?: { left: number | null; top: number | null }
+  /** A destination set here: a point on the page in points from the top-left of the page as shown. Wins over `dest`. */
+  view?: { x: number; y: number }
+}
+
+export interface BookmarkNode extends OutlineStyle {
   title: string
   /** Zero-based target page, or -1 for a bookmark without a page. */
   page: number
@@ -106,7 +121,7 @@ export async function writeOutline(bytes: Uint8Array, tree: BookmarkNode[]): Pro
     return doc.save()
   }
   const root = ctx.register(ctx.obj({ Type: 'Outlines' }))
-  /** Writes a list of siblings under `parent`; returns [first, last, visible count]. */
+  /** Writes a list of siblings under `parent`; returns [first, last, items visible when the parent is open]. */
   const writeList = (list: BookmarkNode[], parent: PDFRef): [PDFRef, PDFRef, number] => {
     const refs = list.map(() => ctx.nextRef())
     let count = 0
@@ -114,16 +129,27 @@ export async function writeOutline(bytes: Uint8Array, tree: BookmarkNode[]): Pro
       const dict: Record<string, unknown> = { Title: PDFHexString.fromText(n.title), Parent: parent }
       if (i > 0) dict.Prev = refs[i - 1]
       if (i < list.length - 1) dict.Next = refs[i + 1]
-      if (n.page >= 0 && n.page < pageRefs.length) dict.Dest = [pageRefs[n.page], 'XYZ', null, null, null]
+      if (n.page >= 0 && n.page < pageRefs.length) {
+        const at = n.view ? viewToUser(doc, n.page, n.view) : n.dest ? [n.dest.left, n.dest.top] : [null, null]
+        dict.Dest = [pageRefs[n.page], 'XYZ', at[0], at[1], null]
+      }
+      if (n.color && /^#[0-9a-f]{6}$/i.test(n.color)) {
+        const v = parseInt(n.color.slice(1), 16)
+        dict.C = [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255]
+      }
+      const flags = (n.italic ? 1 : 0) | (n.bold ? 2 : 0)
+      if (flags) dict.F = flags
+      let shown = 0
       if (n.children.length) {
         const [first, last, kids] = writeList(n.children, refs[i])
         dict.First = first
         dict.Last = last
         // Negative: closed, showing none of its descendants until opened.
-        dict.Count = -kids
+        dict.Count = n.open ? kids : -kids
+        shown = n.open ? kids : 0
       }
       ctx.assign(refs[i], ctx.obj(dict as never))
-      count++
+      count += 1 + shown
     })
     return [refs[0], refs[refs.length - 1], count]
   }
@@ -134,6 +160,15 @@ export async function writeOutline(bytes: Uint8Array, tree: BookmarkNode[]): Pro
   rootDict.set(PDFName.of('Count'), ctx.obj(count))
   doc.catalog.set(PDFName.of('Outlines'), root)
   return doc.save()
+}
+
+/** A point on a page, in points from its top-left as shown, as a point in the page's user space. */
+function viewToUser(doc: PDFDocument, page: number, at: { x: number; y: number }): [number, number] {
+  const p = doc.getPage(page)
+  const cb = p.getCropBox()
+  const m = frameFor(cb.x, cb.y, cb.x + cb.width, cb.y + cb.height, p.getRotation().angle).m
+  const r = (v: number) => Math.round(v * 100) / 100
+  return [r(m[0] * at.x + m[2] * at.y + m[4]), r(m[1] * at.x + m[3] * at.y + m[5])]
 }
 
 // ---- Page labels -----------------------------------------------------------------------------------------------

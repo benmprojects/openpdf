@@ -1,5 +1,5 @@
 import { PdfClient } from './pdfClient'
-import { findInPage } from './textLogic'
+import { contextOf, findPattern } from './searchPatterns'
 
 export interface SearchSource {
   name: string
@@ -37,7 +37,7 @@ const CONTEXT = 40
 export async function searchFiles(
   sources: SearchSource[],
   query: string,
-  opts: { matchCase: boolean; wholeWord: boolean },
+  opts: { matchCase: boolean; wholeWord: boolean; regex?: boolean; validate?: (text: string) => boolean },
   onFile: (r: FileResult, done: number) => void,
   signal: AbortSignal
 ): Promise<void> {
@@ -56,19 +56,8 @@ export async function searchFiles(
       for (let p = 0; p < pages.length && !truncated; p++) {
         if (signal.aborted) return
         const pt = await client.pageText(p)
-        for (const m of findInPage(pt, p, query, opts.matchCase, opts.wholeWord)) {
-          // Matches are in character indices; the text is in UTF-16 units. Map back to slice the context.
-          const text = pt.text
-          const a = Math.max(0, pt.charOf.indexOf(m.from))
-          const b = Math.max(a, pt.charOf.lastIndexOf(m.to) + 1)
-          hits.push({
-            page: p,
-            from: m.from,
-            to: m.to,
-            before: oneLine(text.slice(Math.max(0, a - CONTEXT), a)),
-            match: oneLine(text.slice(a, b)),
-            after: oneLine(text.slice(b, b + CONTEXT))
-          })
+        for (const m of findPattern(pt, p, query, { regex: !!opts.regex, matchCase: opts.matchCase, wholeWord: opts.wholeWord, validate: opts.validate })) {
+          hits.push({ page: p, from: m.from, to: m.to, ...contextOf(pt, m, CONTEXT) })
           if (hits.length >= PER_FILE) {
             truncated = true
             break
@@ -85,4 +74,3 @@ export async function searchFiles(
   }
 }
 
-const oneLine = (s: string) => s.replace(/\s+/g, ' ')

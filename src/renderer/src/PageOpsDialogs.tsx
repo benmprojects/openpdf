@@ -3,6 +3,8 @@ import { PDFDocument } from 'pdf-lib'
 import { Modal } from './AppDialogs'
 import { msg, t } from './i18n'
 import { getPageClip } from './pageClipboard'
+import { clipboardPicturePages, scannedPages, type PageSource } from './pageSources'
+import { ScanDialog } from './ScanDialog'
 import {
   ALL_PRESETS,
   PAPER_MM,
@@ -218,7 +220,48 @@ const num = (s: string) => (s.trim() === '' ? Number.NaN : Number(s))
 
 export function InsertDialog({ ctx, onCancel, onSubmit, initialPage }: DialogProps & { initialPage: number }) {
   const clip = getPageClip()
-  const [source, setSource] = useState<'file' | 'blank' | 'clipboard'>('file')
+  const [source, setSource] = useState<'file' | 'blank' | 'clipboard' | 'picture' | 'scan'>('file')
+  /** Pages read from the clipboard picture or the scanner, ready to insert. */
+  const [made, setMade] = useState<PageSource | null>(null)
+  const [makeError, setMakeError] = useState<string | null>(null)
+  const [scanOpen, setScanOpen] = useState(false)
+  const [working, setWorking] = useState(false)
+  const readPicture = async () => {
+    setWorking(true)
+    setMake(null)
+    try {
+      const got = await clipboardPicturePages()
+      setMade(got)
+      setMakeError(got ? null : t('There is no picture on the clipboard.'))
+    } catch (e) {
+      setMakeError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorking(false)
+    }
+  }
+  const setMake = (v: PageSource | null) => {
+    setMade(v)
+    setMakeError(null)
+  }
+  const scan = async (r: Parameters<typeof scannedPages>[0]) => {
+    setScanOpen(false)
+    setWorking(true)
+    setMake(null)
+    try {
+      const got = await scannedPages(r)
+      setMade(got)
+      setMakeError(got ? null : t('Nothing was scanned.'))
+    } catch (e) {
+      setMakeError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorking(false)
+    }
+  }
+  const choose = (s: typeof source) => {
+    setSource(s)
+    setMake(null)
+    if (s === 'picture') void readPicture()
+  }
   const [files, setFiles] = useState<SourceFile[]>([])
   const [blankCount, setBlankCount] = useState('1')
   const [paper, setPaper] = useState<PaperKind>('same')
@@ -242,6 +285,9 @@ export function InsertDialog({ ctx, onCancel, onSubmit, initialPage }: DialogPro
   } else if (source === 'blank') {
     n = Number.isInteger(bn) ? bn : 0
     error = !Number.isInteger(bn) || bn < 1 || bn > 500 ? t('Enter a number of blank pages from 1 to 500.') : size.error
+  } else if (source === 'picture' || source === 'scan') {
+    n = made?.count ?? 0
+    error = working ? t('Reading…') : (makeError ?? (made ? null : source === 'scan' ? t('Scan the pages first.' ) : t('There is no picture on the clipboard.')))
   } else {
     n = clip?.count ?? 0
     error = clip ? null : t('No pages have been copied yet.')
@@ -249,18 +295,19 @@ export function InsertDialog({ ctx, onCancel, onSubmit, initialPage }: DialogPro
   error = error ?? loc.error
 
   return (
+    <>
     <Frame
       title={t('Insert pages')}
       ok={t('Insert')}
       error={error}
       summary={t('{pages} will be inserted {where}. The document will have {total}.', { pages: pagesWord(n), where: loc.text, total: pagesWord(ctx.count + n) })}
-      onClose={onCancel}
+      onClose={() => (scanOpen ? undefined : onCancel())}
       onOk={() =>
         onSubmit({
           kind: 'insert',
           at: loc.index,
           count: n,
-          items: source === 'file' ? items : source === 'clipboard' && clip ? [{ data: clip.bytes, pages: null }] : [],
+          items: source === 'file' ? items : source === 'clipboard' && clip ? [{ data: clip.bytes, pages: null }] : (source === 'picture' || source === 'scan') && made ? [{ data: made.data, pages: null }] : [],
           blank: source === 'blank' ? { count: bn, width: size.width, height: size.height } : null
         })
       }
@@ -269,17 +316,39 @@ export function InsertDialog({ ctx, onCancel, onSubmit, initialPage }: DialogPro
       <fieldset className="pod-group">
         <legend>{t('Source')}</legend>
         <label className="pod-radio">
-          <input type="radio" name="insert-source" checked={source === 'file'} onChange={() => setSource('file')} /> {t('From a PDF file')}
+          <input type="radio" name="insert-source" checked={source === 'file'} onChange={() => choose('file')} /> {t('From a PDF file')}
         </label>
         <label className="pod-radio">
-          <input type="radio" name="insert-source" checked={source === 'blank'} onChange={() => setSource('blank')} /> {t('Blank pages')}
+          <input type="radio" name="insert-source" checked={source === 'blank'} onChange={() => choose('blank')} /> {t('Blank pages')}
         </label>
         <label className="pod-radio">
-          <input type="radio" name="insert-source" checked={source === 'clipboard'} disabled={!clip} onChange={() => setSource('clipboard')} />{' '}
+          <input type="radio" name="insert-source" checked={source === 'picture'} onChange={() => choose('picture')} /> {t('From the picture on the clipboard')}
+        </label>
+        <label className="pod-radio">
+          <input type="radio" name="insert-source" checked={source === 'scan'} onChange={() => choose('scan')} /> {t('From a scanner')}
+        </label>
+        <label className="pod-radio">
+          <input type="radio" name="insert-source" checked={source === 'clipboard'} disabled={!clip} onChange={() => choose('clipboard')} />{' '}
           {clip ? t('From the page clipboard ({pages} from {from})', { pages: pagesWord(clip.count), from: clip.from }) : t('From the page clipboard (no pages copied)')}
         </label>
       </fieldset>
       {source === 'file' && <FileList files={files} onChange={setFiles} />}
+      {source === 'picture' && (
+        <div className="pod-field">
+          <button type="button" onClick={() => void readPicture()} disabled={working}>
+            {t('Read the clipboard again')}
+          </button>
+          <span className="pod-hint">{made ? t('Ready: {what}', { what: made.label }) : ''}</span>
+        </div>
+      )}
+      {source === 'scan' && (
+        <div className="pod-field">
+          <button type="button" onClick={() => setScanOpen(true)} disabled={working}>
+            {made ? t('Scan again…') : t('Scan…')}
+          </button>
+          <span className="pod-hint">{working ? t('Scanning…') : made ? t('Ready: {what}', { what: made.label }) : ''}</span>
+        </div>
+      )}
       {source === 'blank' && (
         <div className="pod-grid">
           <label>
@@ -340,6 +409,8 @@ export function InsertDialog({ ctx, onCancel, onSubmit, initialPage }: DialogPro
         </div>
       </fieldset>
     </Frame>
+    {scanOpen && <ScanDialog onScan={(r) => void scan(r)} onClose={() => setScanOpen(false)} />}
+    </>
   )
 }
 

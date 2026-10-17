@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Modal } from './AppDialogs'
 import { FONT_FAMILIES, type FontFamily } from './annotations'
 import { parsePageRanges } from './pageOps'
+import { BatesFilesDialog } from './BatesFilesDialog'
+import { t } from './i18n'
 import type { BackgroundSpec, HeaderFooterSpec, MarkKind, Slot, WatermarkSpec } from './pageMarks'
 
 export type MarksMode = 'headerfooter' | 'pagenumbers' | 'bates' | 'watermark' | 'background' | 'crop' | 'resize' | 'remove'
@@ -87,6 +89,7 @@ export function PageMarksDialog({ mode, pageCount, currentPage, selected, presen
   const [fit, setFit] = useState(true)
   // Removal
   const [kinds, setKinds] = useState<Set<MarkKind>>(new Set(present))
+  const [several, setSeveral] = useState(false)
 
   const pages = (): number[] => {
     if (range === 'all') return Array.from({ length: pageCount }, (_, i) => i)
@@ -137,6 +140,18 @@ export function PageMarksDialog({ mode, pageCount, currentPage, selected, presen
   const num = (v: number, set: (n: number) => void, label: string, step = 1, min = 0) => (
     <input type="number" aria-label={label} value={v} step={step} min={min} onChange={(e) => set(Number(e.target.value))} />
   )
+
+  // The several-files dialog takes the place of this one; going back returns here with the settings kept.
+  if (several && (mode === 'bates' || mode === 'pagenumbers'))
+    return (
+      <BatesFilesDialog
+        mode={mode}
+        template={{ slots: mode === 'bates' ? { [slot]: '<<bates>>' } : { [slot]: format }, fontSize, font, color, margin: marginMm * MM }}
+        format={bates}
+        pageStart={mode === 'bates' ? 1 : start}
+        onClose={() => setSeveral(false)}
+      />
+    )
 
   return (
     <Modal title={TITLE[mode]} onClose={onClose}>
@@ -347,7 +362,7 @@ export function PageMarksDialog({ mode, pageCount, currentPage, selected, presen
         )}
         {mode === 'remove' && (
           <div className="marks-remove">
-            {(['HeaderFooter', 'Watermark', 'Background'] as MarkKind[]).map((k) => (
+            {(['HeaderFooter', 'Watermark', 'Background', 'Overlay'] as MarkKind[]).map((k) => (
               <label key={k} className="inline">
                 <input
                   type="checkbox"
@@ -355,7 +370,7 @@ export function PageMarksDialog({ mode, pageCount, currentPage, selected, presen
                   checked={kinds.has(k)}
                   onChange={(e) => setKinds((s) => (e.target.checked ? new Set(s).add(k) : new Set([...s].filter((x) => x !== k))))}
                 />{' '}
-                {k === 'HeaderFooter' ? 'Headers, footers, page and Bates numbers' : k === 'Watermark' ? 'Watermarks' : 'Backgrounds'}
+                {k === 'HeaderFooter' ? 'Headers, footers, page and Bates numbers' : k === 'Watermark' ? 'Watermarks' : k === 'Overlay' ? 'Overlaid pages' : 'Backgrounds'}
                 {!present.has(k) && <span className="muted small"> (none)</span>}
               </label>
             ))}
@@ -382,6 +397,11 @@ export function PageMarksDialog({ mode, pageCount, currentPage, selected, presen
         )}
         {error && <div className="error small">{error}</div>}
         <div className="marks-actions">
+          {(mode === 'bates' || mode === 'pagenumbers') && (
+            <button type="button" className="btn" onClick={() => setSeveral(true)} title={t('Number a list of files so the number carries on from one to the next')}>
+              {t('Apply to several files…')}
+            </button>
+          )}
           {mode === 'crop' && (
             <button
               type="button"

@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, FileText, FolderOpen, Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { PRESETS, presetById, queryError } from './searchPatterns'
 import { searchFiles, type FileHit, type FileResult, type SearchSource } from './multiSearch'
 
 export interface SearchJump {
@@ -8,6 +9,7 @@ export interface SearchJump {
   query: string
   matchCase: boolean
   wholeWord: boolean
+  regex?: boolean
   page: number
   from: number
 }
@@ -24,6 +26,8 @@ export function SearchPanel({ openDocs, onOpenHit, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [matchCase, setMatchCase] = useState(false)
   const [wholeWord, setWholeWord] = useState(false)
+  const [useRegex, setUseRegex] = useState(false)
+  const [presetId, setPresetId] = useState('')
   const [scope, setScope] = useState<'open' | 'folder'>(openDocs.length ? 'open' : 'folder')
   const [folder, setFolder] = useState<string | null>(null)
   const [subfolders, setSubfolders] = useState(true)
@@ -50,7 +54,8 @@ export function SearchPanel({ openDocs, onOpenHit, onClose }: Props) {
       sources = (await window.openpdf.listPdfs(folder, subfolders)).map((p) => ({ name: p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) + 1), path: p }))
     }
     setProgress({ done: 0, total: sources.length })
-    const opts = { matchCase, wholeWord }
+    const preset = presetById(presetId)
+    const opts = { matchCase, wholeWord, regex: useRegex, validate: preset && query === preset.pattern ? preset.validate : undefined }
     await searchFiles(
       sources,
       query,
@@ -75,7 +80,8 @@ export function SearchPanel({ openDocs, onOpenHit, onClose }: Props) {
 
   const total = results.reduce((n, r) => n + r.hits.length, 0)
   const busy = progress !== null && progress.done < progress.total
-  const canRun = !!query && (scope === 'open' ? openDocs.length > 0 : !!folder)
+  const patternError = queryError(query, { regex: useRegex, matchCase, wholeWord })
+  const canRun = !!query && !patternError && (scope === 'open' ? openDocs.length > 0 : !!folder)
 
   return (
     <aside className="search-panel" aria-label="Search in files">
@@ -125,7 +131,33 @@ export function SearchPanel({ openDocs, onOpenHit, onClose }: Props) {
           <label>
             <input type="checkbox" checked={wholeWord} onChange={(e) => setWholeWord(e.target.checked)} /> Whole word
           </label>
+          <label>
+            <input type="checkbox" checked={useRegex} onChange={(e) => setUseRegex(e.target.checked)} /> Regular expression
+          </label>
         </div>
+        <div className="search-panel-row">
+          <select
+            aria-label="Pattern preset for files"
+            value={presetId}
+            onChange={(e) => {
+              const p = presetById(e.target.value)
+              setPresetId(e.target.value)
+              if (p) {
+                setQuery(p.pattern)
+                setUseRegex(true)
+                setWholeWord(false)
+              }
+            }}
+          >
+            <option value="">Pattern preset…</option>
+            {PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        {patternError && <div className="search-error small">Not a valid pattern: {patternError}</div>}
         <div className="search-panel-row">
           <button className="primary" type="submit" disabled={!canRun}>
             Search
@@ -166,7 +198,7 @@ export function SearchPanel({ openDocs, onOpenHit, onClose }: Props) {
                     <li key={k}>
                       <button
                         className="search-hit"
-                        onClick={() => onOpenHit(r.source, { query, matchCase, wholeWord, page: h.page, from: h.from })}
+                        onClick={() => onOpenHit(r.source, { query, matchCase, wholeWord, regex: useRegex, page: h.page, from: h.from })}
                         title={`Page ${h.page + 1}`}
                       >
                         <span className="search-hit-page">p. {h.page + 1}</span>

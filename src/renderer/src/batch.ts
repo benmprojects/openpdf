@@ -15,10 +15,13 @@ import { convertToPdfA } from './pdfa'
 import { readProps, writeProps } from './metadata'
 import { sanitise, type SanitiseOptions } from './sanitise'
 import { PDFDocument } from 'pdf-lib'
+import { numberFile } from './batesMulti'
 
 export type BatchStep =
   | { kind: 'watermark'; text: string; fontSize: number; color: string; opacity: number; angle: number; behind: boolean }
   | { kind: 'headerFooter'; slots: Partial<Record<Slot, string>>; fontSize: number; color: string; margin: number; startNumber: number }
+  /** Bates numbers; with `carry` the number runs on from one file of the batch to the next. */
+  | { kind: 'bates'; slot: Slot; prefix: string; suffix: string; start: number; digits: number; fontSize: number; color: string; margin: number; carry: boolean }
   | { kind: 'optimise'; level: 'light' | 'standard' | 'small' }
   | { kind: 'ocr'; languages: string[]; dpi: 200 | 300 | 400; all: boolean }
   | { kind: 'sanitise'; options: SanitiseOptions }
@@ -38,6 +41,7 @@ export interface BatchAction {
 export const STEP_LABELS: Record<BatchStep['kind'], string> = {
   watermark: 'Add a text watermark',
   headerFooter: 'Add a header or footer (page numbers, date, file name)',
+  bates: 'Add Bates numbers (can continue across the files)',
   optimise: 'Optimise (reduce file size)',
   ocr: 'Recognise text (OCR)',
   sanitise: 'Remove hidden information',
@@ -76,6 +80,7 @@ export function checkSteps(steps: BatchStep[]): string[] {
   steps.forEach((s, i) => {
     if (s.kind === 'watermark' && !s.text.trim()) out.push(`Step ${i + 1}: the watermark has no text.`)
     if (s.kind === 'headerFooter' && !Object.values(s.slots).some((t) => t?.trim())) out.push(`Step ${i + 1}: the header or footer has no text.`)
+    if (s.kind === 'bates' && !(s.digits >= 1 && s.digits <= 12)) out.push(`Step ${i + 1}: Bates digits must be from 1 to 12.`)
     if (s.kind === 'ocr' && !s.languages.length) out.push(`Step ${i + 1}: choose a language.`)
     if (s.kind === 'security' && !s.userPassword && !s.ownerPassword) out.push(`Step ${i + 1}: enter a password.`)
     if (s.kind === 'plugin' && (!s.plugin || !s.action)) out.push(`Step ${i + 1}: choose a plugin action.`)
@@ -84,11 +89,23 @@ export function checkSteps(steps: BatchStep[]): string[] {
 }
 
 /** Runs the steps over one file's bytes. `name` is the file's name (for the file-name token). */
-export async function runSteps(bytes: Uint8Array, name: string, steps: BatchStep[], env: BatchEnv): Promise<{ bytes: Uint8Array; notes: string[] }> {
+export async function runSteps(bytes: Uint8Array, name: string, steps: BatchStep[], env: BatchEnv, state?: BatchState): Promise<{ bytes: Uint8Array; notes: string[]; bates?: { first: string; last: string; pages: number } }> {
   let cur = bytes
   const notes: string[] = []
-  for (const s of steps) {
+  let bates: { first: string; last: string; pages: number } | undefined
+  for (const [si, s] of steps.entries()) {
     switch (s.kind) {
+      case 'bates': {
+        const offset = s.carry ? (state?.offsets[si] ?? 0) : 0
+        const format = { prefix: s.prefix, suffix: s.suffix, start: s.start, digits: s.digits }
+        const r = await numberFile(cur, name, { slots: { [s.slot]: '<<bates>>' }, fontSize: s.fontSize, font: 'Helvetica', color: s.color, margin: s.margin }, format, offset, 1, 0)
+        cur = r.bytes
+        if (state && s.carry) state.offsets[si] = offset + r.pages
+        const num = (i: number) => `${s.prefix}${String(s.start + offset + i).padStart(s.digits, '0')}${s.suffix}`
+        bates = r.pages ? { first: num(0), last: num(r.pages - 1), pages: r.pages } : undefined
+        if (bates) notes.push(`Bates ${bates.first} to ${bates.last}`)
+        break
+      }
       case 'watermark':
         cur = await addWatermark(cur, { kind: 'text', text: s.text, font: 'Helvetica', fontSize: s.fontSize, color: s.color, opacity: s.opacity, angle: s.angle, scale: 0.5, behind: s.behind, pages: await allPages(cur) })
         break
@@ -145,7 +162,12 @@ export async function runSteps(bytes: Uint8Array, name: string, steps: BatchStep
         break
     }
   }
-  return { bytes: cur, notes }
+  return { bytes: cur, notes, bates }
+}
+
+/** What carries from one file of a batch to the next: pages numbered so far, per step. */
+export interface BatchState {
+  offsets: Record<number, number>
 }
 
 // ---- Running over many files -----------------------------------------------------------------------
@@ -176,20 +198,26 @@ export interface BatchResult {
   after?: number
   notes: string[]
   error?: string
+  /** The Bates numbers put on this file, when the steps include Bates numbering. */
+  bates?: { first: string; last: string; pages: number }
 }
 
 /** Runs a job. A file that fails is reported and the rest carry on. */
 export async function runBatch(job: BatchJob, io: BatchIO, env: BatchEnv, onProgress?: (done: number, total: number, current: string, results: BatchResult[]) => void, cancelled: () => boolean = () => false): Promise<BatchResult[]> {
   const files = await io.expand(job.inputs, job.recursive)
   const results: BatchResult[] = []
+  const state: BatchState = { offsets: {} }
   for (const [i, path] of files.entries()) {
     if (cancelled()) break
     onProgress?.(i, files.length, path, results)
     try {
       const { name, data } = await io.read(path)
-      const r = await runSteps(data, name, job.steps, env)
+      // The numbers only move on when the file is written: a file that fails leaves no gap.
+      const trial: BatchState = { offsets: { ...state.offsets } }
+      const r = await runSteps(data, name, job.steps, env, trial)
       const output = await io.write(path, job.outDir, job.suffix, r.bytes)
-      results.push({ source: path, ok: true, output, before: data.length, after: r.bytes.length, notes: r.notes })
+      state.offsets = trial.offsets
+      results.push({ source: path, ok: true, output, before: data.length, after: r.bytes.length, notes: r.notes, bates: r.bates })
     } catch (e) {
       results.push({ source: path, ok: false, notes: [], error: e instanceof Error ? e.message : String(e) })
     }

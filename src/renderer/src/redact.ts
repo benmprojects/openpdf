@@ -4,16 +4,81 @@
  * object is the k-th text-showing operator, and so on), annotations under it are deleted, and a black box is drawn
  * where it was. Marks and boxes are in display space (the page as shown, y down).
  */
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRef, PDFStream, rgb, type PDFObject } from 'pdf-lib'
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRef, PDFStream, StandardFonts, concatTransformationMatrix, popGraphicsState, pushGraphicsState, rgb, type PDFFont, type PDFObject } from 'pdf-lib'
 import { frameFor } from './annotWrite'
 import { imageDraws, isShow, num, parseContent, pathDraws, showBytes, showOrigins, stringToBytes, type Op } from './content'
 import { isImageXObject, pageContent, xobjectDict } from './pageContent'
 import type { ImageObject, TextObject } from './pdfiumRaw'
 import type { Rect } from './textLogic'
 
+/** How a mark looks once applied: the box that covers the removed content, and the text on it. */
+export interface RedactStyle {
+  /** `#rrggbb` fill of the box; black when unset. */
+  fill?: string
+  /** `#rrggbb` outline of the box; none when unset. */
+  outline?: string
+  /** Text drawn on the box, for example REDACTED or a reason code. None when empty. */
+  text?: string
+  /** `#rrggbb`; white or black, whichever shows against the fill, when unset. */
+  textColour?: string
+  /** Points; fitted to the box when unset or 0. */
+  fontSize?: number
+  /** Repeat the text across the box as many times as fit. */
+  repeat?: boolean
+}
+
 export interface RedactMark {
   page: number
   rect: Rect
+  style?: RedactStyle
+}
+
+export const DEFAULT_REDACT_STYLE: Required<Pick<RedactStyle, 'fill'>> = { fill: '#000000' }
+
+const hexRgb = (hex: string): [number, number, number] => {
+  const n = parseInt(/^#[0-9a-f]{6}$/i.test(hex) ? hex.slice(1) : '000000', 16)
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
+}
+
+/** Black or white, whichever reads better on `fill`. */
+export function contrastText(fill: string): string {
+  const [r, g, b] = hexRgb(fill)
+  return 0.299 * r + 0.587 * g + 0.114 * b > 0.55 ? '#000000' : '#ffffff'
+}
+
+export interface OverlayLayout {
+  size: number
+  rows: { x: number; baseline: number; text: string }[]
+}
+
+/**
+ * Where the overlay text goes in a box (display space, y down). One line centred in the box, or, with `repeat`, as many
+ * copies side by side and as many lines as fit. The text is made smaller when one copy would not fit the box.
+ */
+export function layoutOverlay(rect: Rect, text: string, width: (s: string, size: number) => number, fontSize = 0, repeat = false): OverlayLayout | null {
+  const label = text.replace(/\s+/g, ' ').trim()
+  if (!label || rect.w < 2 || rect.h < 2) return null
+  let size = fontSize > 0 ? fontSize : Math.min(rect.h * 0.7, 12)
+  // Never wider than the box or taller than it.
+  size = Math.min(size, rect.h * 0.9)
+  const w1 = width(label, size)
+  if (w1 > rect.w) size = Math.max(2, size * (rect.w / w1))
+  const w = width(label, size)
+  const gap = size
+  const perRow = repeat ? Math.max(1, Math.floor((rect.w + gap) / (w + gap))) : 1
+  const lineH = size * 1.3
+  const lines = repeat ? Math.max(1, Math.floor(rect.h / lineH)) : 1
+  const rowText = Array(perRow).fill(label).join('   ')
+  const rowW = perRow > 1 ? width(rowText, size) : w
+  const x = rect.x + Math.max(0, (rect.w - rowW) / 2)
+  const top = rect.y + (rect.h - lines * lineH) / 2
+  return { size, rows: Array.from({ length: lines }, (_, i) => ({ x, baseline: top + i * lineH + lineH / 2 + size * 0.35, text: rowText })) }
+}
+
+/** Replaces what the standard font cannot show with a question mark. */
+export function safeLabel(text: string, font: Pick<PDFFont, 'getCharacterSet'>): string {
+  const ok = new Set(font.getCharacterSet())
+  return [...text].map((c) => (ok.has(c.codePointAt(0)!) ? c : '?')).join('')
 }
 
 /** What PDFium found on one page, for deciding what lies under the marks. */
@@ -181,13 +246,14 @@ export async function redactPages(
   objects: (page: number) => Promise<PageObjects>,
   fill = '#000000'
 ): Promise<{ bytes: Uint8Array; report: RedactReport }> {
+  if (!marks.length) return { bytes, report: { text: 0, images: 0, shapes: 0, annotations: 0, boxes: 0, unchecked: [] } }
   const doc = await PDFDocument.load(bytes, { updateMetadata: false })
   const report: RedactReport = { text: 0, images: 0, shapes: 0, annotations: 0, boxes: 0, unchecked: [] }
   const pageIndexes = [...new Set(marks.map((m) => m.page))].sort((a, b) => a - b)
-  const n = parseInt(fill.slice(1), 16)
-  const colour = rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255)
+  let font: PDFFont | null = null
   for (const pi of pageIndexes) {
-    const rects = marks.filter((m) => m.page === pi).map((m) => m.rect)
+    const pageMarks = marks.filter((m) => m.page === pi)
+    const rects = pageMarks.map((m) => m.rect)
     const page = doc.getPage(pi)
     const rotation = page.getRotation().angle
     const found = await objects(pi)
@@ -234,10 +300,34 @@ export async function redactPages(
         }
       }
     }
-    for (const u of user) {
-      page.drawRectangle({ x: u.x0, y: u.y0, width: u.x1 - u.x0, height: u.y1 - u.y0, color: colour, borderWidth: 0 })
+    if (!font && pageMarks.some((m) => m.style?.text?.trim())) font = await doc.embedFont(StandardFonts.HelveticaBold)
+    user.forEach((u, k) => {
+      const st = pageMarks[k].style ?? {}
+      const fillHex = st.fill ?? fill
+      const [fr, fg, fb] = hexRgb(fillHex)
+      const outline = st.outline ? hexRgb(st.outline) : null
+      page.drawRectangle({
+        x: u.x0,
+        y: u.y0,
+        width: u.x1 - u.x0,
+        height: u.y1 - u.y0,
+        color: rgb(fr, fg, fb),
+        ...(outline ? { borderColor: rgb(outline[0], outline[1], outline[2]), borderWidth: 1.5 } : { borderWidth: 0 })
+      })
       report.boxes++
-    }
+      const f2 = font
+      if (f2 && st.text && st.text.trim()) {
+        const label = safeLabel(st.text, f2)
+        const lay = layoutOverlay(pageMarks[k].rect, label, (s, size) => f2.widthOfTextAtSize(s, size), st.fontSize ?? 0, !!st.repeat)
+        if (lay) {
+          const [tr, tg, tb] = hexRgb(st.textColour ?? contrastText(fillHex))
+          // Drawn in display space (y down): move there, then flip so the text stands upright.
+          page.pushOperators(pushGraphicsState(), concatTransformationMatrix(...f), concatTransformationMatrix(1, 0, 0, -1, 0, 0))
+          for (const row of lay.rows) page.drawText(row.text, { x: row.x, y: -row.baseline, size: lay.size, font: f2, color: rgb(tr, tg, tb) })
+          page.pushOperators(popGraphicsState())
+        }
+      }
+    })
   }
   pruneUnreachable(doc)
   return { bytes: await doc.save(), report }

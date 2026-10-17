@@ -1,10 +1,18 @@
 import {
   ArrowDown,
   ArrowUp,
+  Bold,
   Bookmark,
   BookmarkPlus,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Crosshair,
   Download,
+  FileDown,
+  FileUp,
+  Italic,
+  LocateFixed,
+  Wand2,
   Eye,
   EyeOff,
   File as FileIcon,
@@ -28,7 +36,7 @@ import type { MediaItem } from './media'
 import { msg, t } from './i18n'
 import { getPageClip, onPageClip } from './pageClipboard'
 import { useEffect, useRef, useState } from 'react'
-import type { AttachmentInfo, OutlineNode, PageSize, PdfClient } from './pdfClient'
+import type { AttachmentInfo, PageSize, PdfClient } from './pdfClient'
 
 const THUMB_WIDTH = 132
 
@@ -50,7 +58,7 @@ export type PageOp =
 interface Props {
   client: PdfClient
   pages: PageSize[]
-  outline: OutlineNode[] | null
+  outline: BookmarkNode[] | null
   tab: SidebarTab
   onTab: (t: SidebarTab) => void
   currentPage: number
@@ -81,6 +89,12 @@ interface Props {
   measurements?: React.ReactNode
   /** Saves an edited bookmark tree. */
   onEditOutline?: (tree: BookmarkNode[]) => void
+  /** Makes bookmarks from headings or pages (opens a dialog). */
+  onGenerateBookmarks?: () => void
+  onImportBookmarks?: () => void
+  onExportBookmarks?: (format: 'text' | 'csv') => void
+  /** The top-left of what is on screen: a page and a point on it, in points from the page's top-left. */
+  getView?: () => { page: number; x: number; y: number } | null
 }
 
 const TABS: [SidebarTab, string, LucideIcon][] = [
@@ -117,7 +131,7 @@ export function Sidebar(props: Props) {
           labels={labels}
         />
       ) : tab === 'bookmarks' ? (
-        <Bookmarks outline={outline} onGoTo={onGoTo} currentPage={currentPage} onEdit={props.onEditOutline} />
+        <Bookmarks outline={outline} onGoTo={onGoTo} currentPage={currentPage} onEdit={props.onEditOutline} tools={props} />
       ) : tab === 'comments' ? (
         props.comments
       ) : tab === 'measure' ? (
@@ -509,14 +523,18 @@ function Bookmarks({
   outline,
   onGoTo,
   currentPage,
-  onEdit
+  onEdit,
+  tools
 }: {
-  outline: OutlineNode[] | null
+  outline: BookmarkNode[] | null
   onGoTo: (p: number) => void
   currentPage: number
   /** Saves an edited bookmark tree into the document. */
   onEdit?: (tree: BookmarkNode[]) => void
+  tools: Pick<Props, 'onGenerateBookmarks' | 'onImportBookmarks' | 'onExportBookmarks' | 'getView'>
 }) {
+  // Expand all or collapse all: the twisties open or close to match each time this changes.
+  const [openAll, setOpenAll] = useState<{ open: boolean; tick: number } | null>(null)
   const [sel, setSel] = useState<Path | null>(null)
   const [renaming, setRenaming] = useState<Path | null>(null)
   // The edited tree, shown until the document has been rewritten and its outline read back the same.
@@ -567,6 +585,51 @@ function Bookmarks({
           <button className="icon-btn" disabled={!node} onClick={() => sel && apply(updateAt(tree, sel, { page: currentPage }), sel)} aria-label="Set to current page" title="Point the bookmark at the current page">
             <Crosshair size={15} aria-hidden />
           </button>
+          <button
+            className="icon-btn"
+            disabled={!node}
+            onClick={() => {
+              const v = tools.getView?.()
+              if (sel && v) apply(updateAt(tree, sel, { page: v.page, view: { x: v.x, y: v.y }, dest: undefined }), sel)
+            }}
+            aria-label="Set to current view"
+            title="Point the bookmark at what is on screen now (the page and the place on it)"
+          >
+            <LocateFixed size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} aria-pressed={!!node?.bold} onClick={() => sel && node && apply(updateAt(tree, sel, { bold: !node.bold }), sel)} aria-label="Bold" title="Show the bookmark in bold">
+            <Bold size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!node} aria-pressed={!!node?.italic} onClick={() => sel && node && apply(updateAt(tree, sel, { italic: !node.italic }), sel)} aria-label="Italic" title="Show the bookmark in italics">
+            <Italic size={15} aria-hidden />
+          </button>
+          <input
+            type="color"
+            className="outline-colour"
+            disabled={!node}
+            value={node?.color ?? '#000000'}
+            onChange={(e) => sel && apply(updateAt(tree, sel, { color: e.target.value === '#000000' ? undefined : e.target.value }), sel)}
+            aria-label="Bookmark colour"
+            title="Colour of the bookmark"
+          />
+          <button className="icon-btn" disabled={!tree.length} onClick={() => setOpenAll({ open: true, tick: (openAll?.tick ?? 0) + 1 })} aria-label="Expand all" title="Expand all">
+            <ChevronsUpDown size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!tree.length} onClick={() => setOpenAll({ open: false, tick: (openAll?.tick ?? 0) + 1 })} aria-label="Collapse all" title="Collapse all">
+            <ChevronsDownUp size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!tools.onGenerateBookmarks} onClick={() => tools.onGenerateBookmarks?.()} aria-label="Generate bookmarks" title="Make bookmarks from headings, or one for each page">
+            <Wand2 size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!tools.onImportBookmarks} onClick={() => tools.onImportBookmarks?.()} aria-label="Import bookmarks" title="Read bookmarks from a text or CSV outline">
+            <FileUp size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!tree.length || !tools.onExportBookmarks} onClick={() => tools.onExportBookmarks?.('text')} aria-label="Export bookmarks as text" title="Save the bookmarks as an indented text outline">
+            <FileDown size={15} aria-hidden />
+          </button>
+          <button className="icon-btn" disabled={!tree.length || !tools.onExportBookmarks} onClick={() => tools.onExportBookmarks?.('csv')} aria-label="Export bookmarks as CSV" title="Save the bookmarks as a CSV file (level, title, page)">
+            <Download size={15} aria-hidden />
+          </button>
           <button className="icon-btn" disabled={!node} onClick={() => sel && apply(moveAt(tree, sel, -1))} aria-label="Move up" title="Move up">
             <ArrowUp size={15} aria-hidden />
           </button>
@@ -598,6 +661,7 @@ function Bookmarks({
               selected={sel}
               renaming={renaming}
               same={same}
+              openAll={openAll}
               onSelect={setSel}
               onRename={(p, title) => {
                 setRenaming(null)
@@ -612,7 +676,7 @@ function Bookmarks({
 }
 
 function sameTree(a: BookmarkNode[], b: BookmarkNode[]): boolean {
-  return a.length === b.length && a.every((n, i) => n.title === b[i].title && n.page === b[i].page && sameTree(n.children, b[i].children))
+  return a.length === b.length && a.every((n, i) => n.title === b[i].title && n.page === b[i].page && !n.bold === !b[i].bold && !n.italic === !b[i].italic && (n.color ?? '') === (b[i].color ?? '') && sameTree(n.children, b[i].children))
 }
 
 function OutlineItem({
@@ -623,20 +687,25 @@ function OutlineItem({
   selected,
   renaming,
   same,
+  openAll,
   onSelect,
   onRename
 }: {
-  node: OutlineNode
+  node: BookmarkNode
   path: Path
   depth: number
   onGoTo: (p: number) => void
   selected: Path | null
   renaming: Path | null
   same: (p: Path | null, q: Path | null) => boolean
+  openAll: { open: boolean; tick: number } | null
   onSelect: (p: Path) => void
   onRename: (p: Path, title: string | null) => void
 }) {
-  const [open, setOpen] = useState(depth < 1)
+  const [open, setOpen] = useState(node.open ?? depth < 1)
+  useEffect(() => {
+    if (openAll) setOpen(openAll.open)
+  }, [openAll?.tick]) // eslint-disable-line react-hooks/exhaustive-deps
   const hasKids = node.children.length > 0
   const isSel = same(path, selected)
   return (
@@ -666,6 +735,7 @@ function OutlineItem({
               if (node.page >= 0) onGoTo(node.page)
             }}
             title={node.title}
+            style={{ fontWeight: node.bold ? 700 : undefined, fontStyle: node.italic ? 'italic' : undefined, color: node.color }}
           >
             {node.title || '(untitled)'}
           </button>
@@ -683,6 +753,7 @@ function OutlineItem({
               selected={selected}
               renaming={renaming}
               same={same}
+              openAll={openAll}
               onSelect={onSelect}
               onRename={onRename}
             />

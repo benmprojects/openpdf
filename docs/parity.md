@@ -17,7 +17,7 @@ Prepared 17/10/2026 for planning the remaining work.
 | Open | Local, recent, restore previous session, cloud accounts, open from URL | PARTIAL | Recent list, tabs, drag and drop, Places (synced OneDrive/SharePoint/Dropbox/Google Drive folders) exist. Missing: open from URL, restore previous session, direct cloud API sign-in |
 | Save / Save As | Save options, save copy | DONE | Atomic write, Save As dialog |
 | New document | Blank, from text, RTF, images, scanner, combine files | PARTIAL | Convert tab has images, text, web page, clipboard, screenshot, Office (via LibreOffice), scan. Missing: blank document, RTF, Markdown, CSV, XPS, WMF |
-| Print | Printer, ranges, copies, scaling, booklet, N-up, comments, preview | PARTIAL | Printer choice, range, odd/even, copies, fit/actual/custom scale, orientation, N-up, booklet, preview, 300 dpi. Print what: document, document and comments, comments only; comments with the Printable flag off are left out. Pages always print as 300 dpi pictures, so "print as image" is how every job already works. Missing: print with layers choice, output is raster (no selectable text in print-to-PDF), poster/tile printing, advanced printer properties |
+| Print | Printer, ranges, copies, scaling, booklet, N-up, comments, preview | PARTIAL | Printer choice, range, odd/even, copies, fit/actual/custom scale, orientation, N-up, booklet, preview, 300 dpi. Print what: document, document and comments, comments only; comments with the Printable flag off are left out. Pages always print as 300 dpi pictures, so "print as image" is how every job already works. Tile large pages (scale percent, overlap in mm, cut marks, labels, shown in the preview). Missing: print with layers choice, output is raster (no selectable text in print-to-PDF), advanced printer properties |
 | Export | Images, Word, Excel, PowerPoint | PARTIAL | Images (PNG/JPEG/TIFF), text, HTML, Word (best effort). Missing: Excel, PowerPoint; Word has no pictures, tables or columns |
 | Share / e-mail | Send by e-mail, SharePoint check in/out | MISSING | No send-by-email, no check in/out |
 | Revert | Discard unsaved changes | PARTIAL | Undo/redo and recovery snapshots exist; no one-click "Revert to saved" found |
@@ -81,15 +81,15 @@ Prepared 17/10/2026 for planning the remaining work.
 | Swap pages | Exchange two pages | PARTIAL | Move covers the result; no swap command |
 | Merge pages | Combine split pages | MISSING | Merge is of documents only |
 | Split document | Every n pages, by bookmarks (level), by size | DONE | Also with file name pattern |
-| Split pages | Cut each page into tiles by percentage or measure, crop box or physical | MISSING | Not present |
-| Overlay | Layer pages of another document over this one | MISSING | Only watermark/background |
+| Split pages | Cut each page into tiles by percentage or measure, crop box or physical | DONE | Organise, Split pages: a grid of rows and columns, or pieces of a paper size (A5 to A1, Letter, Tabloid) with an overlap in mm; each tile becomes a page with its own crop box, content shared. Comments go to the tile they sit in |
+| Overlay | Layer pages of another document over this one | DONE | Organise, Overlay: choose another PDF and its pages, over or under a page range, fit/fill/actual size, alignment and offset, opacity, optional single-colour tint (compare drawing revisions). Form XObjects; removable with Remove marks |
 | Rotate | Dialog: pages, odd/even, landscape/portrait | DONE | |
 | Crop | Dialog and crosshair tool; remove cropped content | PARTIAL | Margins and drag crop, remove cropping. Missing: auto-trim white margins, "remove cropped content permanently", crop odd/even separately in the tool |
 | Resize | Paper size, scaling | DONE | |
 | Watermark | Text/image, font, colour, opacity, angle, position, page range, saved settings, remove | PARTIAL | Text/picture, angle, opacity, behind/over, pages, removable. Missing: saved watermark presets, offsets/alignment control, tiling, scale to fit options, first-page-different |
 | Background | Colour, image, placement | DONE | |
 | Header and footer | Six positions, fonts, date, page number format, ranges, saved settings | PARTIAL | Slots, codes, font, colour, margin, pages. Missing: saved presets, margin per side, shrink-to-fit, date format choices (check codes) |
-| Bates numbering | Single and multiple files, preview, naming, log | PARTIAL | Single document with prefix/number. Missing: across multiple files with continuous numbering (batch has no Bates step), preview, output file renaming, log |
+| Bates numbering | Single and multiple files, preview, naming, log | PARTIAL | Prefix/number/digits on one document, or across several files (Apply to several files: ordered list, continuing number, output folder and name suffix, first/last preview, CSV log); page numbers can continue across files too; Batch has a Bates step that carries the number across the batch |
 | Number pages / page labels | Label ranges | DONE | |
 | Optimise | File size, image downsampling, linearise | DONE | |
 | Compare documents (Plus) | Text and style changes, summary | DONE | Word-level and visual; no style (font/colour) changes |
