@@ -20,6 +20,7 @@ export function annotsFromImported(page: number, list: ImportedAnnot[], replies:
     dash: r.dash,
     measure: r.measure,
     stampInfo: r.stampInfo,
+    angle: r.angle,
     opacity: r.opacity,
     fontFamily: r.fontFamily,
     linkUri: r.linkUri,

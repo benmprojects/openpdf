@@ -7,7 +7,6 @@ import {
   colorChoices,
   DEFAULT_LINE_WIDTH,
   LINE_WIDTHS,
-  STAMP_LABELS,
   defaultColor,
   isShapeKind,
   isMarkup,
@@ -19,10 +18,7 @@ import {
   signature,
   type Reply,
   type ReviewState,
-  stampSize,
   parseWav,
-  imageStampSize,
-  stampInfoLine,
   TEXTBOX_PADDING,
   translated,
   typewriterRect,
@@ -107,11 +103,17 @@ import { PropertiesPanel, type ToolPreset } from './PropertiesPanel'
 import { CommentsPane } from './CommentsPane'
 import { commentsCsv, commentSummaryPdf } from './commentReport'
 import { fromFdf, fromNorms, fromXfdf, pageFrames, toFdf, toNorms, toXfdf } from './interchange'
-import { StampPicker, type StampChoice } from './StampPicker'
-import type { ImageStamp } from '../../preload'
+import { StampPicker } from './StampPicker'
+import { useStamps } from './useStamps'
 import { Reader, type ReaderState } from './readAloud'
 import type { MeasureKind } from './MeasureLayer'
-import { calibrate, formatArea, formatLength, pathLength, PAPER_MM, polygonArea, readViewports, scaleAt, type Scale, type Viewport } from './measure'
+import { calibrate, formatArea, formatLength, pathLength, PAPER_MM, polygonArea, readViewports, resultLabel, scaleAt, type Scale, type Viewport } from './measure'
+import { ScaleDialog } from './ScaleDialog'
+import { MeasurePane } from './MeasurePane'
+import { measureCsv, measureRows, nextCount } from './measureList'
+import { writePageScales } from './measureWrite'
+import { ALL_SNAPS, type SnapKinds } from './snap'
+import type { ScalePreset } from './measureScale'
 import { readLayers, withHiddenLayers, type Layer } from './layers'
 import {
   ArrowLeftRight,
@@ -184,6 +186,10 @@ import {
   Spline,
   Pentagon,
   Scaling,
+  Scale as ScaleIcon,
+  Triangle,
+  Diamond,
+  Download,
   Pause,
   Play,
   Volume2,
@@ -376,6 +382,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   const [protection, setProtection] = useState<Protection>({ kind: 'none' })
   /** The protection was changed here and must be written on save. */
   const [protectionDirty, setProtectionDirty] = useState(false)
+  /** A scale was set here and is not yet written into the file as viewport measure dictionaries. */
+  const [scaleDirty, setScaleDirty] = useState(false)
   const [securityOpen, setSecurityOpen] = useState(false)
   const [ownerPrompt, setOwnerPrompt] = useState<{ draft: string; wrong: boolean } | null>(null)
   const [tool, setTool] = useState<Tool>('select')
@@ -396,6 +404,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       const region = { x: Math.floor(rect.x * scale), y: Math.floor(rect.y * scale), w: Math.max(1, Math.round(rect.w * scale)), h: Math.max(1, Math.round(rect.h * scale)) }
       const out = await c.render(page, scale, { region })
       const png = await encodeRotatedPng(out.width, out.height, out.data, rotation)
+      if (stamps.captureSnapshot(png)) return
       await window.openpdf.copyImage(png)
       const turned = rotation === 90 || rotation === 270
       setNotice({ kind: 'info', text: `Snapshot copied to the clipboard (${turned ? out.height : out.width} × ${turned ? out.width : out.height} pixels)` })
@@ -835,17 +844,6 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   dashesRef.current = dashes
   const authorRef = useRef(author)
   authorRef.current = author
-  const [stampChoice, setStampChoice] = useState<StampChoice>({ kind: 'text', label: STAMP_LABELS[0] })
-  const [stampDated, setStampDated] = useState(false)
-  const [stampImages, setStampImages] = useState<ImageStamp[]>([])
-  const [stampPickerOpen, setStampPickerOpen] = useState(false)
-  const stampChoiceRef = useRef(stampChoice)
-  stampChoiceRef.current = stampChoice
-  const stampDatedRef = useRef(stampDated)
-  stampDatedRef.current = stampDated
-  useEffect(() => {
-    window.openpdf.listStamps().then(setStampImages).catch(() => {})
-  }, [])
   const [lastMarkup, setLastMarkup] = useState<AnnotKind>('highlight')
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   // Media is looked for when its tab is shown (reading the structure of a large file takes a moment).
@@ -1006,7 +1004,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   useEffect(() => setEpoch((e) => e + 1), [hasFormFields])
 
   const annotWork = deleted.length > 0 || annots.some(changed) || annots.some(hasNewReplies) || zDirty
-  const annotsDirty = annotWork || formValues.size > 0 || protectionDirty
+  const annotsDirty = annotWork || formValues.size > 0 || protectionDirty || scaleDirty
   /** Writes the pending annotation edits (and new replies) and filled-in form values into `src`. */
   const applyEdits = async (src: Uint8Array) => {
     let out = src
@@ -1021,6 +1019,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       const unicode = wide ? await window.openpdf.findFont('Arial', false, false).catch(() => null) : null
       out = await applyFormValues(out, formValues, unicode?.data, await computeDisplays(formFields, formValues))
     }
+    // Scales set here go into the file as viewport measure dictionaries, one per page, for other viewers.
+    if (scaleDirtyRef.current) out = await writePageScales(out, pages.map((_, i) => userScaleFor(i)))
     return out
   }
   const dirty = annotsDirty || bytes !== savedBytes
@@ -1112,8 +1112,27 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     setNotice({ kind: 'info', text: 'Click the page where the picture should go.' })
   }
 
+  const stamps = useStamps({
+    author,
+    pages,
+    ctx: { count: pages.length, current: Math.min(currentPage, Math.max(0, pages.length - 1)), selected: [], sizes: pages },
+    commit: history.commit,
+    newAnnot,
+    select: setSelectedAnnot,
+    setTool,
+    notify: setNotice,
+    selected: annots.find((a) => a.id === selectedAnnot) ?? null,
+    update: (id, fn) => {
+      touch(id)
+      history.commit((list) => list.map((a) => (a.id === id ? fn(a) : a)))
+    }
+  })
+  useEffect(() => {
+    if (tool !== 'snapshot') stamps.cancelCapture()
+  }, [tool]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const place = useCallback(
-    async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound', page: number, x: number, y: number) => {
+    async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound', page: number, x: number, y: number, box?: { w: number; h: number }) => {
       const size = pages[page]
       if (!size) return
       if (kind === 'fileattach' || kind === 'sound') {
@@ -1161,27 +1180,18 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         setTool('select')
         return
       }
-      const choice = stampChoiceRef.current
-      // A dated stamp records who placed it and when, at the moment it is placed.
-      const info = kind === 'stamp' && choice.kind === 'text' && stampDatedRef.current ? stampInfoLine(author) : undefined
-      const stamp =
-        kind !== 'stamp'
-          ? null
-          : choice.kind === 'image'
-            ? imageStampSize(choice.stamp.width, choice.stamp.height)
-            : stampSize(choice.label, info)
-      const w = stamp ? stamp.w : kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.w
-      const h = stamp ? stamp.h : kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.h
-      const left = stamp ? x - w / 2 : x // a stamp is placed centred on the click
-      const top = stamp ? y - h / 2 : y
-      const rect = { x: Math.max(0, Math.min(size.width - w, left)), y: Math.max(0, Math.min(size.height - h, top)), w, h }
-      const a = newAnnot(kind, page, [rect], stamp ? (choice.kind === 'image' ? choice.stamp.name : choice.label) : '')
-      if (stamp) a.lineWidth = 2
-      if (stamp && choice.kind === 'image') a.image = choice.stamp.dataUrl
-      if (info) a.stampInfo = info
+      if (kind === 'stamp') {
+        // Stamps are placed by the stamp palette's own logic (fields, numbering, sizing, pages).
+        await stamps.place(page, x, y, box)
+        return
+      }
+      const w = kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.w
+      const h = kind === 'note' ? NOTE_SIZE : TEXTBOX_DEFAULT.h
+      const rect = { x: Math.max(0, Math.min(size.width - w, x)), y: Math.max(0, Math.min(size.height - h, y)), w, h }
+      const a = newAnnot(kind, page, [rect], '')
       history.commit((list) => [...list, a])
       setSelectedAnnot(a.id)
-      if (!stamp) setEditingAnnot(a.id)
+      setEditingAnnot(a.id)
       setTool('select')
     },
     [pages, colors, author, history.commit] // eslint-disable-line react-hooks/exhaustive-deps
@@ -1482,28 +1492,6 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     else setLastMarkup(k)
   }
 
-  /** Choosing a stamp arms the stamp tool; a text label also relabels the selected text stamp. */
-  const pickStamp = (c: StampChoice) => {
-    setStampChoice(c)
-    setStampPickerOpen(false)
-    if (c.kind === 'text' && selected?.kind === 'stamp' && !selected.image) {
-      touch(selected.id)
-      history.commit((list) =>
-        list.map((a) => (a.id === selected.id ? { ...a, text: c.label, rects: [{ ...a.rects[0], w: stampSize(c.label, a.stampInfo).w }] } : a))
-      )
-    } else setTool('stamp')
-  }
-  const addStampImages = async () => {
-    const res = await window.openpdf.addStamps()
-    setStampImages(await window.openpdf.listStamps())
-    if (res.refused.length) setNotice({ kind: 'error', text: `Not added (PNG or JPEG up to 8 MB only): ${res.refused.join(', ')}` })
-  }
-  const removeStampImage = async (id: string) => {
-    await window.openpdf.removeStamp(id)
-    setStampImages(await window.openpdf.listStamps())
-    if (stampChoice.kind === 'image' && stampChoice.stamp.id === id) setStampChoice({ kind: 'text', label: STAMP_LABELS[0] })
-  }
-
   const save = useCallback(
     async (asNew: boolean, opts?: SaveAsChoice) => {
       if (saving) return
@@ -1533,6 +1521,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         history.reset([])
         setZDirty(false)
         setProtectionDirty(false)
+        setScaleDirty(false)
         setFormValues(new Map())
         setExtraSel(new Set())
         setSelectedAnnot(null)
@@ -1554,6 +1543,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     baseline.current = new Map()
     history.reset([])
     setZDirty(false)
+    setScaleDirty(false)
     setFormValues(new Map())
     setExtraSel(new Set())
     setSelectedAnnot(null)
@@ -1605,8 +1595,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
 
   /** Click-to-place tools: Add image puts the picked picture on the page as content; the rest make annotations. */
   const placeTool = useCallback(
-    async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound' | 'addimage', page: number, x: number, y: number) => {
-      if (kind !== 'addimage') return place(kind, page, x, y)
+    async (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound' | 'addimage', page: number, x: number, y: number, box?: { w: number; h: number }) => {
+      if (kind !== 'addimage') return place(kind, page, x, y, box)
       const img = pendingImage.current
       pendingImage.current = null
       setTool('select')
@@ -2322,13 +2312,36 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
   // Measurements are saved as measurement annotations. The scale comes from calibration, the page's own
   // viewport measure dictionaries, or paper millimetres.
   const measurements = useMemo(() => annots.filter((a) => a.measure), [annots])
+  /** A scale for the whole document (calibrated, or set for every page in the Scale dialog). */
   const [calibrated, setCalibrated] = useState<Scale | null>(null)
+  /** Scales set for particular pages in the Scale dialog; they win over the document scale. */
+  const [pageScales, setPageScales] = useState<Record<number, Scale>>({})
+  const [scaleDialog, setScaleDialog] = useState(false)
+  const [scalePresets, setScalePresets] = useState<ScalePreset[]>([])
+  useEffect(() => {
+    void window.openpdf.getSettings().then((st) => setScalePresets(st.scalePresets ?? []))
+  }, [])
+  const changeScalePresets = (next: ScalePreset[]) => {
+    setScalePresets(next)
+    void window.openpdf.setSettings({ scalePresets: next }).then((st) => setScalePresets(st.scalePresets))
+  }
+  const [snapOn, setSnapOn] = useState(true)
+  const [snapKinds, setSnapKinds] = useState<SnapKinds>(ALL_SNAPS)
+  const [countLabel, setCountLabel] = useState('Count')
   const [viewports, setViewports] = useState<Viewport[][]>([])
   const [calibrating, setCalibrating] = useState<{ lengthPt: number; real: string; unit: string } | null>(null)
   const viewportsRef = useRef(viewports)
   viewportsRef.current = viewports
   const calibratedRef = useRef(calibrated)
   calibratedRef.current = calibrated
+  const pageScalesRef = useRef(pageScales)
+  pageScalesRef.current = pageScales
+  const scaleDirtyRef = useRef(scaleDirty)
+  scaleDirtyRef.current = scaleDirty
+  const countLabelRef = useRef(countLabel)
+  countLabelRef.current = countLabel
+  /** The scale the person set for a page (its own, else the document's), or null when it is the file's own. */
+  const userScaleFor = (page: number): Scale | null => pageScalesRef.current[page] ?? calibratedRef.current
   useEffect(() => {
     let cancelled = false
     readViewports(bytes).then((v) => !cancelled && setViewports(v))
@@ -2336,7 +2349,7 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
       cancelled = true
     }
   }, [bytes])
-  const measureScale = useCallback((page: number, at: Pt) => scaleAt(at, viewports[page], calibrated), [viewports, calibrated])
+  const measureScale = useCallback((page: number, at: Pt) => scaleAt(at, viewports[page], pageScales[page] ?? calibrated), [viewports, calibrated, pageScales])
   const measureLabel = useCallback(
     (kind: MeasureKind, points: Pt[], page: number) => {
       const s = measureScale(page, points[0])
@@ -2345,13 +2358,27 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     },
     [measureScale]
   )
-  const onMeasure = useCallback((kind: MeasureKind | 'calibrate', page: number, points: Pt[]) => {
+  const onMeasure = useCallback((kind: MeasureKind | 'calibrate' | 'count', page: number, points: Pt[]) => {
     if (kind === 'calibrate') {
       setCalibrating({ lengthPt: pathLength(points), real: '', unit: 'm' })
       return
     }
-    const s = scaleAt(points[0], viewportsRef.current[page], calibratedRef.current)
-    const label = kind === 'area' ? formatArea(polygonArea(points), s) : formatLength(pathLength(points), s)
+    if (kind === 'count') {
+      // A numbered marker: a small filled circle, numbered within its label.
+      const group = countLabelRef.current.trim() || 'Count'
+      const at = points[0]
+      const marker: Annot = {
+        ...newAnnot('ellipse', page, [{ x: at.x - 7, y: at.y - 7, w: 14, h: 14 }], ''),
+        color: MEASURE_COLOR,
+        fill: MEASURE_COLOR,
+        lineWidth: 1,
+        measure: { kind: 'count', factor: 1, unit: '', label: group, n: nextCount(annotsRef.current, group) }
+      }
+      history.commit((list) => [...list, marker])
+      return
+    }
+    const s = scaleAt(points[0], viewportsRef.current[page], pageScalesRef.current[page] ?? calibratedRef.current)
+    const label = resultLabel(kind, points, s)
     const a = newAnnot(kind === 'distance' ? 'line' : kind === 'perimeter' ? 'polyline' : 'polygon', page, [], '')
     const made = withBounds({
       ...a,
@@ -2362,11 +2389,48 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
     })
     history.commit((list) => [...list, made])
   }, [history.commit]) // eslint-disable-line react-hooks/exhaustive-deps
-  const scaleText = calibrated
-    ? `Calibrated: ${calibrated.label}`
+  const activeScale = pageScales[currentPage] ?? calibrated
+  const scaleText = activeScale
+    ? activeScale.source === 'calibrated'
+      ? `Calibrated: ${activeScale.label}`
+      : `Scale: ${activeScale.label} (${activeScale.unit})`
     : viewports[currentPage]?.length
       ? `From the document${viewports[currentPage][0].scale.label ? `: ${viewports[currentPage][0].scale.label}` : ''} (${viewports[currentPage][0].scale.unit})`
       : 'Paper size (mm)'
+  /** Sets the scale for `pages` (every page when it covers the document) and, if asked, re-measures what is already there. */
+  const applyScale = (scale: Scale, pageList: number[], updateExisting: boolean) => {
+    if (pageList.length >= pages.length) {
+      setCalibrated(scale)
+      setPageScales({})
+    } else setPageScales((prev) => Object.fromEntries([...Object.entries(prev), ...pageList.map((p) => [p, scale] as const)]))
+    setScaleDirty(true)
+    setScaleDialog(false)
+    if (updateExisting) {
+      const on = new Set(pageList)
+      annotsRef.current.filter((a) => a.measure && a.measure.kind !== 'count' && on.has(a.page) && a.points?.[0]).forEach((a) => touch(a.id))
+      history.commit((list) =>
+        list.map((a) => {
+          if (!a.measure || a.measure.kind === 'count' || !on.has(a.page) || !a.points?.[0]) return a
+          return { ...a, measure: { ...a.measure, factor: scale.factor, unit: scale.unit, ratio: scale.label, label: resultLabel(a.measure.kind, a.points[0], scale) } }
+        })
+      )
+    }
+    setNotice({ kind: 'info', text: `Scale ${scale.label ?? ''} set for ${pageList.length >= pages.length ? 'the whole document' : pageList.length === 1 ? `page ${pageList[0] + 1}` : `${pageList.length} pages`}` })
+  }
+  const measureList = useMemo(() => measureRows(measurements, pageLabels), [measurements, pageLabels])
+  const labelMeasure = useCallback(
+    (id: number, text: string) => {
+      touch(id)
+      history.commit((list) =>
+        list.map((a) => (a.id === id && a.measure ? { ...a, measure: a.measure.kind === 'count' ? { ...a.measure, label: text.trim() || 'Count' } : { ...a.measure, name: text.trim() || undefined } } : a))
+      )
+    },
+    [history.commit, touch]
+  )
+  const exportMeasurementsCsv = async () => {
+    const saved = await window.openpdf.saveText(`${baseName} (measurements).csv`, measureCsv(measureList), { name: 'CSV (comma separated)', ext: 'csv' })
+    if (saved) setNotice({ kind: 'info', text: `Measurements exported to ${saved}` })
+  }
   const copyMeasurements = async () => {
     const lines = measurements.map((m) => `Page ${m.page + 1}\t${m.measure!.kind}\t${m.measure!.label}`)
     await navigator.clipboard.writeText(lines.join('\n'))
@@ -2826,23 +2890,33 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               <RGroup label={t('Stamp')}>
                 <RB big icon={StampIcon} label={t('Stamp')} onClick={() => setTool(tool === 'stamp' ? 'select' : 'stamp')} disabled={!pages.length} pressed={tool === 'stamp'} title={t('Place a stamp: click on the page')} />
                 <div className="menu-anchor stamp-anchor">
-                  <button className="stamp-current" onClick={() => setStampPickerOpen((o) => !o)} aria-expanded={stampPickerOpen} aria-label="Choose stamp" title="Choose a stamp">
-                    {stampChoice.kind === 'image' ? <img src={stampChoice.stamp.dataUrl} alt="" /> : <span>{stampChoice.label}</span>}
+                  <button className="stamp-current" onClick={() => stamps.setOpen((o) => !o)} aria-expanded={stamps.open} aria-label="Choose stamp" title="Choose a stamp">
+                    {stamps.choice.kind === 'image' ? <img src={stamps.choice.image?.dataUrl} alt="" /> : <span>{stamps.choice.title}</span>}
                     <ChevronDown size={14} aria-hidden />
                   </button>
-                  {stampPickerOpen && (
+                  {stamps.open && (
                     <StampPicker
-                      choice={stampChoice}
-                      dated={stampDated}
-                      images={stampImages}
-                      onPick={pickStamp}
-                      onDated={setStampDated}
-                      onAddImages={() => void addStampImages()}
-                      onRemoveImage={(id) => void removeStampImage(id)}
-                      onClose={() => setStampPickerOpen(false)}
+                      choice={stamps.choice}
+                      dated={stamps.dated}
+                      stamps={stamps.stamps}
+                      recent={stamps.meta.recent}
+                      counters={stamps.meta.counters}
+                      author={author}
+                      opts={stamps.opts}
+                      onOpts={stamps.setOpts}
+                      onPick={stamps.pick}
+                      onDated={stamps.setDated}
+                      onNew={stamps.newStamp}
+                      onEdit={stamps.edit}
+                      onDelete={(s) => void stamps.remove(s)}
+                      onPages={stamps.arm}
+                      onImport={() => void stamps.importCollection()}
+                      onExport={() => void stamps.exportCollection()}
+                      onClose={() => stamps.setOpen(false)}
                     />
                   )}
                 </div>
+                <RB icon={CopyPlus} label={t('To pages…')} onClick={stamps.copySelected} disabled={selected?.kind !== 'stamp'} title={t('Copy the selected stamp to other pages, in the same place')} />
               </RGroup>
               {styleAndEdit}
             </>
@@ -2875,17 +2949,35 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 <RB big icon={Ruler} label={t('Distance')} onClick={() => setTool(tool === 'measure-distance' ? 'select' : 'measure-distance')} disabled={!pages.length} pressed={tool === 'measure-distance'} title={t('Measure a distance: click two points. Shift keeps 45 degree steps')} />
                 <RB big icon={Spline} label={t('Perimeter')} onClick={() => setTool(tool === 'measure-perimeter' ? 'select' : 'measure-perimeter')} disabled={!pages.length} pressed={tool === 'measure-perimeter'} title={t('Measure a path: click points, double-click or Enter to finish, Backspace to undo a point')} />
                 <RB big icon={Pentagon} label={t('Area')} onClick={() => setTool(tool === 'measure-area' ? 'select' : 'measure-area')} disabled={!pages.length} pressed={tool === 'measure-area'} title={t('Measure an area: click the corners, double-click or Enter to finish')} />
+                <RB big icon={Hash} label={t('Count')} onClick={() => setTool(tool === 'measure-count' ? 'select' : 'measure-count')} disabled={!pages.length} pressed={tool === 'measure-count'} title={t('Count: click to drop numbered markers, numbered within the label')} />
+                <RStack>
+                  <input className="rinput" aria-label={t('Count label')} value={countLabel} onChange={(e) => setCountLabel(e.target.value)} title={t('Label for the markers you drop: each label is numbered and totalled on its own')} />
+                </RStack>
+              </RGroup>
+              <RGroup label={t('Snap')}>
+                <RB big icon={Magnet} label={t('Snap to content')} onClick={() => setSnapOn(!snapOn)} pressed={snapOn} disabled={!pages.length} title={t('Snap measuring points to the drawing\'s lines and corners. Hold Ctrl to snap to nothing while you click')} />
+                <RStack>
+                  <RB icon={Square} label={t('Endpoint')} onClick={() => setSnapKinds({ ...snapKinds, end: !snapKinds.end })} pressed={snapOn && snapKinds.end} disabled={!snapOn} title={t('Snap to the ends and corners of lines and shapes')} />
+                  <RB icon={Triangle} label={t('Midpoint')} onClick={() => setSnapKinds({ ...snapKinds, mid: !snapKinds.mid })} pressed={snapOn && snapKinds.mid} disabled={!snapOn} title={t('Snap to the middle of a line')} />
+                </RStack>
+                <RStack>
+                  <RB icon={X} label={t('Intersection')} onClick={() => setSnapKinds({ ...snapKinds, inter: !snapKinds.inter })} pressed={snapOn && snapKinds.inter} disabled={!snapOn} title={t('Snap to where two lines cross')} />
+                  <RB icon={Diamond} label={t('Nearest')} onClick={() => setSnapKinds({ ...snapKinds, near: !snapKinds.near })} pressed={snapOn && snapKinds.near} disabled={!snapOn} title={t('Snap to the nearest point on a line')} />
+                </RStack>
               </RGroup>
               <RGroup label={t('Scale')}>
+                <RB big icon={ScaleIcon} label={t('Scale…')} onClick={() => setScaleDialog(true)} disabled={!pages.length} title={t('Choose a drawing scale such as 1:100, the units and precision, and which pages it applies to')} />
                 <RB big icon={Scaling} label={t('Calibrate')} onClick={() => setTool(tool === 'calibrate' ? 'select' : 'calibrate')} disabled={!pages.length} pressed={tool === 'calibrate'} title={t('Set the scale: click both ends of a line of known length, then enter its real length')} />
                 <RStack>
                   <span className="rnote" title={scaleText}>
                     {scaleText}
                   </span>
-                  <RB icon={RotateCcw} label={t('Use document scale')} onClick={() => setCalibrated(null)} disabled={!calibrated} title={t('Forget the calibration and use the document\'s scale (or paper size)')} />
+                  <RB icon={RotateCcw} label={t('Use document scale')} onClick={() => { setCalibrated(null); setPageScales({}); setScaleDirty(false) }} disabled={!calibrated && !Object.keys(pageScales).length} title={t('Forget the calibration and use the document\'s scale (or paper size)')} />
                 </RStack>
               </RGroup>
               <RGroup label={t('Results')}>
+                <RB big icon={Ruler} label={t('Measurements')} onClick={() => setSidebar(sidebar === 'measure' ? null : 'measure')} pressed={sidebar === 'measure'} title={t('List every measurement: go to it, label it, delete it, export it')} />
+                <RB big icon={Download} label={t('Export CSV')} onClick={() => void exportMeasurementsCsv()} disabled={!measurements.length} title={t('Save every measurement as a CSV file')} />
                 <RStack>
                   <RB icon={Copy} label={t('Copy all')} onClick={() => void copyMeasurements()} disabled={!measurements.length} title={t('Copy every measurement as text')} />
                   <RB icon={Trash2} label={t('Clear all')} onClick={() => history.commit((list) => list.filter((a) => !a.measure))} disabled={!measurements.length} title={t('Delete every measurement made in this session')} />
@@ -3516,6 +3608,19 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         </form>
       )}
 
+      {scaleDialog && (
+        <ScaleDialog
+          pageCount={pages.length}
+          currentPage={currentPage}
+          selectedPages={pageSel}
+          presets={scalePresets}
+          onApply={applyScale}
+          onSavePreset={(p) => changeScalePresets([...scalePresets.filter((x) => x.id !== p.id), p])}
+          onDeletePreset={(id) => changeScalePresets(scalePresets.filter((x) => x.id !== id))}
+          onClose={() => setScaleDialog(false)}
+        />
+      )}
+
       {calibrating && (
         <form
           className="page-dialog"
@@ -3524,6 +3629,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
             e.preventDefault()
             try {
               setCalibrated(calibrate(calibrating.lengthPt, Number(calibrating.real.replace(',', '.')), calibrating.unit))
+              setPageScales({})
+              setScaleDirty(true)
               setCalibrating(null)
               setTool('measure-distance')
             } catch (err) {
@@ -3649,6 +3756,8 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
         }
       })()}
 
+      {stamps.dialogs}
+
       {pageDialog && (() => {
         const common = { ctx: dialogCtx, name: baseName, onCancel: () => setPageDialog(null), onSubmit: (r: PageDialogResult) => void submitPageDialog(r) }
         switch (pageDialog.kind) {
@@ -3728,6 +3837,16 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
                 isLayerVisible={(key) => (hiddenLayers ? !hiddenLayers.has(key) : layers.find((l) => l.key === key)?.defaultOn !== false)}
                 onToggleLayer={toggleLayer}
                 onEditOutline={locked ? undefined : editOutline}
+                measurements={
+                  <MeasurePane
+                    rows={measureList}
+                    selectedId={selectedAnnot}
+                    onGo={focusComment}
+                    onLabel={labelMeasure}
+                    onDelete={(ids) => removeMany(new Set(ids))}
+                    onExportCsv={() => void exportMeasurementsCsv()}
+                  />
+                }
                 comments={
                   <CommentsPane
                     annots={commentAnnots}
@@ -3778,10 +3897,12 @@ export function DocView({ id: docId, data, name, path, active, onMeta: reportMet
               mode={pageMode}
               onZoomTo={zoomTo}
               onSnapshot={(page, rect) => void takeSnapshot(page, rect)}
+              stampDrag={tool === 'stamp' && stamps.opts.drag}
               pageColours={pageColours}
               measurements={[]}
               onMeasure={onMeasure}
               measureLabel={measureLabel}
+              objectSnap={snapOn ? snapKinds : null}
               aids={aids}
               guides={guides}
               onGuides={setGuides}

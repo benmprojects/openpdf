@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Paperclip,
   PencilLine,
+  Ruler,
   Clapperboard,
   Play,
   Trash2,
@@ -31,7 +32,7 @@ import type { AttachmentInfo, OutlineNode, PageSize, PdfClient } from './pdfClie
 
 const THUMB_WIDTH = 132
 
-export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media'
+export type SidebarTab = 'pages' | 'bookmarks' | 'comments' | 'attachments' | 'layers' | 'media' | 'measure'
 
 /** A page edit requested from the thumbnail pane. `move.before` is an index in the current order (page count = end). */
 export type PageOp =
@@ -76,6 +77,8 @@ interface Props {
   onToggleLayer: (key: string) => void
   /** The Comments tab, rendered by the document view. */
   comments: React.ReactNode
+  /** The Measurements tab, rendered by the document view. */
+  measurements?: React.ReactNode
   /** Saves an edited bookmark tree. */
   onEditOutline?: (tree: BookmarkNode[]) => void
 }
@@ -86,7 +89,8 @@ const TABS: [SidebarTab, string, LucideIcon][] = [
   ['comments', msg('Comments'), MessageSquare],
   ['attachments', msg('Attachments'), Paperclip],
   ['layers', msg('Layers'), Layers],
-  ['media', 'Media', Clapperboard]
+  ['media', 'Media', Clapperboard],
+  ['measure', msg('Measurements'), Ruler]
 ]
 
 export function Sidebar(props: Props) {
@@ -116,6 +120,8 @@ export function Sidebar(props: Props) {
         <Bookmarks outline={outline} onGoTo={onGoTo} currentPage={currentPage} onEdit={props.onEditOutline} />
       ) : tab === 'comments' ? (
         props.comments
+      ) : tab === 'measure' ? (
+        props.measurements
       ) : tab === 'attachments' ? (
         <Attachments list={props.attachments} onSave={props.onSaveAttachment} onAdd={props.onAddAttachments} onRemove={props.onRemoveAttachment} onSaveAll={props.onSaveAllAttachments} />
       ) : tab === 'media' ? (

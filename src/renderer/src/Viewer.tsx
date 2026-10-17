@@ -20,6 +20,7 @@ import {
 } from './textLogic'
 import { GuideLayer, type Guide } from './GuideLayer'
 import { MeasureLayer, type MeasureKind, type Measurement } from './MeasureLayer'
+import { SnapIndex, type SnapHit, type SnapKinds } from './snap'
 import { RULER_SIZE, RulerStrip, type RulerUnit } from './Rulers'
 import { layoutRows, rowOfPage, type PageMode } from './pageLayout'
 import { displayDims, stackTransform, toDisplay, toPage, type Rotation } from './viewRotation'
@@ -76,6 +77,7 @@ export type Tool =
   | 'measure-distance'
   | 'measure-perimeter'
   | 'measure-area'
+  | 'measure-count'
   | 'calibrate'
   | 'polygon'
   | 'polyline'
@@ -140,6 +142,8 @@ interface Props {
   onZoomTo: (zoom: number) => void
   /** The snapshot tool: a box dragged on one page, in page points (unrotated frame). */
   onSnapshot: (page: number, rect: Rect) => void
+  /** The stamp tool is on and a drag sizes the stamp (otherwise a click places it). */
+  stampDrag?: boolean
   /** How page colours are shown: as they are, inverted for night reading, or high contrast. */
   pageColours: 'normal' | 'night' | 'contrast'
   measurements: Measurement[]
@@ -174,8 +178,10 @@ interface Props {
   guides: Guide[]
   onGuides: (g: Guide[]) => void
   /** A finished measurement, or the line drawn with the calibrate tool. */
-  onMeasure: (kind: MeasureKind | 'calibrate', page: number, points: Pt[]) => void
+  onMeasure: (kind: MeasureKind | 'calibrate' | 'count', page: number, points: Pt[]) => void
   measureLabel: (kind: MeasureKind, points: Pt[], page: number) => string
+  /** Which kinds of snapping to the page's vector content are on while measuring; null when off. */
+  objectSnap: SnapKinds | null
   tool: Tool
   annots: Annot[]
   selectedAnnot: number | null
@@ -190,7 +196,7 @@ interface Props {
   onResizeAnnot: (id: number, w: number, h: number) => void
   onEditAnnot: (id: number | null) => void
   onAnnotText: (id: number, text: string) => void
-  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound' | 'addimage', page: number, x: number, y: number) => void
+  onPlace: (kind: 'note' | 'textbox' | 'stamp' | 'caret' | 'typewriter' | 'fileattach' | 'sound' | 'addimage', page: number, x: number, y: number, box?: { w: number; h: number }) => void
   drawStyle: DrawStyle
   onCreateShape: (a: Omit<Annot, 'id'>) => void
   onReshapeAnnot: (id: number, index: number, dx: number, dy: number) => void
@@ -215,10 +221,12 @@ export function Viewer({
   mode,
   onZoomTo,
   onSnapshot,
+  stampDrag,
   pageColours,
   measurements,
   onMeasure,
   measureLabel,
+  objectSnap,
   aids,
   guides,
   onGuides,
@@ -276,16 +284,18 @@ export function Viewer({
   const measureDraftRef = useRef(measureDraft)
   measureDraftRef.current = measureDraft
   // Measuring and the polygon, polyline and cloud tools all place points with clicks.
-  const measureKind: MeasureKind | 'calibrate' | 'polygon' | 'polyline' | 'cloud' | null =
+  const measureKind: MeasureKind | 'calibrate' | 'count' | 'polygon' | 'polyline' | 'cloud' | null =
     tool === 'measure-distance'
       ? 'distance'
       : tool === 'measure-perimeter'
         ? 'perimeter'
         : tool === 'measure-area'
           ? 'area'
-          : tool === 'calibrate' || tool === 'polygon' || tool === 'polyline' || tool === 'cloud'
-            ? tool
-            : null
+          : tool === 'measure-count'
+            ? 'count'
+            : tool === 'calibrate' || tool === 'polygon' || tool === 'polyline' || tool === 'cloud'
+              ? tool
+              : null
   /** Finishes a click-placed path: a measurement, or a polygon, polyline or cloud annotation. */
   const finishPoints = useCallback(
     (kind: NonNullable<typeof measureKind>, page: number, points: Pt[]) => {
@@ -297,6 +307,7 @@ export function Viewer({
     [onCreateShape, onMeasure]
   )
   useEffect(() => setMeasureDraft(null), [measureKind])
+
   // Links of pages near the view, for clicking and the hand cursor.
   const linksRef = useRef(new Map<number, PageLink[]>())
   const [links, setLinks] = useState<ReadonlyMap<number, PageLink[]>>(new Map())
@@ -396,6 +407,58 @@ export function Viewer({
     [rotation, zoom, pages]
   )
 
+  // Snapping to the vector content of the page while measuring: the segments of each page are read once (they
+  // come from the PDFium worker) and indexed; the nearest end point, intersection, mid point or line point wins.
+  const objectSnapRef = useRef(objectSnap)
+  objectSnapRef.current = objectSnap
+  const snapIndexes = useRef(new Map<number, SnapIndex | 'loading'>())
+  useEffect(() => snapIndexes.current.clear(), [client])
+  const [snapMark, setSnapMark] = useState<{ page: number; hit: SnapHit } | null>(null)
+  const snapsActive = measureKind === 'distance' || measureKind === 'perimeter' || measureKind === 'area' || measureKind === 'calibrate' || measureKind === 'count'
+  /** The snap at a pointer position over a page, or null (no geometry yet, switched off, nothing close). */
+  const objectSnapAt = useCallback(
+    (page: number, raw: Pt): SnapHit | null => {
+      const kinds = objectSnapRef.current
+      if (!kinds) return null
+      const have = snapIndexes.current.get(page)
+      if (!have) {
+        snapIndexes.current.set(page, 'loading')
+        client
+          .pathGeometry(page)
+          .then((g) => snapIndexes.current.set(page, new SnapIndex(g)))
+          .catch(() => snapIndexes.current.set(page, new SnapIndex({ segs: new Float32Array(0), verts: new Float32Array(0) })))
+        return null
+      }
+      return have === 'loading' ? null : have.query(raw, 8 / zoom, kinds)
+    },
+    [client, zoom]
+  )
+  /** The point a click or pointer move at (cx, cy) means while measuring: an object snap, else the grid and guides. Holding Ctrl turns object snapping off. */
+  const measurePoint = useCallback(
+    (el: HTMLElement, page: number, cx: number, cy: number, ctrl: boolean): Pt => {
+      const raw = pointOnPage(el, page, cx, cy)
+      const hit = snapsActive && !ctrl ? objectSnapAt(page, raw) : null
+      return hit ? hit.pt : snapPt(raw)
+    },
+    [pointOnPage, snapsActive, objectSnapAt, snapPt]
+  )
+  // The snap marker follows the pointer whenever a measuring tool is on.
+  useEffect(() => {
+    if (!snapsActive || !objectSnap) {
+      setSnapMark(null)
+      return
+    }
+    const onMove = (ev: MouseEvent) => {
+      const pageEl = (ev.target as HTMLElement | null)?.closest?.<HTMLElement>('[data-page]')
+      if (!pageEl || ev.ctrlKey) return setSnapMark(null)
+      const page = Number(pageEl.dataset.page)
+      const hit = objectSnapAt(page, pointOnPage(pageEl, page, ev.clientX, ev.clientY))
+      setSnapMark((prev) => (hit ? (prev && prev.page === page && prev.hit.kind === hit.kind && prev.hit.pt.x === hit.pt.x && prev.hit.pt.y === hit.pt.y ? prev : { page, hit }) : prev ? null : prev))
+    }
+    window.addEventListener('mousemove', onMove)
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [snapsActive, objectSnap, objectSnapAt, pointOnPage])
+
   /** The row at a document y, as an index into `rows`. */
   const rowAtDocY = useCallback(
     (y: number) => {
@@ -480,7 +543,7 @@ export function Viewer({
       const el = d && pageEls.current[d.page]
       if (!d || !el) return
       const size = pages[d.page]
-      const raw = snapPt(pointOnPage(el, d.page, ev.clientX, ev.clientY))
+      const raw = measurePoint(el, d.page, ev.clientX, ev.clientY, ev.ctrlKey)
       let p = { x: Math.min(size.width, Math.max(0, raw.x)), y: Math.min(size.height, Math.max(0, raw.y)) }
       const prev = d.points[d.points.length - 1]
       if (prev && ev.shiftKey) p = constrain('line', prev, p)
@@ -508,7 +571,7 @@ export function Viewer({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('keydown', onKey, true)
     }
-  }, [drafting, pages, pointOnPage, finishPoints, snapPt])
+  }, [drafting, pages, measurePoint, finishPoints])
 
   // ---- Rulers and guides ----------------------------------------------------------------------------
   // Rulers measure from the top left corner of the current page as displayed.
@@ -672,10 +735,15 @@ export function Viewer({
         const d = measureDraftRef.current
         if (d && d.page !== page) return // a measurement stays on one page
         const size = pages[page]
-        const raw = snapPt(pointOnPage(pageEl, page, e.clientX, e.clientY))
+        const raw = measurePoint(pageEl, page, e.clientX, e.clientY, e.ctrlKey)
         let p = { x: Math.min(size.width, Math.max(0, raw.x)), y: Math.min(size.height, Math.max(0, raw.y)) }
         const prev = d?.points[d.points.length - 1]
         if (prev && e.shiftKey) p = constrain('line', prev, p)
+        // A count marker is dropped by one click.
+        if (measureKind === 'count') {
+          onMeasure('count', page, [p])
+          return
+        }
         const twoPoint = measureKind === 'distance' || measureKind === 'calibrate'
         // A double click ends a perimeter or area (its second click already added the point).
         if (e.detail >= 2 && d && !twoPoint) {
@@ -693,7 +761,7 @@ export function Viewer({
         setMeasureDraft({ kind: measureKind, page, points, cursor: null })
         return
       }
-      if (tool === 'snapshot' || tool === 'link' || tool === 'crop' || tool === 'redact' || tool === 'signbox' || tool === 'formfield') {
+      if (tool === 'snapshot' || tool === 'link' || tool === 'crop' || tool === 'redact' || tool === 'signbox' || tool === 'formfield' || (tool === 'stamp' && stampDrag)) {
         const pageEl = (e.target as HTMLElement).closest<HTMLElement>('[data-page]')
         if (!pageEl) return
         e.preventDefault()
@@ -705,6 +773,14 @@ export function Viewer({
           window.removeEventListener('mousemove', move)
           window.removeEventListener('mouseup', up)
           setBand(null)
+          if (tool === 'stamp') {
+            // A drag sizes the stamp from the corner it started at; a click places it at its default size.
+            const p0 = pointOnPage(pageEl, page, sx, sy)
+            const p1 = pointOnPage(pageEl, page, ev.clientX, ev.clientY)
+            if (Math.abs(ev.clientX - sx) < 6 || Math.abs(ev.clientY - sy) < 6) onPlace('stamp', page, p0.x, p0.y)
+            else onPlace('stamp', page, Math.min(p0.x, p1.x), Math.min(p0.y, p1.y), { w: Math.abs(p1.x - p0.x), h: Math.abs(p1.y - p0.y) })
+            return
+          }
           if (Math.abs(ev.clientX - sx) < 4 || Math.abs(ev.clientY - sy) < 4) return
           const size = pages[page]
           const a = pointOnPage(pageEl, page, sx, sy)
@@ -944,7 +1020,7 @@ export function Viewer({
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
     },
-    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect, onCropRect, onRedactRect, onFieldRect]
+    [posAt, tool, annots, pages, pageAtPoint, pointOnPage, onSelectAnnot, onPlace, onCreateShape, zoom, onZoomTo, onSnapshot, stampDrag, measureKind, finishPoints, snapPt, onEditAnnot, onErase, onFollowLink, onLinkRect, onCropRect, onRedactRect, onFieldRect, measurePoint, onMeasure]
   )
 
   const ordered = useMemo(() => {
@@ -1095,6 +1171,7 @@ export function Viewer({
                     : undefined
                 }
                 measureLabel={measureLabel}
+                snapMark={snapMark && snapMark.page === i ? snapMark.hit : undefined}
                 grid={aids.grid}
                 guides={shownGuides}
                 links={tool === 'select' ? links.get(i) : undefined}
@@ -1171,6 +1248,8 @@ interface PageViewProps {
   measures?: Measurement[]
   measureDraft?: { kind: MeasureKind | 'calibrate'; points: Pt[]; cursor: Pt | null }
   measureLabel: (kind: MeasureKind, points: Pt[], page: number) => string
+  /** Where the pointer would snap to on this page, with a marker. */
+  snapMark?: SnapHit
   grid: number | null
   guides: Guide[]
   links?: PageLink[]
@@ -1210,7 +1289,7 @@ interface PageViewProps {
   elRef: (el: HTMLDivElement | null) => void
 }
 
-function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
+function PageView({ client, index, size, zoom, rotation, scroller, epoch, measures, measureDraft, measureLabel, snapMark, grid, guides, links, onEditText, onChangeImage, onReplaceImage, onChangePath, forms, redactMarks, onUnmark, textEditReady, onVisible, eraseTrail, guidesInteractive, onGuideDown, annots, draft, annotProps, selection, matches, currentMatch, elRef }: PageViewProps) {
   const hasForms = !!forms && forms.fields.length > 0
   const holder = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -1431,8 +1510,8 @@ function PageView({ client, index, size, zoom, rotation, scroller, epoch, measur
       {(grid || guides.length > 0) && (
         <GuideLayer size={size} zoom={zoom} grid={grid} guides={guides} interactive={guidesInteractive} onGuideDown={onGuideDown} />
       )}
-      {(measures?.length || measureDraft) && (
-        <MeasureLayer items={measures ?? []} draft={measureDraft} zoom={zoom} rotation={rotation} size={size} label={measureLabel} page={index} />
+      {(measures?.length || measureDraft || snapMark) && (
+        <MeasureLayer items={measures ?? []} draft={measureDraft} snap={snapMark} zoom={zoom} rotation={rotation} size={size} label={measureLabel} page={index} />
       )}
       {visible && text && (
         <div className="sr-only" role="article" aria-label={`Page ${index + 1}`}>

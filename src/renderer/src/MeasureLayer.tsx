@@ -1,5 +1,6 @@
 import type { Pt } from './annotations'
 import type { Rotation } from './viewRotation'
+import type { SnapHit } from './snap'
 
 export type MeasureKind = 'distance' | 'perimeter' | 'area'
 
@@ -15,6 +16,8 @@ interface Props {
   items: Measurement[]
   /** The measurement being drawn: its points so far plus where the pointer is. */
   draft?: { kind: MeasureKind | 'calibrate'; points: Pt[]; cursor: Pt | null }
+  /** Where the pointer snaps to: a marker is drawn there. */
+  snap?: SnapHit
   zoom: number
   rotation: Rotation
   size: { width: number; height: number }
@@ -23,7 +26,7 @@ interface Props {
 }
 
 /** Draws measurements over a page, with labels kept upright whatever the view rotation. */
-export function MeasureLayer({ items, draft, zoom, rotation, size, label, page }: Props) {
+export function MeasureLayer({ items, draft, snap, zoom, rotation, size, label, page }: Props) {
   const stroke = 1.5 / zoom
   const tick = 5 / zoom
   const font = 11 / zoom
@@ -69,6 +72,7 @@ export function MeasureLayer({ items, draft, zoom, rotation, size, label, page }
     <svg className="measure-svg" width={size.width * zoom} height={size.height * zoom} viewBox={`0 0 ${size.width} ${size.height}`} aria-hidden>
       {items.map((m) => shape(m.kind, m.points, `m${m.id}`, false))}
       {draft && shape(draft.kind, draftPts, 'draft', true)}
+      {snap && snapMarker(snap, 6 / zoom)}
     </svg>
   )
 }
@@ -82,4 +86,24 @@ function labelPoint(kind: MeasureKind | 'calibrate', pts: Pt[]): Pt {
   const a = pts[i]
   const b = pts[Math.min(pts.length - 1, i + 1)]
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+/** The marker for a snap: a square for an end point, a triangle for a mid point, a cross for an intersection, a diamond for the nearest point. */
+function snapMarker(snap: SnapHit, r: number) {
+  const { x, y } = snap.pt
+  const shape =
+    snap.kind === 'end' ? (
+      <rect x={x - r} y={y - r} width={2 * r} height={2 * r} />
+    ) : snap.kind === 'mid' ? (
+      <polygon points={`${x},${y - r} ${x + r},${y + r} ${x - r},${y + r}`} />
+    ) : snap.kind === 'inter' ? (
+      <path d={`M${x - r} ${y - r} L${x + r} ${y + r} M${x + r} ${y - r} L${x - r} ${y + r}`} />
+    ) : (
+      <polygon points={`${x},${y - r} ${x + r},${y} ${x},${y + r} ${x - r},${y}`} />
+    )
+  return (
+    <g key="snap" className={`snap-marker snap-${snap.kind}`} data-snap={snap.kind} fill="none" strokeWidth={1.5 * (r / 6)}>
+      {shape}
+    </g>
+  )
 }

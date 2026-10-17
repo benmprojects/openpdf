@@ -22,6 +22,8 @@ export interface Settings {
   toolDefaults: Record<string, ToolStyle>
   /** Named tool presets: a kind and a style, shown in the Presets list. */
   toolPresets: ToolPreset[]
+  /** Saved drawing scales for the Measure tab's Scale dialog. */
+  scalePresets: ScalePreset[]
   /** Update checks: off unless turned on, and only to the address given. */
   updates: { check: boolean; feed: string }
   /** `system`, or a language code such as en-AU or fr. */
@@ -41,6 +43,19 @@ export interface ToolStyle {
   fontFamily?: 'Helvetica' | 'Times' | 'Courier'
   fontSize?: number
 }
+
+/** Mirrors ScalePreset in the renderer's measureScale.ts. */
+export interface ScalePreset {
+  id: string
+  name: string
+  /** 1:`ratio`. */
+  ratio: number
+  unit: string
+  decimals?: number
+  fraction?: number
+}
+
+const SCALE_UNITS = ['mm', 'cm', 'm', 'km', 'in', 'ft', 'ft-in', 'yd']
 
 export interface ToolPreset {
   id: string
@@ -75,6 +90,7 @@ const defaults = (): Settings => ({
   spellcheck: true,
   toolDefaults: {},
   toolPresets: [],
+  scalePresets: [],
   updates: { check: false, feed: '' },
   // Tests always start in Australian English, whatever the machine's language.
   language: process.env.OPENPDF_E2E === '1' ? 'en-AU' : 'system',
@@ -117,6 +133,18 @@ function sanitise(raw: Partial<Settings>): Settings {
           .filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.kind === 'string' && /^[a-z]{2,20}$/.test(p.kind))
           .slice(0, 100)
           .map((p) => ({ id: p.id.slice(0, 64), name: p.name.slice(0, 80), kind: p.kind, style: cleanStyle(p.style) }))
+      : [],
+    scalePresets: Array.isArray(raw.scalePresets)
+      ? raw.scalePresets
+          .filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.ratio === 'number' && p.ratio > 0 && p.ratio < 1e7 && SCALE_UNITS.includes(p.unit))
+          .slice(0, 100)
+          .map((p) => ({
+            id: p.id.slice(0, 64),
+            name: p.name.slice(0, 80),
+            ratio: p.ratio,
+            unit: p.unit,
+            ...(typeof p.fraction === 'number' && p.fraction >= 2 && p.fraction <= 64 ? { fraction: Math.round(p.fraction) } : typeof p.decimals === 'number' && p.decimals >= 0 && p.decimals <= 6 ? { decimals: Math.floor(p.decimals) } : {})
+          }))
       : [],
     updates: {
       check: typeof raw.updates?.check === 'boolean' ? raw.updates.check : false,

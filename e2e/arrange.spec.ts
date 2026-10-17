@@ -70,8 +70,15 @@ test('arrange: select several annotations, align them and change their stacking 
 
     // Bring the middle (green) one to the front: it must be last in the file.
     await expect(win.locator('.page')).toHaveCount(1)
-    await click(100, 220)
-    await win.getByRole('button', { name: 'To front' }).click()
+    // After the save the document reloads and its annotations are read again: click until the shape is selectable.
+    const toFront = win.getByRole('button', { name: 'To front' })
+    await expect
+      .poll(async () => {
+        await click(100, 220)
+        return toFront.isEnabled()
+      }, { timeout: 15_000 })
+      .toBe(true)
+    await toFront.click()
     await win.keyboard.press('Control+s')
     await expect(win.locator('.tab-dirty')).toHaveCount(0)
     out = annots(pdfPath)

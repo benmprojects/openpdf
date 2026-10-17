@@ -1,5 +1,6 @@
 import { PDFiumLibrary, type PDFiumDocument } from '@hyzyla/pdfium'
 import wasmUrl from '@hyzyla/pdfium/pdfium.wasm?url'
+import type { PathGeometry } from './snap'
 import { annotDicts } from './annotExtras'
 import {
   readAttachmentData,
@@ -11,6 +12,7 @@ import {
   readPageText,
   readTextObjects,
   readImageObjects,
+  readPathGeometry,
   readPathObjects,
   removePageAnnot,
   setPageAnnotRect,
@@ -41,6 +43,7 @@ export type WorkerRequest =
   | { id: number; type: 'textObjects'; page: number }
   | { id: number; type: 'imageObjects'; page: number }
   | { id: number; type: 'pathObjects'; page: number }
+  | { id: number; type: 'pathGeometry'; page: number }
   | { id: number; type: 'close' }
 
 export type WorkerResponse =
@@ -57,6 +60,7 @@ export type WorkerResponse =
   | { id: number; ok: true; type: 'links'; links: PageLink[] }
   | { id: number; ok: true; type: 'textObjects'; objects: TextObject[]; total: number; rotation: number }
   | { id: number; ok: true; type: 'imageObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
+  | { id: number; ok: true; type: 'pathGeometry'; geometry: PathGeometry }
   | { id: number; ok: true; type: 'pathObjects'; objects: ImageObject[]; total: number; toPage: [number, number, number, number, number, number] }
   | { id: number; ok: true; type: 'close' }
   | { id: number; ok: false; error: string }
@@ -145,6 +149,12 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const r = readPathObjects(library, page)
       page.close()
       reply({ id: msg.id, ok: true, type: 'pathObjects', ...r })
+    } else if (msg.type === 'pathGeometry') {
+      if (!doc || !library) throw new Error('No document loaded')
+      const page = doc.getPage(msg.page)
+      const geometry = readPathGeometry(library, page)
+      page.close()
+      reply({ id: msg.id, ok: true, type: 'pathGeometry', geometry }, [geometry.segs.buffer as ArrayBuffer, geometry.verts.buffer as ArrayBuffer])
     } else if (msg.type === 'labels') {
       if (!doc || !library) throw new Error('No document loaded')
       reply({ id: msg.id, ok: true, type: 'labels', labels: readPageLabels(library, doc) })

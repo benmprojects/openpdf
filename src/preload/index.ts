@@ -48,8 +48,15 @@ const api = {
     ipcRenderer.invoke('file:save-data', suggested, data, filter),
   listStamps: (): Promise<ImageStamp[]> => ipcRenderer.invoke('stamps:list'),
   /** Asks for PNG or JPEG files and copies them into the stamp library. */
-  addStamps: (): Promise<{ added: number; refused: string[] }> => ipcRenderer.invoke('stamps:add'),
+  addStamps: (category?: string): Promise<{ added: number; refused: string[] }> => ipcRenderer.invoke('stamps:add', category),
   removeStamp: (id: string): Promise<void> => ipcRenderer.invoke('stamps:remove', id),
+  /** Renames an image stamp or moves it to another category. */
+  updateStamp: (id: string, change: { name?: string; category?: string }): Promise<void> => ipcRenderer.invoke('stamps:update', id, change),
+  /** Adds PNG or JPEG pictures held in memory (clipboard, snapshot, rendered page, imported collection) to the library. */
+  addStampData: (items: { name: string; category: string; data: Uint8Array }[]): Promise<{ added: ImageStamp[]; refused: string[] }> => ipcRenderer.invoke('stamps:add-data', items),
+  /** Saved text stamps, recently used and numbering (JSON text), or null if none. */
+  readStampMeta: (): Promise<string | null> => ipcRenderer.invoke('stamps:meta-read'),
+  writeStampMeta: (json: string): Promise<void> => ipcRenderer.invoke('stamps:meta-write', json),
   /** Asks for one file to attach; resolves null if cancelled. */
   pickFile: (filter?: { name: string; ext: string[] }): Promise<{ name: string; data: Uint8Array } | null> => ipcRenderer.invoke('file:pick-one', filter),
   /** Asks, then opens a web or mail link in the default app. Resolves false if refused or cancelled. */

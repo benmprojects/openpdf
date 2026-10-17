@@ -19,7 +19,7 @@ import type { Place } from '../shared/places'
 import { fetchCatalogue, installFromCatalogue, installFromFolder, installFromZip, listPlugins, uninstallPlugin, type CatalogueEntry } from './plugins'
 import type { BatchAction } from '../renderer/src/batch'
 import { listScanners, scan, type ScanOptions } from './scan'
-import { addStamps, listStamps, removeStamp } from './stamps'
+import { addStampData, addStamps, listStamps, readStampMeta, removeStamp, updateStamp, writeStampMeta } from './stamps'
 import {
   addRecent,
   clearAllRecovery,
@@ -242,7 +242,13 @@ ipcMain.handle('file:save-data', async (e, suggested: string, data: Uint8Array, 
 /** Image stamp library. */
 ipcMain.handle('stamps:list', () => listStamps())
 ipcMain.handle('stamps:remove', (_e, id: string) => removeStamp(id))
-ipcMain.handle('stamps:add', async (e) => {
+ipcMain.handle('stamps:update', (_e, id: string, change: { name?: string; category?: string }) => updateStamp(String(id), { name: typeof change?.name === 'string' ? change.name : undefined, category: typeof change?.category === 'string' ? change.category : undefined }))
+ipcMain.handle('stamps:add-data', (_e, items: { name: string; category: string; data: Uint8Array }[]) =>
+  addStampData((Array.isArray(items) ? items : []).filter((i) => i && typeof i.name === 'string' && typeof i.category === 'string' && i.data instanceof Uint8Array))
+)
+ipcMain.handle('stamps:meta-read', () => readStampMeta())
+ipcMain.handle('stamps:meta-write', (_e, json: string) => writeStampMeta(json))
+ipcMain.handle('stamps:add', async (e, category?: string) => {
   let paths: string[]
   if (e2e && process.env.OPENPDF_E2E_IMAGES) paths = process.env.OPENPDF_E2E_IMAGES.split(';')
   else {
@@ -256,7 +262,7 @@ ipcMain.handle('stamps:add', async (e) => {
     if (res.canceled) return { added: 0, refused: [] }
     paths = res.filePaths
   }
-  return addStamps(paths)
+  return addStamps(paths, typeof category === 'string' && category.trim() ? category.trim().slice(0, 60) : undefined)
 })
 
 /** Picks one file to attach (any type, or as filtered); up to 100 MB. Resolves null if cancelled. */

@@ -1115,6 +1115,80 @@ kbd {
 .measure.live circle {
   fill: #0b6bcb;
 }
+.snap-marker rect,
+.snap-marker polygon,
+.snap-marker path {
+  stroke: #f59e0b;
+  fill: rgba(245, 158, 11, 0.18);
+}
+.snap-marker path {
+  fill: none;
+}
+.rinput {
+  width: 110px;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: inherit;
+}
+.scale-dialog .narrow {
+  width: 70px;
+}
+.measure-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  font-size: 12px;
+  overflow: auto;
+  height: 100%;
+}
+.measure-pane .mp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.measure-pane table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.measure-pane th {
+  text-align: left;
+  font-weight: 600;
+  padding: 2px 4px;
+}
+.measure-pane td {
+  padding: 2px 4px;
+  vertical-align: middle;
+}
+.measure-pane tr.mp-row {
+  cursor: pointer;
+}
+.measure-pane tr.mp-row.selected {
+  background: rgba(11, 107, 203, 0.18);
+}
+.measure-pane input.mp-label {
+  width: 100%;
+  min-width: 60px;
+  box-sizing: border-box;
+}
+.measure-pane .mp-totals {
+  margin: 0;
+  padding-left: 16px;
+}
+.scale-dialog label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.scale-dialog fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 .measure-label {
   fill: #1c2027;
   stroke: #fff;
@@ -1277,7 +1351,8 @@ kbd {
 .stamp-picker {
   position: fixed;
   z-index: 60;
-  width: 360px;
+  width: 460px;
+  max-width: calc(100vw - 24px);
   margin-top: 4px;
   padding: 10px 12px;
   background: var(--panel);
@@ -3038,4 +3113,137 @@ button:not([class]):disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stamp-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.stamp-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+}
+.stamp-scroll {
+  max-height: min(46vh, 420px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.stamp-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.stamp-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 68px;
+  padding: 6px 4px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.stamp-tile:hover {
+  background: var(--accent-soft);
+}
+.stamp-tile.on {
+  outline: 2px solid var(--focus);
+}
+.stamp-tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stamp-thumb {
+  display: block;
+  max-width: 100%;
+}
+.stamp-make {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.stamp-make button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  text-align: left;
+}
+.stamp-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.stamp-opt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stamp-opt-row input[type='number'] {
+  width: 64px;
+}
+.stamp-menu {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+}
+.stamp-menu button {
+  padding: 5px 10px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.stamp-menu button:hover {
+  background: var(--accent-soft);
+}
+.stamp-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stamp-editor-preview {
+  display: grid;
+  place-items: center;
+  min-height: 100px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.stamp-fields {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.stamp-colours {
+  display: inline-flex;
+  gap: 6px;
 }

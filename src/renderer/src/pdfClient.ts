@@ -1,5 +1,6 @@
 import type { WorkerRequest, WorkerResponse } from './pdf.worker'
 import type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject, ImageObject } from './pdfiumRaw'
+import type { PathGeometry } from './snap'
 
 export type { AttachmentInfo, ImportedAnnot, ImportedReply, OutlineNode, PageLink, PageText, TextObject, ImageObject }
 
@@ -50,6 +51,7 @@ export class PdfClient {
   private seq = 0
   private textCache = new Map<number, Promise<PageText>>()
   private linkCache = new Map<number, Promise<PageLink[]>>()
+  private geometryCache = new Map<number, Promise<PathGeometry>>()
 
   constructor() {
     this.worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
@@ -182,6 +184,20 @@ export class PdfClient {
     const res = await this.call({ type: 'pathObjects', page })
     if (res.ok && res.type === 'pathObjects') return { objects: res.objects, total: res.total, toPage: res.toPage }
     throw new Error('Unexpected response')
+  }
+
+  /** Straight pieces and corners of a page's vector paths, for snapping (cached until the document changes). */
+  pathGeometry(page: number): Promise<PathGeometry> {
+    let p = this.geometryCache.get(page)
+    if (!p) {
+      p = this.call({ type: 'pathGeometry', page }).then((res) => {
+        if (res.ok && res.type === 'pathGeometry') return res.geometry
+        throw new Error('Unexpected response')
+      })
+      p.catch(() => this.geometryCache.delete(page))
+      this.geometryCache.set(page, p)
+    }
+    return p
   }
 
   /** Links on a page (cached for the life of the client). */

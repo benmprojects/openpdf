@@ -7,15 +7,18 @@
  */
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFString, PDFHexString } from 'pdf-lib'
 import type { Pt } from './annotations'
+import { formatAreaQuantity, formatQuantity, type Precision } from './measureScale'
 
 export interface Scale {
   /** Real units per page point. */
   factor: number
   unit: string
   /** Where the scale came from, for display. */
-  source: 'paper' | 'document' | 'calibrated'
+  source: 'paper' | 'document' | 'calibrated' | 'set'
   /** The document's own ratio text, for example "1:100", when it has one. */
   label?: string
+  /** Decimal places or fractions for results; sensible automatic precision when unset. */
+  precision?: Precision
 }
 
 export const PAPER_MM: Scale = { factor: 25.4 / 72, unit: 'mm', source: 'paper' }
@@ -50,11 +53,16 @@ export function formatNumber(n: number): string {
 }
 
 export function formatLength(pt: number, s: Scale): string {
-  return `${formatNumber(pt * s.factor)} ${s.unit}`
+  return formatQuantity(pt * s.factor, s.unit, s.precision)
 }
 
 export function formatArea(pt2: number, s: Scale): string {
-  return `${formatNumber(pt2 * s.factor * s.factor)} ${s.unit}²`
+  return formatAreaQuantity(pt2 * s.factor * s.factor, s.unit, s.precision)
+}
+
+/** The result of a measurement as text, for example "12.5 m" or "34 m²". */
+export function resultLabel(kind: 'distance' | 'perimeter' | 'area', points: Pt[], s: Scale): string {
+  return kind === 'area' ? formatArea(polygonArea(points), s) : formatLength(pathLength(points), s)
 }
 
 /** Real units per point that make a measured length (in points) equal `real` units. */

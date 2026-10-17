@@ -35,6 +35,23 @@ export type AnnotKind =
   /** A link: a box on the page that goes to a page (`linkPage`) or opens a web address (`linkUri`). */
   | 'link'
 
+/**
+ * What a measurement annotation carries. A count marker (`kind` count) is a small circle: `label` is its group
+ * ("Door", "Pit"), `n` its number within the group, and `factor` and `unit` mean nothing.
+ */
+export interface MeasureInfo {
+  kind: 'distance' | 'perimeter' | 'area' | 'count'
+  factor: number
+  unit: string
+  ratio?: string
+  /** The result as shown, for example "12.5 m"; for a count, its group. */
+  label: string
+  /** A name or comment the person gave it (saved in the file as /OPName). */
+  name?: string
+  /** Count markers: the number shown in the circle. */
+  n?: number
+}
+
 export interface Pt {
   x: number
   y: number
@@ -125,11 +142,13 @@ export interface Annot {
   image?: string
   /** Text stamp: a second, smaller line, such as who stamped it and when. */
   stampInfo?: string
+  /** Stamp: degrees clockwise the stamp is turned about the centre of its box; upright when unset. */
+  angle?: number
   /**
    * Set on measurements: a line (distance), polyline (perimeter) or polygon (area) with the scale used.
    * `factor` is real units per point; `label` is the result as shown, for example "12.5 m".
    */
-  measure?: { kind: 'distance' | 'perimeter' | 'area'; factor: number; unit: string; ratio?: string; label: string }
+  measure?: MeasureInfo
   /** Set when the annotation was already in the file: where to find it again when saving. */
   origin?: {
     /** Position in the page's /Annots array. */
@@ -168,7 +187,7 @@ export function formatWhen(iso?: string): string {
 
 /** Fields that make up an annotation's appearance, to tell whether an imported one has been edited. */
 export function signature(a: Annot): string {
-  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.file ? a.file.name : null])
+  return JSON.stringify([a.rects, a.color, a.text, a.fontSize, a.lineWidth, a.points, a.replace ?? false, a.fill ?? null, a.dash ?? null, a.measure ?? null, a.stampInfo ?? null, a.angle ?? 0, a.image ? a.image.length : null, a.opacity ?? 1, a.fontFamily ?? null, a.linkUri ?? null, a.linkPage ?? null, a.file ? a.file.name : null])
 }
 
 export const NOTE_SIZE = 22

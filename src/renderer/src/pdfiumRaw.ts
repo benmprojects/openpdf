@@ -6,7 +6,8 @@
 import type { PDFiumDocument, PDFiumLibrary, PDFiumPage } from '@hyzyla/pdfium'
 import type { PDFDict } from 'pdf-lib'
 import { arrowEnds, dashStyle, measureOf, nameOf, numbers, linkTargetOf } from './annotExtras'
-import { pathBounds, type AnnotKind, type Pt } from './annotations'
+import { pathBounds, type AnnotKind, type MeasureInfo, type Pt } from './annotations'
+import type { PathGeometry } from './snap'
 import type { Rect } from './textLogic'
 
 export interface OutlineNode {
@@ -159,8 +160,10 @@ export interface ImportedAnnot {
   fill?: string
   /** Second line of one of our dated stamps. */
   stampInfo?: string
+  /** Our stamps turned by an angle: degrees clockwise. */
+  angle?: number
   dash?: 'dashed' | 'dotted'
-  measure?: { kind: 'distance' | 'perimeter' | 'area'; factor: number; unit: string; ratio?: string; label: string }
+  measure?: MeasureInfo
   opacity?: number
   fontFamily?: 'Helvetica' | 'Times' | 'Courier'
   author?: string
@@ -236,6 +239,8 @@ export function readPageAnnots(
   const keyIT = cString(m, 'IT')
   const keyBE = cString(m, 'BE')
   const keyMeasure = cString(m, 'Measure')
+  const keyOpName = cString(m, 'OPName')
+  const keyOpCount = cString(m, 'OPCount')
   const keyInfo = cString(m, 'OPInfo')
   const keyT = cString(m, 'T')
   const keyM = cString(m, 'M')
@@ -312,7 +317,11 @@ export function readPageAnnots(
           const mk = it === 'LineDimension' ? 'distance' : it === 'PolyLineDimension' ? 'perimeter' : it === 'PolygonDimension' ? 'area' : null
           if (!ms || !mk) kind = 'foreign'
           else measure = { kind: mk, ...ms, label: readString(annot, keyContents) }
+        } else if (kind === 'ellipse' && m._FPDFAnnot_HasKey(annot, keyOpCount)) {
+          // A count marker of ours: a small circle numbered within its group.
+          measure = { kind: 'count', factor: 1, unit: '', label: readString(annot, keyContents), n: Number(readString(annot, keyOpCount)) || 1 }
         }
+        if (measure && m._FPDFAnnot_HasKey(annot, keyOpName)) measure.name = readString(annot, keyOpName)
         if (!m._FPDFAnnot_GetRect(annot, scratch)) continue
         const f = new DataView(m.HEAPU8.buffer)
         const left = f.getFloat32(scratch, true)
@@ -425,6 +434,16 @@ export function readPageAnnots(
         if (!rects.length) rects = [bboxOf([toDisplay(rect[0], rect[3]), toDisplay(rect[2], rect[1])])]
         if (kind === 'note') rects = [{ x: rects[0].x, y: rects[0].y, w: rects[0].w >= 4 ? rects[0].w : 22, h: rects[0].h >= 4 ? rects[0].h : 22 }]
         rects = rects.map((r) => (r.w > 0 && r.h > 0 ? r : { ...r, w: r.w || 22, h: r.h || 22 }))
+        // A turned stamp of ours: /Rect holds the box around the turned stamp; /OPRot has [degrees, width, height] of the stamp itself.
+        let angle: number | undefined
+        if (kind === 'stamp') {
+          const rot = numbers(dict, 'OPRot')
+          if (rot && rot.length >= 3 && rot[1] > 0 && rot[2] > 0 && Number.isFinite(rot[0]) && rot[0] % 360 !== 0) {
+            const c = rects[0]
+            angle = ((rot[0] % 360) + 360) % 360
+            rects = [{ x: c.x + c.w / 2 - rot[1] / 2, y: c.y + c.h / 2 - rot[2] / 2, w: rot[1], h: rot[2] }]
+          }
+        }
 
         let color: string | null = null
         if (m._FPDFAnnot_GetColor(annot, 0, scratch + 32, scratch + 36, scratch + 40, scratch + 44)) {
@@ -472,6 +491,7 @@ export function readPageAnnots(
           rect,
           fill,
           stampInfo: kind === 'stamp' ? readString(annot, keyInfo) || undefined : undefined,
+          angle,
           opacity,
           fontFamily,
           dash: kind === 'foreign' ? undefined : dashStyle(dict, lineWidth),
@@ -495,6 +515,8 @@ export function readPageAnnots(
     m.wasmExports.free(keyIT)
     m.wasmExports.free(keyBE)
     m.wasmExports.free(keyMeasure)
+    m.wasmExports.free(keyOpName)
+    m.wasmExports.free(keyOpCount)
     m.wasmExports.free(keyInfo)
     for (const k of [keyT, keyM, keyCreated, keyIRT, keyRT, keyState, keyStateModel, keyCA]) m.wasmExports.free(k)
   }
@@ -831,6 +853,143 @@ export function readImageObjects(lib: PDFiumLibrary, page: PDFiumPage): PageObje
 /** Painted path objects (lines, rectangles, curves, fills) the page draws directly, like `readImageObjects`. */
 export function readPathObjects(lib: PDFiumLibrary, page: PDFiumPage): PageObjects {
   return readObjects(lib, page, 2)
+}
+
+/** Most straight pieces read from one page; a drawing with more than this snaps only to the first of them. */
+const MAX_GEOMETRY_SEGMENTS = 250_000
+
+/**
+ * The straight pieces and corners of the vector paths a page paints (lines, rectangles, outlines and fills,
+ * also inside form XObjects), in display space, for object snapping. Curves are cut into short pieces.
+ * Paths that neither stroke nor fill are skipped.
+ */
+export function readPathGeometry(lib: PDFiumLibrary, page: PDFiumPage): PathGeometry {
+  const m = raw(lib)
+  const p = pageHandle(page)
+  const { originalWidth: w, originalHeight: h } = page.getOriginalSize()
+  const GRID = 8
+  const sx = Math.round(w * GRID)
+  const sy = Math.round(h * GRID)
+  const scratch = m.wasmExports.malloc(64)
+  const segs: number[] = []
+  const verts: number[] = []
+  const seenVerts = new Set<string>()
+  let truncated = false
+  try {
+    const sample = (x: number, y: number): [number, number] => {
+      m._FPDF_DeviceToPage(p, 0, 0, sx, sy, 0, Math.round(x * GRID), Math.round(y * GRID), scratch + 32, scratch + 40)
+      const d = new DataView(m.HEAPU8.buffer)
+      return [d.getFloat64(scratch + 32, true), d.getFloat64(scratch + 40, true)]
+    }
+    const o = sample(0, 0)
+    const ex = sample(100, 0)
+    const ey = sample(0, 100)
+    // Display to page: page = (a X + c Y + e, b X + d Y + f). Inverted here to go from page space to display.
+    const a = (ex[0] - o[0]) / 100
+    const b = (ex[1] - o[1]) / 100
+    const c = (ey[0] - o[0]) / 100
+    const d = (ey[1] - o[1]) / 100
+    const det = a * d - b * c
+    if (!det) return { segs: new Float32Array(0), verts: new Float32Array(0) }
+    const toDisplay = (px: number, py: number): [number, number] => [(d * (px - o[0]) - c * (py - o[1])) / det, (-b * (px - o[0]) + a * (py - o[1])) / det]
+
+    type M6 = [number, number, number, number, number, number]
+    const ID: M6 = [1, 0, 0, 1, 0, 0]
+    const apply = (t: M6, x: number, y: number): [number, number] => [t[0] * x + t[2] * y + t[4], t[1] * x + t[3] * y + t[5]]
+    // `inner` first, then `outer`.
+    const compose = (inner: M6, outer: M6): M6 => [
+      inner[0] * outer[0] + inner[1] * outer[2],
+      inner[0] * outer[1] + inner[1] * outer[3],
+      inner[2] * outer[0] + inner[3] * outer[2],
+      inner[2] * outer[1] + inner[3] * outer[3],
+      inner[4] * outer[0] + inner[5] * outer[2] + outer[4],
+      inner[4] * outer[1] + inner[5] * outer[3] + outer[5]
+    ]
+    const matrixOf = (obj: number): M6 => {
+      if (!m._FPDFPageObj_GetMatrix(obj, scratch)) return ID
+      const f = new DataView(m.HEAPU8.buffer)
+      return [0, 1, 2, 3, 4, 5].map((q) => f.getFloat32(scratch + q * 4, true)) as M6
+    }
+    const addVert = (x: number, y: number) => {
+      const k = `${Math.round(x * 20)},${Math.round(y * 20)}`
+      if (seenVerts.has(k)) return
+      seenVerts.add(k)
+      verts.push(x, y)
+    }
+    const addSeg = (x0: number, y0: number, x1: number, y1: number, straight: number) => {
+      if (x0 === x1 && y0 === y1) return
+      segs.push(x0, y0, x1, y1, straight)
+    }
+
+    const readPath = (path: number, t: M6) => {
+      // Skip paths nothing is painted for (clipping paths, invisible helpers).
+      if (m._FPDFPath_GetDrawMode(path, scratch + 48, scratch + 52)) {
+        const g = new DataView(m.HEAPU8.buffer)
+        if (g.getInt32(scratch + 48, true) === 0 && g.getInt32(scratch + 52, true) === 0) return
+      }
+      const n = m._FPDFPath_CountSegments(path)
+      let cur: [number, number] | null = null
+      let start: [number, number] | null = null
+      const bez: [number, number][] = []
+      for (let i = 0; i < n; i++) {
+        if (segs.length / 5 >= MAX_GEOMETRY_SEGMENTS) {
+          truncated = true
+          return
+        }
+        const seg = m._FPDFPath_GetPathSegment(path, i)
+        if (!seg || !m._FPDFPathSegment_GetPoint(seg, scratch + 16, scratch + 20)) continue
+        const g = new DataView(m.HEAPU8.buffer)
+        const pt = toDisplay(...apply(t, g.getFloat32(scratch + 16, true), g.getFloat32(scratch + 20, true)))
+        const type = m._FPDFPathSegment_GetType(seg) // FPDF_SEGMENT_*: 0 line, 1 bezier, 2 move
+        if (type === 2) {
+          cur = pt
+          start = pt
+          addVert(pt[0], pt[1])
+        } else if (type === 0 && cur) {
+          addSeg(cur[0], cur[1], pt[0], pt[1], 1)
+          addVert(pt[0], pt[1])
+          cur = pt
+        } else if (type === 1 && cur) {
+          bez.push(pt)
+          if (bez.length === 3) {
+            const [c1, c2, e] = bez
+            bez.length = 0
+            let prev = cur
+            for (let s = 1; s <= 8; s++) {
+              const u = s / 8
+              const v = 1 - u
+              const x = v * v * v * cur[0] + 3 * v * v * u * c1[0] + 3 * v * u * u * c2[0] + u * u * u * e[0]
+              const y = v * v * v * cur[1] + 3 * v * v * u * c1[1] + 3 * v * u * u * c2[1] + u * u * u * e[1]
+              addSeg(prev[0], prev[1], x, y, 0)
+              prev = [x, y]
+            }
+            addVert(e[0], e[1])
+            cur = e
+          }
+        }
+        if (m._FPDFPathSegment_GetClose(seg) && cur && start) {
+          addSeg(cur[0], cur[1], start[0], start[1], 1)
+          cur = start
+        }
+      }
+    }
+
+    const walkObjects = (count: number, get: (i: number) => number, t: M6, depth: number) => {
+      for (let i = 0; i < count && !truncated; i++) {
+        const obj = get(i)
+        const type = m._FPDFPageObj_GetType(obj)
+        if (type === 2) readPath(obj, compose(matrixOf(obj), t))
+        else if (type === 5 && depth < 3) {
+          const inner = compose(matrixOf(obj), t)
+          walkObjects(m._FPDFFormObj_CountObjects(obj), (k) => m._FPDFFormObj_GetObject(obj, k), inner, depth + 1)
+        }
+      }
+    }
+    walkObjects(m._FPDFPage_CountObjects(p), (i) => m._FPDFPage_GetObject(p, i), ID, 0)
+    return { segs: new Float32Array(segs), verts: new Float32Array(verts), truncated }
+  } finally {
+    m.wasmExports.free(scratch)
+  }
 }
 
 export interface PageObjects {

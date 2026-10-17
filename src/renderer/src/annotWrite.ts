@@ -37,6 +37,8 @@ import {
   UNDERLINE_AT,
   type Annot
 } from './annotations'
+import { pdfUnit } from './measureScale'
+import { normAngle, rotatedBounds } from './stampLogic'
 import type { Rect } from './textLogic'
 
 /** What PDFContext.obj accepts: JS literals (strings become names) and pdf-lib objects. */
@@ -137,6 +139,18 @@ export function wrapText(font: PDFFont, text: string, size: number, maxWidth: nu
     lines.push(line)
   }
   return lines
+}
+
+/** A stamp turned clockwise about its centre (display space, y down): the box around it and the matrix that turns it. */
+function turnStamp(angle: number | undefined, r: Rect): { box: Rect; op: string; angle: number } | null {
+  const deg = normAngle(angle ?? 0)
+  if (!deg) return null
+  const rad = (deg * Math.PI) / 180
+  const c = Math.cos(rad)
+  const s = Math.sin(rad)
+  const cx = r.x + r.w / 2
+  const cy = r.y + r.h / 2
+  return { box: rotatedBounds(r, deg), angle: deg, op: `${n(c)} ${n(s)} ${n(-s)} ${n(c)} ${n(cx - cx * c + cy * s)} ${n(cy - cx * s - cy * c)} cm` }
 }
 
 function makeForm(ctx: PDFContext, bbox: number[], content: string, resources: Lit = {}): PDFRef {
@@ -513,12 +527,27 @@ export async function writeAnnotations(
         `${n(cx - k * rx)} ${n(cy + ry)} ${n(cx - rx)} ${n(cy + k * ry)} ${n(cx - rx)} ${n(cy)} c ` +
         `${n(cx - rx)} ${n(cy - k * ry)} ${n(cx - k * rx)} ${n(cy - ry)} ${n(cx)} ${n(cy - ry)} c ` +
         `${n(cx + k * rx)} ${n(cy - ry)} ${n(cx + rx)} ${n(cy - k * ry)} ${n(cx + rx)} ${n(cy)} c ${pt.op}`
-      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`)
+      let counted = ''
+      if (a.measure?.kind === 'count') {
+        // A numbered count marker: the number is drawn in white at the centre.
+        const fnt = await getFont()
+        const num = String(a.measure.n ?? 1)
+        const size = Math.max(5, Math.min(r.h * 0.6, 10))
+        counted = ` BT /Helv ${n(size)} Tf 1 g 1 0 0 -1 ${n(cx - fnt.widthOfTextAtSize(num, size) / 2)} ${n(cy + size * 0.35)} Tm ${fnt.encodeText(num).toString()} Tj ET`
+      }
+      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body}${counted} Q`, counted ? { Font: { Helv: (await getFont()).ref } } : undefined)
       dict = {
         ...base,
         Subtype: 'Circle',
         ...border(a),
-        Subj: PDFHexString.fromText('Ellipse'),
+        Subj: PDFHexString.fromText(a.measure?.kind === 'count' ? 'Count' : 'Ellipse'),
+        ...(a.measure?.kind === 'count'
+          ? {
+              Contents: PDFHexString.fromText(a.measure.label),
+              OPCount: PDFHexString.fromText(String(a.measure.n ?? 1)),
+              ...(a.measure.name ? { OPName: PDFHexString.fromText(a.measure.name) } : {})
+            }
+          : {}),
         AP: { N: ap }
       }
     } else if (a.kind === 'polygon' || a.kind === 'polyline' || a.kind === 'cloud') {
@@ -562,9 +591,13 @@ export async function writeAnnotations(
       const img = await getImage(a.image)
       // Display space has y down, so the unit square is flipped to draw the picture upright.
       const body = `${n(r.w)} 0 0 ${n(-r.h)} ${n(r.x)} ${n(r.y + r.h)} cm /Im Do`
-      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, { XObject: { Im: img.ref } })
+      const turn = turnStamp(a.angle, r)
+      const sb = turn ? userBounds(f, [turn.box]) : bounds
+      const ap = makeForm(ctx, sb, `q ${cm(f)} ${turn?.op ?? ''} ${body} Q`, { XObject: { Im: img.ref } })
       dict = {
         ...base,
+        Rect: sb,
+        ...(turn ? { OPRot: [turn.angle, r.w, r.h] } : {}),
         Subtype: 'Stamp',
         Name: 'OpenPDFImageStamp',
         Subj: PDFHexString.fromText('Image stamp'),
@@ -595,9 +628,13 @@ export async function writeAnnotations(
         `${stroke(a)} ${n(r.x + i)} ${n(r.y + i)} ${n(r.w - a.lineWidth)} ${n(r.h - a.lineWidth)} re S ` +
         `BT /HelvB ${n(size)} Tf ${rgb(a.color)} rg 1 0 0 -1 ${n(tx)} ${n(ty)} Tm ${fnt.encodeText(label).toString()} Tj ET` +
         infoOps
-      const ap = makeForm(ctx, bounds, `q ${cm(f)} ${body} Q`, resources)
+      const turn = turnStamp(a.angle, r)
+      const sb = turn ? userBounds(f, [turn.box]) : bounds
+      const ap = makeForm(ctx, sb, `q ${cm(f)} ${turn?.op ?? ''} ${body} Q`, resources)
       dict = {
         ...base,
+        Rect: sb,
+        ...(turn ? { OPRot: [turn.angle, r.w, r.h] } : {}),
         Subtype: 'Stamp',
         Name: 'OpenPDFStamp',
         // No /Contents: other viewers show a comment bubble beside any annotation that has comment text.
@@ -713,14 +750,16 @@ export async function writeAnnotations(
     if (a.measure && (a.kind === 'line' || a.kind === 'polyline' || a.kind === 'polygon')) {
       const m = a.measure
       const fmt = (u: string, c: number) => ({ Type: 'NumberFormat', U: PDFHexString.fromText(u), C: c, D: 100, RT: PDFString.of(''), SS: PDFString.of('') })
+      const unit = pdfUnit(m.unit)
+      if (m.name) dict.OPName = PDFHexString.fromText(m.name)
       dict.IT = m.kind === 'distance' ? 'LineDimension' : m.kind === 'perimeter' ? 'PolyLineDimension' : 'PolygonDimension'
       dict.Measure = {
         Type: 'Measure',
         Subtype: 'RL',
         R: PDFHexString.fromText(m.ratio ?? `1 pt = ${m.factor} ${m.unit}`),
-        X: [fmt(m.unit, m.factor)],
-        D: [fmt(m.unit, 1)],
-        A: [fmt(`${m.unit}²`, 1)]
+        X: [fmt(unit, m.factor)],
+        D: [fmt(unit, 1)],
+        A: [fmt(`${unit}²`, 1)]
       }
       dict.Contents = PDFHexString.fromText(m.label)
       if (a.kind === 'line') {

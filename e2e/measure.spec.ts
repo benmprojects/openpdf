@@ -21,7 +21,7 @@ test('measure distance and area at paper scale, after calibrating, and with a do
     const problems: string[] = []
     win.on('pageerror', (e) => problems.push(e.message))
     await expect(win.locator('.page')).toHaveCount(6)
-    await win.getByRole('tab', { name: 'Measure' }).click()
+    await win.getByRole('tab', { name: 'Measure', exact: true }).click()
     const z = await zoomOf(win)
     const p0 = (await win.locator('.page').first().boundingBox())!
     const ox = p0.x + 100
@@ -92,7 +92,7 @@ test('a document scale (viewport measure dictionary) is used automatically', asy
   try {
     const win = await app.firstWindow()
     await expect(win.locator('.page')).toHaveCount(4)
-    await win.getByRole('tab', { name: 'Measure' }).click()
+    await win.getByRole('tab', { name: 'Measure', exact: true }).click()
     await expect(win.getByText('From the document: 1:100 (m)')).toBeVisible()
     const z = await zoomOf(win)
     const p0 = (await win.locator('.page').first().boundingBox())!

@@ -12,6 +12,8 @@ export interface ImageStamp {
   /** Pixel size, for the aspect ratio. */
   width: number
   height: number
+  /** Palette category; "My stamps" when it was not set. */
+  category: string
 }
 
 interface Entry {
@@ -20,6 +22,7 @@ interface Entry {
   file: string
   width: number
   height: number
+  category?: string
 }
 
 const MAX_BYTES = 8 * 1024 * 1024
@@ -68,7 +71,7 @@ export async function listStamps(): Promise<ImageStamp[]> {
   for (const e of await readIndex()) {
     try {
       const data = await readFile(join(dir(), e.file))
-      out.push({ id: e.id, name: e.name, width: e.width, height: e.height, dataUrl: `data:image/${e.file.endsWith('.png') ? 'png' : 'jpeg'};base64,${data.toString('base64')}` })
+      out.push({ id: e.id, name: e.name, category: e.category || 'My stamps', width: e.width, height: e.height, dataUrl: `data:image/${e.file.endsWith('.png') ? 'png' : 'jpeg'};base64,${data.toString('base64')}` })
     } catch {
       // A missing file is skipped.
     }
@@ -77,7 +80,7 @@ export async function listStamps(): Promise<ImageStamp[]> {
 }
 
 /** Copies images into the library. Returns the names that were refused (not PNG/JPEG, or too large). */
-export async function addStamps(paths: string[]): Promise<{ added: number; refused: string[] }> {
+export async function addStamps(paths: string[], category = 'My stamps'): Promise<{ added: number; refused: string[] }> {
   const list = await readIndex()
   const refused: string[] = []
   let added = 0
@@ -93,7 +96,7 @@ export async function addStamps(paths: string[]): Promise<{ added: number; refus
       const id = randomUUID()
       const file = `${id}.${info.type}`
       await writeFile(join(dir(), file), data)
-      list.push({ id, name: basename(p, extname(p)), file, width: info.width, height: info.height })
+      list.push({ id, name: basename(p, extname(p)), file, width: info.width, height: info.height, category })
       added++
     } catch {
       refused.push(basename(p))
@@ -109,4 +112,56 @@ export async function removeStamp(id: string): Promise<void> {
   if (!gone) return
   await writeIndex(list.filter((e) => e.id !== id))
   await rm(join(dir(), gone.file), { force: true })
+}
+
+/** Adds pictures that are already in memory (a clipboard image, a snapshot, a rendered page, an imported collection). */
+export async function addStampData(items: { name: string; category: string; data: Uint8Array }[]): Promise<{ added: ImageStamp[]; refused: string[] }> {
+  const list = await readIndex()
+  const refused: string[] = []
+  const added: ImageStamp[] = []
+  await mkdir(dir(), { recursive: true })
+  for (const it of items) {
+    const info = it.data.length <= MAX_BYTES ? imageInfo(it.data) : null
+    if (!info) {
+      refused.push(it.name)
+      continue
+    }
+    const id = randomUUID()
+    const file = `${id}.${info.type}`
+    await writeFile(join(dir(), file), it.data)
+    const category = it.category.trim().slice(0, 60) || 'My stamps'
+    const name = it.name.trim().slice(0, 80) || 'Stamp'
+    list.push({ id, name, file, width: info.width, height: info.height, category })
+    added.push({ id, name, category, width: info.width, height: info.height, dataUrl: `data:image/${info.type === 'png' ? 'png' : 'jpeg'};base64,${Buffer.from(it.data).toString('base64')}` })
+  }
+  await writeIndex(list)
+  return { added, refused }
+}
+
+/** Renames an image stamp or moves it to another category. */
+export async function updateStamp(id: string, change: { name?: string; category?: string }): Promise<void> {
+  const list = await readIndex()
+  const e = list.find((x) => x.id === id)
+  if (!e) return
+  if (change.name?.trim()) e.name = change.name.trim().slice(0, 80)
+  if (change.category?.trim()) e.category = change.category.trim().slice(0, 60)
+  await writeIndex(list)
+}
+
+const metaFile = () => join(dir(), 'text-stamps.json')
+
+/** The saved text stamps, recently used list and numbering counters, as JSON text; null if none yet. */
+export async function readStampMeta(): Promise<string | null> {
+  try {
+    return await readFile(metaFile(), 'utf8')
+  } catch {
+    return null
+  }
+}
+
+export async function writeStampMeta(json: string): Promise<void> {
+  if (typeof json !== 'string' || json.length > 5 * 1024 * 1024) throw new Error('Stamp settings are too large.')
+  await mkdir(dir(), { recursive: true })
+  await writeFile(`${metaFile()}.tmp`, json)
+  await rename(`${metaFile()}.tmp`, metaFile())
 }

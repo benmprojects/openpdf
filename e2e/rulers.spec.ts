@@ -53,7 +53,7 @@ test('rulers, guides, grid and snapping', async () => {
     await win.getByRole('button', { name: 'Grid', exact: true }).click()
     await expect(win.locator('.page').first().locator('.grid-major').first()).toBeAttached()
     await win.getByRole('button', { name: 'Snap', exact: true }).click()
-    await win.getByRole('tab', { name: 'Measure' }).click()
+    await win.getByRole('tab', { name: 'Measure', exact: true }).click()
     await win.getByRole('button', { name: 'Distance' }).click()
     await win.mouse.click(p0.x + 213, p0.y + 401)
     await win.mouse.click(p0.x + 437, p0.y + 398)

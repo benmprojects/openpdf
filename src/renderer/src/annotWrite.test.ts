@@ -186,4 +186,18 @@ describe('writeAnnotations', () => {
     expect((list[0].lookup(PDFName.of('Contents')) as unknown as { decodeText(): string }).decodeText()).toBe('Original')
     expect(list[1].lookup(PDFName.of('IRT'))).toBe(list[0])
   })
+
+  it('writes a turned stamp with a wider /Rect, its own size in /OPRot, and no /Contents', async () => {
+    const turned = annot('stamp', { rects: [{ x: 100, y: 100, w: 200, h: 40 }], text: 'VOID', angle: 90, opacity: 0.5 })
+    const doc = await PDFDocument.load(await writeAnnotations(await blankPdf(), [turned]))
+    const d = annotsOf(doc)[0]
+    const num = (arr: PDFArray) => [0, 1, 2, 3].map((i) => (arr.lookup(i) as unknown as { asNumber(): number }).asNumber())
+    const rect = num(d.lookup(PDFName.of('Rect'), PDFArray))
+    // Turned 90 degrees, the 200 x 40 box becomes 40 wide and 200 tall about the same centre (200, 120).
+    expect(rect[2] - rect[0]).toBeCloseTo(40)
+    expect(rect[3] - rect[1]).toBeCloseTo(200)
+    expect(d.lookup(PDFName.of('OPRot'), PDFArray).size()).toBe(3)
+    expect(d.get(PDFName.of('Contents'))).toBeUndefined()
+    expect((d.lookup(PDFName.of('CA')) as unknown as { asNumber(): number }).asNumber()).toBeCloseTo(0.5)
+  })
 })

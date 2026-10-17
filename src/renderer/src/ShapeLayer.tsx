@@ -186,12 +186,21 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
       )
     }
 
+    // A turned stamp is drawn turned about the centre of its box; its resize handle goes to the turned corner.
+    let corner = { x: r.x + r.w, y: r.y + r.h }
+    if (a.kind === 'stamp' && a.angle) {
+      const cx = r.x + r.w / 2
+      const cy = r.y + r.h / 2
+      body = <g transform={`rotate(${a.angle} ${cx} ${cy})`}>{body}</g>
+      const rad = (a.angle * Math.PI) / 180
+      corner = { x: cx + (r.w / 2) * Math.cos(rad) - (r.h / 2) * Math.sin(rad), y: cy + (r.w / 2) * Math.sin(rad) + (r.h / 2) * Math.cos(rad) }
+    }
     if ((a.kind === 'rectangle' || a.kind === 'ellipse' || a.kind === 'stamp') && selected && interactive) {
       handles.push(
         <div
           key={`${orig.id}-resize`}
           className="resize-handle"
-          style={{ left: (r.x + r.w) * zoom - 5, top: (r.y + r.h) * zoom - 5, right: 'auto', bottom: 'auto' }}
+          style={{ left: corner.x * zoom - 5, top: corner.y * zoom - 5, right: 'auto', bottom: 'auto' }}
           onMouseDown={(e) => begin(e, orig, 'resize')}
           aria-label="Resize"
         />
@@ -199,7 +208,14 @@ export function ShapeLayer({ annots, zoom, pageSize, interactive, selectedId, to
     }
 
     let label: React.ReactNode = null
-    if (a.measure && a.points?.[0]?.length && !ghost) {
+    if (a.measure?.kind === 'count' && !ghost) {
+      // A count marker: its number in white on the filled circle.
+      label = (
+        <text className="count-marker-number" x={r.x + r.w / 2} y={r.y + r.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.max(5, Math.min(r.h * 0.6, 10))} fill="#fff" fontWeight={700} pointerEvents="none">
+          {a.measure.n ?? 1}
+        </text>
+      )
+    } else if (a.measure && a.points?.[0]?.length && !ghost) {
       const pts = a.points[0]
       const at =
         a.measure.kind === 'area'
